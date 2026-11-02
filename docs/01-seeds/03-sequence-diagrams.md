@@ -78,7 +78,7 @@ sequenceDiagram
         OS-->>GW: 422 problem+json
         GW-->>T: 422 Not enough cash
     else reservation created
-        PS-->>OS: 201 reservation_id, reserved_amount_paise
+        PS-->>OS: 201 reservation_id, reserved_cash_paise
         OS->>OC: Append OrderPlaced, status PENDING, published=false
         OS->>RP: Publish OrderPlaced to orders.v1 (key = CHAIWALA)
         OS->>OC: Mark event published
