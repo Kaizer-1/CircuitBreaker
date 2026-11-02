@@ -127,7 +127,7 @@ flowchart LR
 | **Everything in Git** | Helm values, image tags, Argo CD config, Terraform, dashboards and alert rules are all versioned. A deploy *is* a commit. |
 | **Pull, don't push** | CI never touches the cluster. Argo CD, inside the cluster, pulls from GitHub. The cluster only needs outbound access, which is why this works for a laptop cluster ([ADR-0014](../adr/0014-gitops-with-argo-cd.md)). |
 | **Fast feedback** | Lint and unit tests in under 5 minutes on every pull request. |
-| **Safe release** | Rolling updates, readiness probes and PostSync smoke tests. A bad release is undone with `git revert`, or immediately by the SRE agent if it degrades at runtime. |
+| **Safe release** | Rolling updates, readiness probes and PostSync smoke tests. A bad release is undone with `git revert`. If it degrades at runtime, the SRE agent rolls back at once and then opens the `git revert` pull request itself. |
 | **Approvals by the release team** | The prod promotion PR must be approved by the Release & Reliability Team. This mirrors the textbook's release team, which coordinates approvals and deploys into production (Ch. 2, Ch. 7). |
 
 **Argo CD settings that matter** (full reasoning in [ADR-0014](../adr/0014-gitops-with-argo-cd.md)):
@@ -138,12 +138,16 @@ flowchart LR
   `scale_deployment` and `restart_deployment` tools, so later syncs don't reset them.
 - **One Application per service per environment.** A commit for `order-service` syncs only `order-service`.
 
-**How a rollback interacts with Git:**
+**How a rollback interacts with Git: mitigate fast, reconcile through Git**
+([ADR-0016](../adr/0016-rollback-reconciles-through-git.md)):
 
-- After a chaos `BAD_DEPLOY`, the agent's rollback returns the Deployment to what Git says, and Argo CD shows
-  `Synced` again.
-- After a *real* bad release that came through Git, the agent's rollback stops the damage but leaves the Application
-  `OutOfSync`. The incident feed then asks a human to `git revert` the release, which is the permanent fix.
+- The agent's `rollback_deployment` first rolls back in the cluster (seconds).
+- After a chaos `BAD_DEPLOY`, that already returns the Deployment to what Git says, so Argo CD shows `Synced` and no
+  Git change is needed.
+- After a *real* bad release that came through Git, the same tool's code then opens a `git revert` pull request for
+  the tag-bump commit. When a human merges it, Argo CD syncs and the Application is `Synced` again. The pod template
+  is identical, so there is no new rollout.
+- To keep each revert clean, **CI writes one tag-bump commit per service per environment**.
 
 ## 5. Infrastructure as Code (Terraform)
 
@@ -205,7 +209,7 @@ managed Kubernetes service and a GitOps deployment server. A sandbox environment
 | Breaking event change | New topic `<stream>.v2` alongside v1 ([event catalog](03-event-catalog.md#versioning-rules)). |
 | Database schema change | Expand-and-contract: add the new column/table → deploy code writing both → backfill → switch reads → remove the old. Never a lock-step deploy. |
 | Infrastructure change | Terraform plan shown in the PR; validated and test-applied in CI; applied with `make infra` by the Cloud Platform Team. |
-| Bad release in prod | PostSync smoke test fails → `git revert` the promotion and Argo CD syncs back. If it degrades later, the SRE agent rolls back at once and the feed asks for the Git revert. |
+| Bad release in prod | PostSync smoke test fails → `git revert` the promotion and Argo CD syncs back. If it degrades later, the SRE agent rolls back at once and opens the `git revert` pull request; Release & Reliability approves and merges it. |
 
 ## Viva Notes
 

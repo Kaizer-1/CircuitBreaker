@@ -112,6 +112,11 @@ paths:
                     decided_at: '2026-11-20T11:05:58.899Z'
                     decided_by: presenter
                     executed_at: '2026-11-20T11:06:01.398Z'
+                    git_reconciliation:
+                      status: NOT_NEEDED
+                      reverted_commit: null
+                      pull_request_url: null
+                      reason: Application was OutOfSync before the rollback (drift from outside Git); cluster now matches Git.
                 timeline:
                   - at: '2026-11-20T11:05:31.000Z'
                     kind: OPENED
@@ -370,6 +375,28 @@ components:
         executed_at:
           type: [string, 'null']
           format: date-time
+        git_reconciliation:
+          description: >-
+            Result of the rollback's Git step (ADR-0016): after rolling back in the cluster, open a `git revert`
+            pull request if the bad release came from Git. `null` for other actions or before execution.
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/GitReconciliation'
+    GitReconciliation:
+      type: object
+      required: [status, reverted_commit, pull_request_url, reason]
+      properties:
+        status:
+          type: string
+          enum: [PR_OPENED, NOT_NEEDED, FAILED]
+        reverted_commit:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{40}$'
+        pull_request_url:
+          type: [string, 'null']
+          format: uri
+        reason:
+          type: string
     TimelineEntry:
       type: object
       required: [at, kind, message]

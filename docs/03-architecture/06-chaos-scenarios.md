@@ -51,8 +51,17 @@ and rolls back within 3 minutes of detection.
 
 > **GitOps note:** the patch is made live, not through Git. Argo CD's self-heal is off
 > ([ADR-0014](../adr/0014-gitops-with-argo-cd.md)), so it leaves the patch in place and marks the `order-service`
-> Application `OutOfSync`. When the agent rolls back, the Deployment matches Git again and the Application returns to
-> `Synced`. The audience can watch this in the Argo CD UI.
+> Application `OutOfSync`. `rollback_deployment` works in two steps ([ADR-0016](../adr/0016-rollback-reconciles-through-git.md)):
+> **(a)** roll back in the cluster; **(b)** open a `git revert` pull request *if the bad version came from Git*. Its
+> pre-check sees the Application was already `OutOfSync`, meaning the drift came from outside Git. After (a) the
+> Deployment matches Git again and the Application returns to `Synced`, so (b) records `NOT_NEEDED`. The audience can
+> watch `OutOfSync` → `Synced` in the Argo CD UI.
+
+**Rehearsing step (b): a Git-delivered bad release (staging only, not a chaos-service scenario).** To show the
+revert pull request, the Release & Reliability Team merges a deliberately bad image tag for `order-service` into
+`deploy/envs/staging/`, and Argo CD syncs it. The Application is now `Synced` *to the bad release*. The agent rolls
+back (a), then opens the `git revert` pull request (b). Merging it returns the Application to `Synced` with no new
+rollout. chaos-service itself never writes to Git, which keeps its blast radius small.
 
 **Signals:**
 ```promql

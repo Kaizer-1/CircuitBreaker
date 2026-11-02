@@ -272,6 +272,7 @@ Terms are grouped by topic. Every document uses these exact meanings.
 | **Terraform module / provider** | A module is a reusable folder of Terraform code with inputs and outputs; a provider is the plug-in Terraform uses to talk to one platform (kind, Kubernetes, Helm, AWS). |
 | **GitOps** | Git is the source of truth for what should run; a tool in the cluster keeps the running system matching Git and reports **drift** (live state that differs from Git). |
 | **Argo CD** | The GitOps deployment server we use (also the textbook's choice): it watches `deploy/` in Git and *pulls* changes into Kubernetes. Its words: **sync** (make the cluster match Git), **`Synced` / `OutOfSync`**. |
+| **Reconcile through Git** | After an emergency fix in the cluster, make Git say the same thing again, so GitOps doesn't re-apply the problem. Our rollback does it with a `git revert` pull request: "mitigate fast, reconcile through Git" (ADR-0016). |
 | **Promotion (commit)** | Releasing to prod by copying an image tag that already passed staging into `deploy/envs/prod/`, through an approved pull request. |
 | **LocalStack** | A tool that emulates AWS services locally. **Optional** in our design (see ADR-0015). |
 | **Staging / production (prod)** | Staging = a production-like environment to test releases; prod = where "real" users (our demo audience) are. |

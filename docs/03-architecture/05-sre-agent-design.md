@@ -30,7 +30,7 @@ flowchart TD
     I -- yes --> J{"Admin decides<br/>within 5 min?"}
     J -- approve --> K
     J -- decline or timeout --> G
-    I -- no --> K["Execute via Kubernetes API<br/>RemediationExecuted"]
+    I -- no --> K["Execute via Kubernetes API<br/>(rollback: then reconcile Git via a revert PR)<br/>RemediationExecuted"]
     K --> L["Verify: wait until alert has been<br/>clear for 60 s (max 3 min)"]
     L -- recovered --> M["IncidentResolved (RECOVERED)"]
     L -- still firing --> N{"Fewer than 3 actions<br/>on this incident?"}
@@ -66,7 +66,7 @@ The agent has **exactly four tools**. There are no read tools, no shell, no gene
 
 | Tool | Arguments | What our code does | Typical diagnosis |
 |---|---|---|---|
-| `rollback_deployment` | `service`, `explanation` | Roll the Deployment back to the previous revision (same as `kubectl rollout undo`). | A deploy happened shortly before errors started → bad release. |
+| `rollback_deployment` | `service`, `explanation` | Two deterministic steps: **(a)** roll the Deployment back to the previous revision through the Kubernetes API (the equivalent of `kubectl rollout undo`); **(b)** if the bad version came from Git, open a `git revert` pull request so Git matches the cluster again ([below](#rollback-mitigate-fast-reconcile-through-git)). | A deploy happened shortly before errors started → bad release. |
 | `scale_deployment` | `service`, `replicas` (1–5), `explanation` | Set the Deployment's replica count. | Traffic far above normal, latency/saturation high, no recent deploy. Also scaling back down once a spike is over. |
 | `restart_deployment` | `service`, `explanation` | Rolling restart (new pods, same version; like `kubectl rollout restart`). | Memory climbing steadily with no deploy and normal traffic → leak; or stuck pods. |
 | `do_nothing` | `explanation` | Records the decision only. | Transient blip; already recovering; evidence unclear; another action is still taking effect. |
@@ -101,14 +101,31 @@ stores (Redpanda, Cassandra, Postgres) and the observability stack are **never**
 ### The tools and GitOps (Argo CD)
 
 Deployments are managed by Argo CD from Git ([ADR-0014](../adr/0014-gitops-with-argo-cd.md)). The agent's tools
-still act through the Kubernetes API. It gets **no Git access and no new tools**. They are designed not to conflict:
+still act through the Kubernetes API, and it gets **no new tools**. The only Git access is the narrow, deterministic
+revert-PR step inside `rollback_deployment` (below). They are designed not to conflict:
 
 | Tool | Effect on Argo CD |
 |---|---|
 | `scale_deployment` | Changes `spec.replicas`, a field Argo CD is told to ignore, so a later sync does not reset it. |
 | `restart_deployment` | Changes the pod-template `restartedAt` annotation, which is also ignored. |
-| `rollback_deployment` after a chaos `BAD_DEPLOY` | Returns the Deployment to what Git says, so the Application becomes `Synced` again. |
-| `rollback_deployment` after a bad release that came *through Git* | An emergency fix that leaves the Application `OutOfSync`. Argo CD has self-heal **off**, so it does not undo the rollback. The incident's resolution message adds "Git follow-up: revert release *X* in `deploy/envs/<env>/`", and a human makes the permanent fix with `git revert`. |
+| `rollback_deployment` after a chaos `BAD_DEPLOY` | The bad revision never came from Git, so the rollback returns the Deployment to what Git says, and the Application becomes `Synced` again. No pull request is needed. |
+| `rollback_deployment` after a bad release that came *through Git* | The rollback stops the damage at once. The tool then opens a `git revert` pull request; when a human merges it, Argo CD syncs and the Application becomes `Synced`. Self-heal is **off**, so Argo CD does not undo the rollback in the meantime. |
+
+### Rollback: mitigate fast, reconcile through Git
+
+([ADR-0016](../adr/0016-rollback-reconciles-through-git.md)) Everything below is ordinary code inside
+`rollback_deployment`. **The LLM chooses only the tool and writes the explanation.** It cannot trigger, change or
+skip the Git step, and the agent still has exactly four tools.
+
+| Step | What the code does | Why |
+|---|---|---|
+| **Pre-check** | Read the service's Argo CD Application (forcing a refresh) and record its sync status and synced Git revision. | Tells *where* the bad version came from: `Synced` means it came from Git; `OutOfSync` means live drift (e.g. chaos). |
+| **(a) Mitigate** | Roll the Deployment back one revision through the Kubernetes API. | Seconds, not minutes. Users stop seeing errors. |
+| **(b) Reconcile** | Only if the pre-check said `Synced`: find the newest commit on `main` (at or before the synced revision) that changed `deploy/envs/<env>/<service>.yaml`. Check it touched only that file. Push branch `sre-agent/revert-INC-nnnn` with the revert commit (`Revert "…"` / `This reverts commit <sha>.`) and open a pull request. **Never merge.** | Git becomes true again. A human reviews the change; Argo CD applies it, with no new rollout because the pod template is identical. |
+| **Record** | `git_reconciliation` on `RemediationExecuted` and on the incident's remediation: `PR_OPENED` (with `pull_request_url`, `reverted_commit`), `NOT_NEEDED`, or `FAILED` (with `reason`). | Visible on the incident feed and in the API. |
+
+If step (b) fails (GitHub unreachable, the commit check fails, or the file changed in the meantime), the rollback
+from (a) **stays**. The incident is escalated with "manual `git revert` needed".
 
 ## 4. Calling the LLM through OpenRouter
 
@@ -154,6 +171,7 @@ sees OpenRouter's request/response format, so changing gateway or model touches 
 | G8 | Agent **paused** by admin | Record the proposal only; never execute |
 | G9 | LLM error, timeout, refusal or no tool call | `do_nothing` + escalate |
 | G10 | `explanation` must be 1–600 characters | Replace with a generic explanation and flag it |
+| G11 | Rollback's Git step: only `deploy/envs/<env>/<service>.yaml` of the *same* service and environment; only a single-file commit; at most one open revert PR per service; branch prefix `sre-agent/`; never merges | Skip step (b), keep the rollback, escalate (`git_reconciliation: FAILED`) |
 
 A declined proposal emits `RemediationDeclined` with `declined_by: "guardrail"` and the reason; the feed shows it.
 
@@ -166,6 +184,13 @@ The `sre-agent` ServiceAccount may **only**: `get`/`list`/`patch` Deployments, `
 `get`/`list` ReplicaSets and Pods (for history and status) — in its own namespace. It may **not** delete anything,
 read Secrets, exec into pods, or touch StatefulSets (data stores). Even a bug in the guardrails cannot exceed these
 permissions.
+
+The rollback's Git step uses two more credentials. Neither is ever shown to the LLM:
+
+- **GitHub App** (this repository only): *contents: write* to push the `sre-agent/…` revert branch, and *pull
+  requests: write*. A ruleset protects `main` (pull request + CODEOWNERS approval required), and the App is **not** on
+  the bypass list, so it can open pull requests but never merge them.
+- **Argo CD account `sre-agent`:** read-only (`get` on Applications), for the pre-check.
 
 ### Prompt injection
 
@@ -198,6 +223,8 @@ The feed (`WS /v1/ws/incidents`, Q-19) streams every step as a short human-reada
 11:05:44  🛠️ Proposed: roll back order-service to revision 7.  [Approve] [Decline]
 11:05:58  ✅ Approved by presenter.
 11:06:01  ⏪ Rolled back order-service to revision 7. 2/2 pods ready.
+11:06:02  🔀 Git check: revision 8 did not come from Git (Argo CD showed live drift), so Git already matches.
+             No revert PR needed.
 11:07:05  🟢 INC-0007 resolved in 94 s. Errors back to 0.2%.
 ```
 
@@ -236,7 +263,7 @@ failed — Kubernetes' own restarts and the human still work.
 A: It keeps the agent's powers exactly equal to the four-tool allowlist, makes every diagnosis reproducible (we store
 the evidence), bounds cost and latency, and reduces prompt-injection surface.
 
-**Q: How does the agent tell a bad deploy from a memory leak from a traffic spike?**
-A: Deploy timing vs. error start (bad deploy → rollback); memory steadily rising with no deploy and normal traffic
-(leak → restart); request rate far above baseline with high latency (spike → scale). Details in the chaos scenarios
-document.
+**Q: With GitOps, doesn't a rollback leave Git pointing at the bad release?**
+A: Not any more: **mitigate fast, reconcile through Git**. `rollback_deployment` first rolls back in the cluster
+(seconds). Then, if the bad version came from Git, its own code opens a `git revert` pull request so Git matches the
+cluster again. The LLM can't skip or change this step, and it is not a new tool ([ADR-0016](../adr/0016-rollback-reconciles-through-git.md)).

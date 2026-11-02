@@ -1,7 +1,8 @@
 # 0014 — GitOps Deployment with Argo CD
 
 - **Status:** Accepted — amends [ADR-0007](0007-kubernetes-kind-and-helm-umbrella.md) (replaces its push-based CD
-  with pull-based GitOps; kind, the namespaces and the umbrella chart stay)
+  with pull-based GitOps; kind, the namespaces and the umbrella chart stay). The agent-rollback part is amended by
+  [ADR-0016](0016-rollback-reconciles-through-git.md) (the rollback now opens the `git revert` pull request itself)
 - **Date:** 2026-11-03
 - **Deciders:** Mohammad Oweis (owner, Release & Reliability Team), Kaizer Dewaswala, MD Asif Ali
 
@@ -47,14 +48,14 @@ Helm provider, as in the textbook's `module-argo-cd` ([ADR-0015](0015-terraform-
 | Repository access | Argo CD pulls from the GitHub repository (public, or a read-only deploy key stored as a Kubernetes Secret) | Pull means the cluster only needs *outbound* access to GitHub. That solves problem 1 above. |
 
 **How Argo CD and the SRE agent work together:** the agent's four tools still act through the Kubernetes API (no new
-powers, no Git access — [ADR-0009](0009-sre-agent-fixed-tool-allowlist.md) is unchanged).
+tools — [ADR-0009](0009-sre-agent-fixed-tool-allowlist.md) is unchanged).
 
 - **Scale and restart** only touch fields Argo CD ignores.
 - **Rollback** after a chaos `BAD_DEPLOY` returns the Deployment to exactly what Git says, so the Application goes
   from `OutOfSync` back to `Synced`.
 - **Rollback of a bad release that came through Git** is an emergency fix that leaves the Application `OutOfSync`.
-  The incident feed then asks a human to `git revert` the release. That is the permanent fix, and it brings Git and
-  the cluster back in line.
+  *Amended by [ADR-0016](0016-rollback-reconciles-through-git.md):* the rollback tool's own code then opens a
+  `git revert` pull request. When a human merges it, Git and the cluster are back in line.
 
 ## Alternatives considered
 
@@ -64,7 +65,7 @@ powers, no Git access — [ADR-0009](0009-sre-agent-fixed-tool-allowlist.md) is 
 | **Flux** | Also a solid GitOps tool. Argo CD is the one the textbook uses (Ch. 7), and its web UI makes `Synced`/`OutOfSync` visible to an audience. |
 | **One Argo CD Application per environment (the whole umbrella chart)** | Simpler, but any commit re-syncs every service. After an emergency rollback, an unrelated promotion would re-apply the bad release. |
 | **Self-heal on** | Strongest drift control, but it would silently undo chaos experiments and the agent's fixes, so the self-healing demo would show the wrong healer. |
-| **Give the SRE agent Git write access so it rolls back by commit** | Fully GitOps-pure, but a new and much broader power (it could change any file). ADR-0009 forbids widening the agent's tools. |
+| **Give the SRE agent Git write access so it rolls back by commit** | Fully GitOps-pure, but a new and much broader power (it could change any file). ADR-0009 forbids widening the agent's tools. *(A much narrower form was later adopted in [ADR-0016](0016-rollback-reconciles-through-git.md): deterministic code inside `rollback_deployment` opens a revert **pull request** for one file and can never merge it.)* |
 
 ## Consequences
 

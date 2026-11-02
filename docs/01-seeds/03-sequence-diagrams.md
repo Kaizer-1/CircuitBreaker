@@ -255,6 +255,8 @@ sequenceDiagram
     participant LK as Loki
     participant SA as sre-agent
     participant CL as OpenRouter (LLM)
+    participant AR as Argo CD
+    participant GH as GitHub
     participant RP as Redpanda
 
     AD->>GW: POST /v1/chaos/experiments  scenario BAD_DEPLOY  (A-10)
@@ -281,9 +283,19 @@ sequenceDiagram
         GW->>SA: forward
         SA->>RP: RemediationApproved
     end
-    SA->>K8: Roll back order-service to revision 7 (A-17)
-    SA->>RP: RemediationExecuted
-    SA-->>AD: Incident feed: rolled back, here is why
+    Note over SA,GH: rollback_deployment = two deterministic steps in code (ADR-0016), not two tools
+    SA->>AR: Pre-check: Application order-service sync status (refresh)
+    AR-->>SA: OutOfSync (live drift: chaos patched the Deployment)
+    SA->>K8: (a) Mitigate: roll back order-service to revision 7, like kubectl rollout undo (A-17)
+    alt Application was Synced before (bad release came through Git)
+        SA->>GH: (b) Reconcile: push sre-agent/revert-INC-0007 and open git revert PR
+        GH-->>SA: PR URL (a human must approve and merge it)
+        Note over GH,AR: After merge Argo CD syncs and Application is Synced, no new rollout
+    else Application was OutOfSync (this chaos scenario)
+        Note over SA: Git already matches the cluster after (a), so no PR (NOT_NEEDED)
+    end
+    SA->>RP: RemediationExecuted with git_reconciliation status
+    SA-->>AD: Incident feed: rolled back, Git status, here is why
     PR->>PR: Error rate normal, alert resolves
     SA->>SA: Verify recovery
     SA->>RP: IncidentResolved  time_to_recover 94s
@@ -296,6 +308,10 @@ sequenceDiagram
   keeps the agent's powers exactly equal to the allowlist ([ADR-0009](../adr/0009-sre-agent-fixed-tool-allowlist.md)).
 - **Guardrails run after the LLM answers** and can override it: an unsafe request becomes `do_nothing` plus an
   escalation message to the admin.
+- **Mitigate fast, reconcile through Git.** The rollback first fixes the cluster in seconds. If the bad version came
+  from Git, the same tool's code then opens a `git revert` pull request so Git matches the cluster again
+  ([ADR-0016](../adr/0016-rollback-reconciles-through-git.md)). In this chaos scenario Git never contained the bad
+  version, so the `else` branch applies.
 
 ## Viva Notes
 

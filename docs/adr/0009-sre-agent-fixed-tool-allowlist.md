@@ -1,7 +1,9 @@
 # 0009 — SRE Agent with a Fixed Tool Allowlist
 
 - **Status:** Accepted — LLM provider amended by [ADR-0013](0013-openrouter-llm-gateway.md) (OpenRouter instead of
-  calling the Claude API directly)
+  calling the Claude API directly); `rollback_deployment`'s implementation extended by
+  [ADR-0016](0016-rollback-reconciles-through-git.md) (rollback, then a deterministic `git revert` pull request — still
+  four tools)
 - **Date:** 2026-11-02
 - **Deciders:** Kaizer Dewaswala (owner), Mohammad Oweis, MD Asif Ali
 

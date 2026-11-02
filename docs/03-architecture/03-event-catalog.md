@@ -669,7 +669,23 @@ Declined either by a human admin or automatically by a guardrail (e.g. cooldown 
     "parameters":     { "type": "object" },
     "outcome":        { "type": "string", "enum": ["SUCCEEDED", "FAILED"] },
     "details":        { "type": "string" },
-    "executed_at":    { "$ref": "#/$defs/timestamp" }
+    "executed_at":    { "$ref": "#/$defs/timestamp" },
+    "git_reconciliation": {
+      "description": "Only for rollback_deployment (ADR-0016); null for other actions. Optional field added within v1.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["status", "reverted_commit", "pull_request_url", "reason"],
+          "properties": {
+            "status":           { "type": "string", "enum": ["PR_OPENED", "NOT_NEEDED", "FAILED"] },
+            "reverted_commit":  { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+            "pull_request_url": { "type": ["string", "null"], "format": "uri" },
+            "reason":           { "type": "string" }
+          }
+        }
+      ]
+    }
   }
 }
 ```
@@ -692,7 +708,13 @@ Declined either by a human admin or automatically by a guardrail (e.g. cooldown 
     "parameters": { "to_revision": 7 },
     "outcome": "SUCCEEDED",
     "details": "Deployment order-service rolled back from revision 8 to revision 7; 2/2 pods ready.",
-    "executed_at": "2026-11-20T11:06:01.398Z"
+    "executed_at": "2026-11-20T11:06:01.398Z",
+    "git_reconciliation": {
+      "status": "NOT_NEEDED",
+      "reverted_commit": null,
+      "pull_request_url": null,
+      "reason": "Application was OutOfSync before the rollback (drift from outside Git); cluster now matches Git."
+    }
   }
 }
 ```

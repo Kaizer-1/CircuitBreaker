@@ -96,7 +96,7 @@ One owner for the UI and the order flow avoids a frontend/backend hand-off for e
 |---|---|
 | Team type | Complicated-subsystem |
 | Size | Textbook: 5–8 · Ours: **Mohammad Oweis** |
-| Responsibilities | Release microservices to `prod`: approve promotion PRs to `deploy/envs/prod/` (CODEOWNERS), run Argo CD sync and `git revert` rollbacks ([ADR-0014](adr/0014-gitops-with-argo-cd.md)); coordinate approvals for releases; own **`chaos-service`** and the chaos rehearsals that gate promotion |
+| Responsibilities | Release microservices to `prod`: approve promotion PRs to `deploy/envs/prod/` (CODEOWNERS), run Argo CD sync and `git revert` rollbacks, including reviewing and merging the SRE agent's revert pull requests ([ADR-0014](adr/0014-gitops-with-argo-cd.md), [ADR-0016](adr/0016-rollback-reconciles-through-git.md)); coordinate approvals for releases; own **`chaos-service`** and the chaos rehearsals that gate promotion |
 | Interactions | **Collaboration** with the stream-aligned teams and the API Team on releases; **collaboration** with the SRE agent role on alerts, RBAC and incident follow-ups |
 
 In the textbook, microservices teams deliver a built and tested container, and the release team deploys it after
@@ -106,7 +106,7 @@ coordination bottleneck, and deployment should then move to the microservices te
 Reliability's approval.
 
 **SRE agent (enabling role)** — **Kaizer Dewaswala**, owns `sre-agent`. It works in **collaboration** with Release &
-Reliability: alert rules, RBAC, rollout history, Git follow-ups after an emergency rollback. It also *enables* every
+Reliability: alert rules, RBAC, rollout history, and the revert pull requests the agent opens after a rollback. It also *enables* every
 team by giving each incident a first diagnosis in plain English. The agent itself is a project extension beyond the
 textbook ([SRE agent design](03-architecture/05-sre-agent-design.md)).
 
@@ -188,7 +188,7 @@ architecture.
 | System Design → all teams | **Facilitating** (standards, ADRs, event-catalog rules) | **X-as-a-Service** ("patterns as a service": coding standards, templates) | [Coding standards](05-coding-standards.md), [ADRs](adr/README.md) |
 | Cloud Platform → all teams | **Facilitating** (Dockerfiles, probes, metrics) | **X-as-a-Service** (shared Helm sub-chart, CI templates, dashboards, `make infra`) | `charts/circuitbreaker/charts/service`, CI workflow templates, Grafana dashboards |
 | Release & Reliability ↔ stream-aligned teams | **Collaboration** on release and chaos-rehearsal criteria | **Collaboration** for prod promotions only (staging is self-service) | Promotion PRs to `deploy/envs/prod/`; `/v1/chaos/...` |
-| SRE agent role ↔ Release & Reliability | **Collaboration** (alert rules, RBAC, rollout history) | **X-as-a-Service** (agent consumes alerts; humans consume the incident feed and Git follow-ups) | Prometheus alert label `remediable=true`; `sre-agent` Role; `incidents.v1` |
+| SRE agent role ↔ Release & Reliability | **Collaboration** (alert rules, RBAC, rollout history) | **X-as-a-Service** (agent consumes alerts; humans consume the incident feed and review the agent's revert PRs) | Prometheus alert label `remediable=true`; `sre-agent` Role; `incidents.v1` |
 
 Collaboration is expensive, so we time-box it. Once an interface is agreed and written down (event catalog, OpenAPI
 spec), we move to X-as-a-Service and change it only through versioned contracts.
@@ -236,7 +236,7 @@ As system designer, you keep the teams, standards and guardrails coherent.
 - Order flow: why cancel is asynchronous (the cancel/fill race), the sync reservation trade-off (ADR-0011), and 202
   Accepted.
 - The SRE agent: its four tools, guardrails, RBAC and approval toggle; why it never sees chaos data; how it coexists
-  with Argo CD.
+  with Argo CD ("mitigate fast, reconcile through Git").
 - The textbook's five team-design steps and the Universal Sizing Formula.
 
 **Read first:** [sequence diagrams](01-seeds/03-sequence-diagrams.md) §2–4 and §6 ·

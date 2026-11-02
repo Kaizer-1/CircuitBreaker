@@ -14,13 +14,14 @@
 | [0006](0006-cqrs-portfolio-read-model.md) | CQRS with a Postgres portfolio read model | Accepted |
 | [0007](0007-kubernetes-kind-and-helm-umbrella.md) | Kubernetes (kind) with a Helm umbrella chart; staging and prod namespaces | Accepted (CD amended by 0014) |
 | [0008](0008-observability-stack.md) | Prometheus, Grafana and Loki for observability | Accepted |
-| [0009](0009-sre-agent-fixed-tool-allowlist.md) | SRE agent with a fixed tool allowlist | Accepted (LLM provider amended by 0013) |
+| [0009](0009-sre-agent-fixed-tool-allowlist.md) | SRE agent with a fixed tool allowlist | Accepted (LLM provider amended by 0013; rollback implementation extended by 0016) |
 | [0010](0010-terraform-localstack.md) | Terraform against LocalStack | Accepted (scope amended by 0015) |
 | [0011](0011-synchronous-reservation-over-saga.md) | Synchronous reservation instead of an asynchronous saga | Accepted |
 | [0012](0012-prices-in-integer-paise.md) | Money and prices as integer paise | Accepted |
 | [0013](0013-openrouter-llm-gateway.md) | OpenRouter as the SRE agent's LLM gateway | Accepted |
-| [0014](0014-gitops-with-argo-cd.md) | GitOps deployment with Argo CD | Accepted |
+| [0014](0014-gitops-with-argo-cd.md) | GitOps deployment with Argo CD | Accepted (agent rollback amended by 0016) |
 | [0015](0015-terraform-local-platform.md) | Terraform for the local platform; LocalStack optional | Accepted |
+| [0016](0016-rollback-reconciles-through-git.md) | Rollback mitigates in the cluster, then reconciles through Git | Accepted |
 
 **Template:** `# NNNN — Title` · Status · Date · Deciders · Context · Decision · Alternatives considered ·
 Consequences (positive / negative) · Viva Notes.
