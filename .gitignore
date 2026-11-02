@@ -1,0 +1,49 @@
+# --- Private, never committed -------------------------------------------
+# Personal study material, prompts and the textbook verify checklist.
+private/
+# Instructions for Claude Code sessions (kept locally only).
+CLAUDE.md
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# --- Node / web -----------------------------------------------------------
+node_modules/
+.vite/
+web/dist/
+
+# --- Secrets and local config ----------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Terraform / LocalStack ------------------------------------------------
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.lock.hcl.bak
+.localstack/
+
+# --- Kubernetes / Helm ------------------------------------------------------
+charts/**/charts/*.tgz
+kubeconfig*
+
+# --- Editors and OS ---------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
