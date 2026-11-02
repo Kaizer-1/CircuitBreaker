@@ -37,10 +37,9 @@
 
 ## Phase 1 — Discover domain events
 
-Each of us wrote events individually, without discussion, and placed them roughly left (earlier) to right (later). The
-wall had many duplicates, such as "order placed", "order submitted" and "order received". Removing them was left for
-Phase 2. After de-duplication, **23 distinct domain events** remained: 13 integration events and 10 local events,
-listed in the timeline below.
+Each of us wrote events individually, without discussion, and placed them roughly left (earlier) to right (later).
+Removing duplicates was left for Phase 2. After de-duplication, **23 distinct domain events** remained: 13 integration
+events and 10 local events, listed in the timeline below.
 
 ## Phase 2 — Enforce the timeline (and capture hotspots)
 
