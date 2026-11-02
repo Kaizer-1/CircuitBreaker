@@ -254,7 +254,7 @@ sequenceDiagram
     participant PR as Prometheus
     participant LK as Loki
     participant SA as sre-agent
-    participant CL as Claude API
+    participant CL as OpenRouter (LLM)
     participant RP as Redpanda
 
     AD->>GW: POST /v1/chaos/experiments  scenario BAD_DEPLOY  (A-10)
@@ -271,8 +271,8 @@ sequenceDiagram
     SA->>PR: Evidence: error rate, p95 latency, request rate, memory
     SA->>LK: Evidence: last 50 error log lines for order-service
     SA->>K8: Evidence: rollout history and pod status
-    SA->>CL: Evidence + 4 allowlisted tools (tool choice required)
-    CL-->>SA: tool_use rollback_deployment service=order-service, explanation
+    SA->>CL: Evidence + 4 allowlisted tools (exactly one call expected)
+    CL-->>SA: tool call rollback_deployment service=order-service, explanation
     SA->>SA: Guardrails: tool and service allowlisted, cooldown ok, action budget ok
     alt approval toggle ON
         SA->>RP: RemediationProposed

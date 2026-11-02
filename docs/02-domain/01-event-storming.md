@@ -22,7 +22,7 @@
 | 🟨 Large yellow | **Aggregate** | The thing that checks rules and emits events | `OrderBook` |
 | 🟪 Lilac | **Policy** | "Whenever *event*, then *command*" | "Whenever a trade executes, settle it" |
 | 🟩 Green | **Read model** | Data an actor looks at before deciding | Order-book depth |
-| 🩷 Pink | **External system** | Outside our control | Prometheus, Kubernetes, Claude API |
+| 🩷 Pink | **External system** | Outside our control | Prometheus, Kubernetes, OpenRouter (LLM) |
 | 🟥 Red | **Hotspot** | Question, conflict or risk to resolve | "Can a cancel race a fill?" |
 
 ## Step 1 — Big picture: all domain events on a timeline
@@ -134,7 +134,7 @@ flowchart LR
     AD([Admin]):::actor --> C0[StartChaosExperiment]:::command --> AG0[ChaosExperiment]:::aggregate --> E0[ChaosExperimentStarted]:::event
     PR[(Prometheus alert)]:::external --> P1{{Whenever an alert fires,<br/>open incident}}:::policy --> C1[OpenIncident]:::command
     C1 --> AG1[Incident]:::aggregate --> E1[IncidentOpened]:::event
-    E1 --> P2{{Whenever incident opened,<br/>diagnose with evidence}}:::policy --> CL[(Claude API)]:::external
+    E1 --> P2{{Whenever incident opened,<br/>diagnose with evidence}}:::policy --> CL[(LLM via OpenRouter)]:::external
     CL --> E2[RemediationProposed]:::event
     E2 --> P3{{If approval is off,<br/>execute at once}}:::policy --> C2[ExecuteRemediation]:::command
     AD --> C3[DecideRemediation]:::command --> E3[RemediationApproved]:::event --> C2

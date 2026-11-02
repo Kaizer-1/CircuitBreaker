@@ -76,7 +76,7 @@ flowchart LR
 
 | | |
 |---|---|
-| **Who** | The `sre-agent` service, which uses the Claude API for reasoning. |
+| **Who** | The `sre-agent` service, which uses an LLM through OpenRouter for reasoning. |
 | **Goal** | Keep the exchange healthy with as little disruption as possible, and explain every decision. |
 | **Sees** | Prometheus metrics and alerts, Loki logs, Kubernetes deploy (rollout) history and pod status. |
 | **Can do** | Exactly four things: `rollback_deployment`, `scale_deployment` (max 5 replicas), `restart_deployment`, `do_nothing`. |

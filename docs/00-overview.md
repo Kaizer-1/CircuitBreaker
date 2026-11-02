@@ -105,7 +105,7 @@ The **reference price** is the starting price used before any trade has happened
 | `market-data-service` | Builds candles, order-book depth and trade lists; streams them live; time travel and replay | Market Insights (MD Asif Ali) |
 | `portfolio-service` | Trader accounts, cash, holdings, reservations, leaderboard | Market Insights (MD Asif Ali) |
 | `bot-traders` | Runs 20 automated traders with 4 strategies | Trading (Kaizer Dewaswala) |
-| `sre-agent` | Detects incidents, asks Claude to diagnose, executes one allowlisted fix, explains it | Kaizer Dewaswala (with Platform & Reliability) |
+| `sre-agent` | Detects incidents, asks an LLM (via OpenRouter) to diagnose, executes one allowlisted fix, explains it | Kaizer Dewaswala (with Platform & Reliability) |
 | `chaos-service` | Runs chaos experiments: bad deploy, memory leak, traffic spike | Platform & Reliability (Mohammad Oweis) |
 | `web` | React + Vite single-page app: trader view, presenter view, chaos panel, incident feed | Trading (Kaizer Dewaswala) |
 
@@ -279,7 +279,8 @@ Terms are grouped by topic. Every document uses these exact meanings.
 | **DORA metrics** | Four delivery metrics: deployment frequency, lead time for changes, change failure rate, time to restore service. |
 | **Chaos engineering** | Deliberately injecting failures to test and improve resilience. |
 | **Chaos experiment** | One run of a chaos scenario, with a start, an end and observed results. |
-| **LLM (Large Language Model)** | An AI model that reads and writes text; we use Claude. |
+| **LLM (Large Language Model)** | An AI model that reads and writes text. The SRE agent uses one through OpenRouter (default: a Claude Sonnet model). |
+| **OpenRouter** | A hosted gateway that exposes many LLMs (Claude, GPT, Llama, …) behind one OpenAI-compatible API and one API key. |
 | **Tool calling (function calling)** | The LLM asks our code to run a named function with JSON arguments instead of replying in free text. |
 | **Tool allowlist** | The fixed list of tools the agent may call; anything else is impossible, not just discouraged. |
 | **Human-in-the-loop / approval toggle** | When on, a human must approve the agent's proposed action before it runs. |
