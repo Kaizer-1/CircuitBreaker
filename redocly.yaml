@@ -1,0 +1,18 @@
+# Lint configuration for the OpenAPI specs in api/.
+# Run: npx @redocly/cli lint
+extends:
+  - recommended
+apis:
+  api-gateway: { root: api/api-gateway.yaml }
+  order-service: { root: api/order-service.yaml }
+  matching-engine: { root: api/matching-engine.yaml }
+  market-data-service: { root: api/market-data-service.yaml }
+  portfolio-service: { root: api/portfolio-service.yaml }
+  sre-agent: { root: api/sre-agent.yaml }
+  chaos-service: { root: api/chaos-service.yaml }
+rules:
+  # No licence has been chosen for this coursework project yet.
+  info-license: off
+  info-license-url: off
+  # localhost URLs are our real Docker Compose servers, not placeholders.
+  no-server-example.com: off

@@ -1,0 +1,297 @@
+openapi: 3.1.0
+info:
+  title: matching-engine internal API
+  version: 1.0.0
+  summary: Read-only access to the market event store and order books.
+  description: |
+    Owned by the **Trading Team** (Kaizer Dewaswala) — complicated-subsystem.
+
+    The matching engine's main work is **not** HTTP: it consumes `OrderPlaced` / `OrderCancelRequested` from
+    `orders.v1`, matches by price-time priority (A-08), appends results to its Cassandra event store and publishes
+    them to `matching.v1`.
+
+    This spec covers its **internal** read API, used by `market-data-service` for time travel and by developers for
+    debugging. All paths are under `/internal/` and are never routed by `api-gateway`; network policies allow
+    only in-namespace callers.
+servers:
+  - url: http://localhost:8002
+    description: Local Docker Compose
+  - url: http://matching-engine:8000
+    description: Inside the Kubernetes namespace (staging or prod)
+security: []
+tags:
+  - name: Event store
+    description: Reading stored market events and snapshots (event sourcing).
+  - name: Books
+    description: The live in-memory order books.
+paths:
+  /internal/v1/events:
+    get:
+      tags: [Event store]
+      operationId: listMarketEvents
+      summary: Read market events by sequence
+      x-seeds-id: Q-14
+      description: |
+        **Q-14** — Return stored market events for one ticker in sequence order, starting after `after_sequence` and
+        optionally stopping at time `until`. Used for time travel, replay and rebuilding read models. Paged: call
+        again with `after_sequence = next_after_sequence` while `has_more` is true.
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: ticker
+          in: query
+          required: true
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Ticker'
+        - name: after_sequence
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: until
+          in: query
+          required: false
+          description: Only events with occurred_at at or before this time.
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 500
+      responses:
+        '200':
+          description: A page of events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPage'
+              example:
+                ticker: CHAIWALA
+                events:
+                  - event_id: e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b
+                    event_type: OrderAccepted
+                    event_version: 1
+                    occurred_at: '2026-11-20T10:42:01.262Z'
+                    producer: matching-engine
+                    environment: prod
+                    correlation_id: req-5f1c2a
+                    causation_id: 0b8f6a52-7d1e-4c55-9a43-1f2d3c4b5a61
+                    data:
+                      sequence: 1041
+                      ticker: CHAIWALA
+                      order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+                      trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                      side: BUY
+                      order_type: LIMIT
+                      quantity: 50
+                      limit_price_paise: 24600
+                      protection_price_paise: null
+                      accepted_at: '2026-11-20T10:42:01.262Z'
+                  - event_id: f6a7b8c9-d0e1-4f2a-8b3c-4d5e6f7a8b9c
+                    event_type: TradeExecuted
+                    event_version: 1
+                    occurred_at: '2026-11-20T10:42:01.263Z'
+                    producer: matching-engine
+                    environment: prod
+                    correlation_id: req-5f1c2a
+                    causation_id: 0b8f6a52-7d1e-4c55-9a43-1f2d3c4b5a61
+                    data:
+                      sequence: 1042
+                      ticker: CHAIWALA
+                      trade_id: a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d
+                      price_paise: 24550
+                      quantity: 20
+                      buy_order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+                      sell_order_id: 9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b
+                      buyer_trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                      seller_trader_id: b0b0b0b0-0003-4000-8000-000000000003
+                      aggressor_side: BUY
+                      buy_order_remaining_quantity: 30
+                      sell_order_remaining_quantity: 0
+                      executed_at: '2026-11-20T10:42:01.263Z'
+                next_after_sequence: 1042
+                has_more: true
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /internal/v1/snapshots/{ticker}:
+    get:
+      tags: [Event store]
+      operationId: getBookSnapshot
+      summary: Get the nearest order-book snapshot at or before a time
+      x-seeds-id: Q-15
+      description: |
+        **Q-15** — Return the latest snapshot of the ticker's book taken at or before `at`. If none exists yet, returns
+        an empty book at sequence 0 (replay then starts from the first event).
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TickerPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: at
+          in: query
+          required: true
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Timestamp'
+      responses:
+        '200':
+          description: The snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookState'
+              example:
+                ticker: CHAIWALA
+                sequence: 1000
+                as_of: '2026-11-20T10:41:50.120Z'
+                bids:
+                  - price_paise: 24500
+                    orders:
+                      - order_id: 11111111-2222-4333-8444-555555555555
+                        trader_id: b0b0b0b0-0001-4000-8000-000000000001
+                        remaining_quantity: 40
+                        accepted_sequence: 988
+                asks:
+                  - price_paise: 24550
+                    orders:
+                      - order_id: 9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b
+                        trader_id: b0b0b0b0-0003-4000-8000-000000000003
+                        remaining_quantity: 20
+                        accepted_sequence: 995
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /internal/v1/books/{ticker}:
+    get:
+      tags: [Books]
+      operationId: getLiveBook
+      summary: Get the engine's live in-memory order book
+      x-seeds-id: Q-16
+      description: |
+        **Q-16** — Full live book (every resting order, in priority order) straight from the engine's memory. For
+        debugging and for checking that market-data-service's depth read model agrees with the source of truth.
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TickerPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The live book.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookState'
+              example:
+                ticker: CHAIWALA
+                sequence: 1042
+                as_of: '2026-11-20T10:42:01.263Z'
+                bids:
+                  - price_paise: 24600
+                    orders:
+                      - order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+                        trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                        remaining_quantity: 30
+                        accepted_sequence: 1041
+                asks: []
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+components:
+  schemas:
+    EventEnvelope:
+      type: object
+      description: Standard event envelope; `data` depends on `event_type` (see docs/03-architecture/03-event-catalog.md).
+      required: [event_id, event_type, event_version, occurred_at, producer, correlation_id, data]
+      properties:
+        event_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        event_type:
+          type: string
+          enum: [OrderAccepted, TradeExecuted, OrderCancelled, OrderCancelRejected]
+        event_version:
+          type: integer
+          minimum: 1
+        occurred_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        producer:
+          type: string
+          const: matching-engine
+        environment:
+          type: string
+          enum: [dev, staging, prod]
+        correlation_id:
+          type: string
+        causation_id:
+          type: [string, 'null']
+        data:
+          type: object
+          description: Event-specific fields as defined in the event catalog; only the common ones are listed here.
+          additionalProperties: true
+          required: [sequence, ticker]
+          properties:
+            sequence:
+              type: integer
+              minimum: 1
+            ticker:
+              $ref: './shared/common.yaml#/components/schemas/Ticker'
+    EventPage:
+      type: object
+      required: [ticker, events, next_after_sequence, has_more]
+      properties:
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventEnvelope'
+        next_after_sequence:
+          type: [integer, 'null']
+          description: Pass as after_sequence to get the next page; null when there are no events.
+        has_more:
+          type: boolean
+    RestingOrder:
+      type: object
+      required: [order_id, trader_id, remaining_quantity, accepted_sequence]
+      properties:
+        order_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        trader_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        remaining_quantity:
+          type: integer
+          minimum: 1
+        accepted_sequence:
+          type: integer
+          minimum: 1
+          description: Time priority — lower sequence was first.
+    PriceLevel:
+      type: object
+      required: [price_paise, orders]
+      properties:
+        price_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        orders:
+          type: array
+          description: In time-priority order (first in, first matched).
+          items:
+            $ref: '#/components/schemas/RestingOrder'
+    BookState:
+      type: object
+      description: A full order book (snapshot or live). Bids sorted high to low, asks low to high.
+      required: [ticker, sequence, as_of, bids, asks]
+      properties:
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        sequence:
+          type: integer
+          minimum: 0
+          description: Last event sequence included in this state (0 = empty, before any event).
+        as_of:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        bids:
+          type: array
+          items:
+            $ref: '#/components/schemas/PriceLevel'
+        asks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PriceLevel'

@@ -1,0 +1,391 @@
+openapi: 3.1.0
+info:
+  title: order-service API
+  version: 1.0.0
+  summary: Accepts, validates and tracks orders.
+  description: |
+    Owned by the **Trading Team** (Kaizer Dewaswala). Reached from outside only through `api-gateway`,
+    which verifies the JWT and sets `X-Trader-Id`. Validates orders, reserves cash/shares synchronously via
+    `portfolio-service`, publishes `OrderPlaced` / `OrderCancelRequested` to `orders.v1`, and keeps each
+    order's status up to date from `matching.v1` events.
+
+    Every operation's description starts with its SEED(S) action/query ID
+    (see docs/01-seeds/04-actions-and-queries.md).
+servers:
+  - url: http://localhost:8001
+    description: Local Docker Compose
+  - url: http://order-service:8000
+    description: Inside the Kubernetes namespace (staging or prod)
+security: []
+tags:
+  - name: Orders
+    description: Placing, cancelling and viewing orders.
+paths:
+  /v1/orders:
+    post:
+      tags: [Orders]
+      operationId: placeOrder
+      summary: Place an order
+      x-seeds-id: A-05
+      description: |
+        **A-05** — Place a LIMIT or MARKET order. Validates ticker, quantity and tick size, reserves cash (BUY)
+        or shares (SELL) via portfolio-service (A-06), stores and publishes `OrderPlaced`. Returns **202** because
+        matching happens asynchronously; follow the status with Q-08 or the portfolio WebSocket.
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TraderIdHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceOrderRequest'
+            examples:
+              limitBuy:
+                summary: Limit buy 50 CHAIWALA at 246.00 rupees
+                value:
+                  ticker: CHAIWALA
+                  side: BUY
+                  order_type: LIMIT
+                  quantity: 50
+                  limit_price_paise: 24600
+              marketSell:
+                summary: Market sell 10 JUGAAD
+                value:
+                  ticker: JUGAAD
+                  side: SELL
+                  order_type: MARKET
+                  quantity: 10
+      responses:
+        '202':
+          description: Order accepted for matching (status PENDING).
+          headers:
+            Location:
+              description: URL of the new order.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+                trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                ticker: CHAIWALA
+                side: BUY
+                order_type: LIMIT
+                quantity: 50
+                limit_price_paise: 24600
+                protection_price_paise: null
+                status: PENDING
+                filled_quantity: 0
+                remaining_quantity: 50
+                average_fill_price_paise: null
+                cancel_requested: false
+                cancel_reason: null
+                rejection_reason: null
+                placed_at: '2026-11-20T10:42:01.248Z'
+                updated_at: '2026-11-20T10:42:01.248Z'
+        '400':
+          $ref: './shared/common.yaml#/components/responses/BadRequest'
+        '422':
+          description: Validation failed, unknown ticker, bad tick size, or not enough cash/shares.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              examples:
+                insufficientFunds:
+                  summary: Not enough cash
+                  value:
+                    type: https://circuitbreaker.local/errors/insufficient-funds
+                    title: Not enough cash
+                    status: 422
+                    code: INSUFFICIENT_FUNDS
+                    detail: This order needs 12,30,000 paise (12,300.00 rupees) but only 9,50,000 paise is available.
+                    correlation_id: req-5f1c2a
+                invalidTick:
+                  summary: Price not a multiple of the tick size
+                  value:
+                    type: https://circuitbreaker.local/errors/invalid-tick-size
+                    title: Invalid price
+                    status: 422
+                    code: INVALID_TICK_SIZE
+                    detail: limit_price_paise must be a multiple of 5.
+                    correlation_id: req-5f1c2a
+                    errors:
+                      - field: limit_price_paise
+                        message: 24603 is not a multiple of 5
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
+    get:
+      tags: [Orders]
+      operationId: listMyOrders
+      summary: List my orders
+      x-seeds-id: Q-07
+      description: '**Q-07** — List the calling trader''s orders, newest first.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TraderIdHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: status
+          in: query
+          required: false
+          description: Filter by status. `open` is shorthand for PENDING, OPEN and PARTIALLY_FILLED.
+          schema:
+            type: string
+            enum: [open, PENDING, OPEN, PARTIALLY_FILLED, FILLED, CANCELLED, REJECTED]
+        - name: ticker
+          in: query
+          required: false
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Ticker'
+        - $ref: './shared/common.yaml#/components/parameters/Limit'
+        - $ref: './shared/common.yaml#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of orders.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderList'
+              example:
+                items:
+                  - order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+                    trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                    ticker: CHAIWALA
+                    side: BUY
+                    order_type: LIMIT
+                    quantity: 50
+                    limit_price_paise: 24600
+                    protection_price_paise: null
+                    status: PARTIALLY_FILLED
+                    filled_quantity: 20
+                    remaining_quantity: 30
+                    average_fill_price_paise: 24550
+                    cancel_requested: false
+                    cancel_reason: null
+                    rejection_reason: null
+                    placed_at: '2026-11-20T10:42:01.248Z'
+                    updated_at: '2026-11-20T10:42:01.270Z'
+                next_cursor: null
+        '400':
+          $ref: './shared/common.yaml#/components/responses/BadRequest'
+  /v1/orders/{order_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrderIdPath'
+    get:
+      tags: [Orders]
+      operationId: getOrder
+      summary: Get one of my orders
+      x-seeds-id: Q-08
+      description: '**Q-08** — Get one order owned by the caller. Returns 404 for other traders'' orders.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TraderIdHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+                trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                ticker: CHAIWALA
+                side: BUY
+                order_type: LIMIT
+                quantity: 50
+                limit_price_paise: 24600
+                protection_price_paise: null
+                status: FILLED
+                filled_quantity: 50
+                remaining_quantity: 0
+                average_fill_price_paise: 24570
+                cancel_requested: false
+                cancel_reason: null
+                rejection_reason: null
+                placed_at: '2026-11-20T10:42:01.248Z'
+                updated_at: '2026-11-20T10:42:09.004Z'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+    delete:
+      tags: [Orders]
+      operationId: cancelOrder
+      summary: Cancel an order
+      x-seeds-id: A-07
+      description: |
+        **A-07** — Request cancellation of the unfilled part of an order. Returns **202** with
+        `cancel_requested: true`. The matching engine decides: the order becomes CANCELLED (`OrderCancelled`) or,
+        if it filled in the meantime, the request is rejected (`OrderCancelRejected`) and `cancel_requested`
+        returns to false.
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TraderIdHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '202':
+          description: Cancel requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+                trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                ticker: CHAIWALA
+                side: BUY
+                order_type: LIMIT
+                quantity: 50
+                limit_price_paise: 24600
+                protection_price_paise: null
+                status: PARTIALLY_FILLED
+                filled_quantity: 20
+                remaining_quantity: 30
+                average_fill_price_paise: 24550
+                cancel_requested: true
+                cancel_reason: null
+                rejection_reason: null
+                placed_at: '2026-11-20T10:42:01.248Z'
+                updated_at: '2026-11-20T10:43:10.004Z'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+        '409':
+          description: The order is already FILLED, CANCELLED or REJECTED, or a cancel is already pending.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/order-not-cancellable
+                title: Order cannot be cancelled
+                status: 409
+                code: ORDER_NOT_CANCELLABLE
+                detail: Order 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12 is already FILLED.
+                correlation_id: req-9a8b7c
+components:
+  parameters:
+    OrderIdPath:
+      name: order_id
+      in: path
+      required: true
+      schema:
+        $ref: './shared/common.yaml#/components/schemas/Uuid'
+      example: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Client-generated unique key. Repeating a request with the same key within 24 hours returns the original
+        result instead of placing a second order — safe retries for flaky phone connections and bots.
+      schema:
+        type: string
+        maxLength: 64
+      example: 9b1f0c3e-phone-retry-1
+  schemas:
+    LimitOrderRequest:
+      type: object
+      required: [ticker, side, order_type, quantity, limit_price_paise]
+      properties:
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        side:
+          $ref: './shared/common.yaml#/components/schemas/Side'
+        order_type:
+          type: string
+          const: LIMIT
+        quantity:
+          $ref: './shared/common.yaml#/components/schemas/Quantity'
+        limit_price_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+      additionalProperties: false
+    MarketOrderRequest:
+      type: object
+      required: [ticker, side, order_type, quantity]
+      properties:
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        side:
+          $ref: './shared/common.yaml#/components/schemas/Side'
+        order_type:
+          type: string
+          const: MARKET
+        quantity:
+          $ref: './shared/common.yaml#/components/schemas/Quantity'
+      additionalProperties: false
+    PlaceOrderRequest:
+      description: A LIMIT order needs `limit_price_paise`; a MARKET order must not have one.
+      oneOf:
+        - $ref: '#/components/schemas/LimitOrderRequest'
+        - $ref: '#/components/schemas/MarketOrderRequest'
+      discriminator:
+        propertyName: order_type
+        mapping:
+          LIMIT: '#/components/schemas/LimitOrderRequest'
+          MARKET: '#/components/schemas/MarketOrderRequest'
+    OrderStatus:
+      type: string
+      enum: [PENDING, OPEN, PARTIALLY_FILLED, FILLED, CANCELLED, REJECTED]
+      description: |
+        PENDING = accepted by order-service, not yet seen by the engine; OPEN = resting in the book;
+        PARTIALLY_FILLED; FILLED; CANCELLED (by the owner, or the unfilled part of a MARKET order);
+        REJECTED = failed validation or reservation (never reached the engine).
+    Order:
+      type: object
+      required: [order_id, trader_id, ticker, side, order_type, quantity, status, filled_quantity,
+                 remaining_quantity, cancel_requested, placed_at, updated_at]
+      properties:
+        order_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        trader_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        side:
+          $ref: './shared/common.yaml#/components/schemas/Side'
+        order_type:
+          $ref: './shared/common.yaml#/components/schemas/OrderType'
+        quantity:
+          $ref: './shared/common.yaml#/components/schemas/Quantity'
+        limit_price_paise:
+          type: [integer, 'null']
+          multipleOf: 5
+          description: Set for LIMIT orders, null for MARKET.
+        protection_price_paise:
+          type: [integer, 'null']
+          multipleOf: 5
+          description: Set for MARKET orders (last price plus or minus 10%), null for LIMIT.
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        filled_quantity:
+          type: integer
+          minimum: 0
+        remaining_quantity:
+          type: integer
+          minimum: 0
+        average_fill_price_paise:
+          type: [integer, 'null']
+          description: Volume-weighted average fill price; null until the first fill.
+        cancel_requested:
+          type: boolean
+        cancel_reason:
+          type: [string, 'null']
+          enum: [USER_REQUESTED, UNFILLED_MARKET_ORDER, null]
+        rejection_reason:
+          type: [string, 'null']
+          enum: [INSUFFICIENT_FUNDS, INSUFFICIENT_SHARES, INVALID_TICK_SIZE, UNKNOWN_TICKER, VALIDATION_FAILED, null]
+        placed_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        updated_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+    OrderList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        next_cursor:
+          type: [string, 'null']

@@ -1,0 +1,387 @@
+openapi: 3.1.0
+info:
+  title: chaos-service API
+  version: 1.0.0
+  summary: Run controlled chaos experiments.
+  description: |
+    Owned by the **Platform & Reliability Team** (Mohammad Oweis). Admin only (api-gateway enforces the `admin`
+    role; the service re-checks `X-Role`).
+
+    One experiment at a time; each has an automatic expiry and an explicit undo. chaos-service consumes
+    `incidents.v1` to record time to detect, the agent's actions and time to recover. It never sends anything to
+    the SRE agent. Scenario details: docs/03-architecture/06-chaos-scenarios.md.
+servers:
+  - url: http://localhost:8007
+    description: Local Docker Compose
+  - url: http://chaos-service:8000
+    description: Inside the Kubernetes namespace (staging or prod)
+security: []
+tags:
+  - name: Scenarios
+    description: The catalogue of available failures.
+  - name: Experiments
+    description: Running and reviewing chaos experiments.
+paths:
+  /v1/chaos/scenarios:
+    get:
+      tags: [Scenarios]
+      operationId: listChaosScenarios
+      summary: List chaos scenarios
+      x-seeds-id: Q-21
+      description: '**Q-21** — The three scenarios with their target, symptom and expected fix (shown on the Chaos Panel).'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Scenarios.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioList'
+              example:
+                scenarios:
+                  - scenario: BAD_DEPLOY
+                    name: Bad deploy
+                    description: Deploys release 1.4.1 of order-service, which fails about 40% of order placements.
+                    target_service: order-service
+                    expected_fix: rollback_deployment
+                    default_duration_seconds: 300
+                  - scenario: MEMORY_LEAK
+                    name: Memory leak
+                    description: Makes market-data-service leak memory steadily until it is restarted.
+                    target_service: market-data-service
+                    expected_fix: restart_deployment
+                    default_duration_seconds: 600
+                  - scenario: TRAFFIC_SPIKE
+                    name: Traffic spike
+                    description: Sends about 400 requests per second at order-service through the gateway.
+                    target_service: order-service
+                    expected_fix: scale_deployment
+                    default_duration_seconds: 300
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+  /v1/chaos/experiments:
+    post:
+      tags: [Experiments]
+      operationId: startChaosExperiment
+      summary: Start a chaos experiment
+      x-seeds-id: A-10
+      description: '**A-10** — Start one scenario. Refused with 409 if another experiment is running.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartExperimentRequest'
+            examples:
+              badDeploy:
+                summary: Bad deploy with defaults
+                value:
+                  scenario: BAD_DEPLOY
+              spike:
+                summary: Bigger traffic spike for 3 minutes
+                value:
+                  scenario: TRAFFIC_SPIKE
+                  duration_seconds: 180
+                  parameters:
+                    requests_per_second: 500
+      responses:
+        '201':
+          description: Experiment running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Experiment'
+              example:
+                experiment_id: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+                scenario: BAD_DEPLOY
+                target_service: order-service
+                status: RUNNING
+                parameters:
+                  error_rate: 0.4
+                started_at: '2026-11-20T11:04:50.000Z'
+                ends_at: '2026-11-20T11:09:50.000Z'
+                ended_at: null
+                incident_id: null
+                time_to_detect_seconds: null
+                time_to_recover_seconds: null
+                agent_actions: []
+                timeline:
+                  - at: '2026-11-20T11:04:50.000Z'
+                    message: Deployed order-service release 1.4.1 (revision 8).
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+        '409':
+          description: Another experiment is already running.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/experiment-already-running
+                title: Experiment already running
+                status: 409
+                code: EXPERIMENT_ALREADY_RUNNING
+                detail: Stop experiment 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c (BAD_DEPLOY) first.
+                correlation_id: req-adm-1
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+    get:
+      tags: [Experiments]
+      operationId: listChaosExperiments
+      summary: List chaos experiments
+      x-seeds-id: Q-22
+      description: '**Q-22** — Experiments since chaos-service started, newest first.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Experiments.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExperimentList'
+              example:
+                items:
+                  - experiment_id: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+                    scenario: BAD_DEPLOY
+                    target_service: order-service
+                    status: REMEDIATED
+                    parameters:
+                      error_rate: 0.4
+                    started_at: '2026-11-20T11:04:50.000Z'
+                    ends_at: '2026-11-20T11:09:50.000Z'
+                    ended_at: '2026-11-20T11:07:05.000Z'
+                    incident_id: INC-0007
+                    time_to_detect_seconds: 41
+                    time_to_recover_seconds: 135
+                    agent_actions: [rollback_deployment]
+                    timeline: []
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+  /v1/chaos/experiments/{experiment_id}:
+    get:
+      tags: [Experiments]
+      operationId: getChaosExperiment
+      summary: Get one chaos experiment
+      x-seeds-id: Q-23
+      description: '**Q-23** — One experiment with its timeline and measured times.'
+      parameters:
+        - $ref: '#/components/parameters/ExperimentIdPath'
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The experiment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Experiment'
+              example:
+                experiment_id: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+                scenario: BAD_DEPLOY
+                target_service: order-service
+                status: REMEDIATED
+                parameters:
+                  error_rate: 0.4
+                started_at: '2026-11-20T11:04:50.000Z'
+                ends_at: '2026-11-20T11:09:50.000Z'
+                ended_at: '2026-11-20T11:07:05.000Z'
+                incident_id: INC-0007
+                time_to_detect_seconds: 41
+                time_to_recover_seconds: 135
+                agent_actions: [rollback_deployment]
+                timeline:
+                  - at: '2026-11-20T11:04:50.000Z'
+                    message: Deployed order-service release 1.4.1 (revision 8).
+                  - at: '2026-11-20T11:05:31.000Z'
+                    message: SRE agent opened INC-0007 (detected after 41 s).
+                  - at: '2026-11-20T11:06:01.398Z'
+                    message: SRE agent executed rollback_deployment on order-service.
+                  - at: '2026-11-20T11:07:05.000Z'
+                    message: INC-0007 resolved. Service recovered 135 s after the fault started.
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+  /v1/chaos/experiments/{experiment_id}/stop:
+    post:
+      tags: [Experiments]
+      operationId: stopChaosExperiment
+      summary: Stop a chaos experiment
+      x-seeds-id: A-11
+      description: '**A-11** — Stop a running experiment and undo its fault (roll back, clear fault, or stop load).'
+      parameters:
+        - $ref: '#/components/parameters/ExperimentIdPath'
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Experiment stopped and cleaned up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Experiment'
+              example:
+                experiment_id: 7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d
+                scenario: TRAFFIC_SPIKE
+                target_service: order-service
+                status: STOPPED
+                parameters:
+                  requests_per_second: 400
+                started_at: '2026-11-20T11:20:00.000Z'
+                ends_at: '2026-11-20T11:25:00.000Z'
+                ended_at: '2026-11-20T11:22:10.000Z'
+                incident_id: INC-0008
+                time_to_detect_seconds: 65
+                time_to_recover_seconds: null
+                agent_actions: [scale_deployment]
+                timeline:
+                  - at: '2026-11-20T11:22:10.000Z'
+                    message: Stopped by admin. Load generator stopped and 212 resting load orders cancelled.
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+        '409':
+          description: The experiment is not running.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/experiment-not-running
+                title: Experiment not running
+                status: 409
+                code: EXPERIMENT_NOT_RUNNING
+                detail: Experiment 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c already ended (REMEDIATED).
+                correlation_id: req-adm-2
+components:
+  parameters:
+    ExperimentIdPath:
+      name: experiment_id
+      in: path
+      required: true
+      schema:
+        $ref: './shared/common.yaml#/components/schemas/Uuid'
+      example: 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c
+  schemas:
+    ScenarioId:
+      type: string
+      enum: [BAD_DEPLOY, MEMORY_LEAK, TRAFFIC_SPIKE]
+    Scenario:
+      type: object
+      required: [scenario, name, description, target_service, expected_fix, default_duration_seconds]
+      properties:
+        scenario:
+          $ref: '#/components/schemas/ScenarioId'
+        name:
+          type: string
+        description:
+          type: string
+        target_service:
+          $ref: './shared/common.yaml#/components/schemas/ServiceName'
+        expected_fix:
+          $ref: './shared/common.yaml#/components/schemas/AgentAction'
+        default_duration_seconds:
+          type: integer
+    ScenarioList:
+      type: object
+      required: [scenarios]
+      properties:
+        scenarios:
+          type: array
+          items:
+            $ref: '#/components/schemas/Scenario'
+    ExperimentParameters:
+      type: object
+      description: Optional tuning; unspecified values use the scenario defaults.
+      properties:
+        error_rate:
+          type: number
+          minimum: 0.05
+          maximum: 0.9
+          description: BAD_DEPLOY only. Fraction of order placements that fail (default 0.4).
+        rate_mb_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 200
+          description: MEMORY_LEAK only (default 40).
+        requests_per_second:
+          type: integer
+          minimum: 50
+          maximum: 1000
+          description: TRAFFIC_SPIKE only (default 400).
+      additionalProperties: false
+    StartExperimentRequest:
+      type: object
+      required: [scenario]
+      properties:
+        scenario:
+          $ref: '#/components/schemas/ScenarioId'
+        duration_seconds:
+          type: integer
+          minimum: 60
+          maximum: 900
+        parameters:
+          $ref: '#/components/schemas/ExperimentParameters'
+      additionalProperties: false
+    Experiment:
+      type: object
+      required: [experiment_id, scenario, target_service, status, parameters, started_at, ends_at, ended_at,
+                 incident_id, time_to_detect_seconds, time_to_recover_seconds, agent_actions, timeline]
+      properties:
+        experiment_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        scenario:
+          $ref: '#/components/schemas/ScenarioId'
+        target_service:
+          $ref: './shared/common.yaml#/components/schemas/ServiceName'
+        status:
+          type: string
+          enum: [RUNNING, REMEDIATED, STOPPED, EXPIRED]
+        parameters:
+          $ref: '#/components/schemas/ExperimentParameters'
+        started_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        ends_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        ended_at:
+          type: [string, 'null']
+          format: date-time
+        incident_id:
+          type: [string, 'null']
+          pattern: '^INC-[0-9]{4}$'
+        time_to_detect_seconds:
+          type: [integer, 'null']
+          description: Seconds from experiment start to IncidentOpened.
+        time_to_recover_seconds:
+          type: [integer, 'null']
+          description: Seconds from experiment start to IncidentResolved (the incident's own time_to_recover_seconds counts from when it opened).
+        agent_actions:
+          type: array
+          items:
+            $ref: './shared/common.yaml#/components/schemas/AgentAction'
+        timeline:
+          type: array
+          items:
+            type: object
+            required: [at, message]
+            properties:
+              at:
+                $ref: './shared/common.yaml#/components/schemas/Timestamp'
+              message:
+                type: string
+    ExperimentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Experiment'

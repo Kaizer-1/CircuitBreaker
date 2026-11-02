@@ -1,0 +1,444 @@
+openapi: 3.1.0
+info:
+  title: sre-agent API
+  version: 1.0.0
+  summary: Incidents, remediation approvals and agent settings.
+  description: |
+    Owned by **Kaizer Dewaswala** (enabling role, in collaboration with the Platform & Reliability Team).
+
+    The agent's main work is its loop: poll Prometheus alerts, open incidents (A-16), collect evidence, ask an LLM
+    through OpenRouter to choose one allowlisted tool, check guardrails, and execute against the Kubernetes API (A-17).
+    It publishes `IncidentOpened`, `RemediationProposed`, `RemediationApproved`, `RemediationDeclined`,
+    `RemediationExecuted` and `IncidentResolved` to `incidents.v1`.
+
+    This HTTP API lets people read incidents, approve or decline proposed fixes and change settings. The live
+    incident feed is the WebSocket `/v1/ws/incidents` (Q-19), documented in api/README.md.
+    There is deliberately **no** endpoint to change the model or the tool allowlist.
+servers:
+  - url: http://localhost:8006
+    description: Local Docker Compose
+  - url: http://sre-agent:8000
+    description: Inside the Kubernetes namespace (staging or prod)
+security: []
+tags:
+  - name: Incidents
+    description: Incidents and the agent's decisions.
+  - name: Settings
+    description: Approval toggle and pause switch.
+paths:
+  /v1/incidents:
+    get:
+      tags: [Incidents]
+      operationId: listIncidents
+      summary: List incidents
+      x-seeds-id: Q-17
+      description: '**Q-17** — Incidents, newest first. Readable by any signed-in user (transparency on the projector).'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/IncidentStatus'
+        - $ref: './shared/common.yaml#/components/parameters/Limit'
+        - $ref: './shared/common.yaml#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of incidents.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentList'
+              example:
+                items:
+                  - incident_id: INC-0007
+                    alert_name: OrderServiceHighErrorRate
+                    service: order-service
+                    severity: critical
+                    status: RESOLVED
+                    resolution: RECOVERED
+                    summary: order-service 5xx ratio is 38% (threshold 5%) for 1 minute
+                    opened_at: '2026-11-20T11:05:31.000Z'
+                    resolved_at: '2026-11-20T11:07:05.000Z'
+                    time_to_recover_seconds: 94
+                    actions_taken: [rollback_deployment]
+                next_cursor: null
+        '400':
+          $ref: './shared/common.yaml#/components/responses/BadRequest'
+  /v1/incidents/{incident_id}:
+    get:
+      tags: [Incidents]
+      operationId: getIncident
+      summary: Get one incident with its timeline
+      x-seeds-id: Q-18
+      description: '**Q-18** — Full incident: evidence summary, every proposal and decision, and the timeline shown on the feed.'
+      parameters:
+        - $ref: '#/components/parameters/IncidentIdPath'
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The incident.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Incident'
+              example:
+                incident_id: INC-0007
+                alert_name: OrderServiceHighErrorRate
+                service: order-service
+                severity: critical
+                status: RESOLVED
+                resolution: RECOVERED
+                summary: order-service 5xx ratio is 38% (threshold 5%) for 1 minute
+                opened_at: '2026-11-20T11:05:31.000Z'
+                resolved_at: '2026-11-20T11:07:05.000Z'
+                time_to_recover_seconds: 94
+                actions_taken: [rollback_deployment]
+                evidence_summary: 'Errors 38% (baseline 0.2%). Revision 8 (release 1.4.1) deployed 11:04:50. Memory 41% of limit, flat. Requests 22/s (baseline 20/s). Top log error: ValueError: price_band not configured (412 times).'
+                pending_remediation: null
+                remediations:
+                  - remediation_id: d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f7a
+                    action: rollback_deployment
+                    target_service: order-service
+                    parameters:
+                      to_revision: 7
+                    explanation: Errors on order-service jumped from 0.2% to 38% about 40 seconds after revision 8 (release 1.4.1) was deployed. Memory and traffic are normal, and the error logs show a new exception type. A bad release is the most likely cause, so rolling back to revision 7 is the smallest safe fix.
+                    model: anthropic/claude-sonnet-5.5
+                    status: EXECUTED
+                    requires_approval: true
+                    proposed_at: '2026-11-20T11:05:44.118Z'
+                    decided_at: '2026-11-20T11:05:58.899Z'
+                    decided_by: presenter
+                    executed_at: '2026-11-20T11:06:01.398Z'
+                timeline:
+                  - at: '2026-11-20T11:05:31.000Z'
+                    kind: OPENED
+                    message: order-service errors at 38% (normally under 1%).
+                  - at: '2026-11-20T11:05:44.118Z'
+                    kind: PROPOSED
+                    message: Roll back order-service to revision 7.
+                  - at: '2026-11-20T11:05:58.899Z'
+                    kind: APPROVED
+                    message: Approved by presenter.
+                  - at: '2026-11-20T11:06:01.398Z'
+                    kind: EXECUTED
+                    message: Rolled back order-service to revision 7. 2/2 pods ready.
+                  - at: '2026-11-20T11:07:05.000Z'
+                    kind: RESOLVED
+                    message: Resolved in 94 s. Errors back to 0.2%.
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+  /v1/incidents/{incident_id}/decision:
+    post:
+      tags: [Incidents]
+      operationId: decideRemediation
+      summary: Approve or decline a proposed remediation
+      x-seeds-id: A-15
+      description: |
+        **A-15** — Admin only. Approve or decline the incident's pending remediation (only exists while approval mode
+        is on). Approve → the agent executes it and emits `RemediationApproved` then `RemediationExecuted`.
+        Decline → `RemediationDeclined` (declined_by admin) and the incident is escalated.
+      parameters:
+        - $ref: '#/components/parameters/IncidentIdPath'
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: '#/components/parameters/NicknameHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+            example:
+              remediation_id: d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f7a
+              decision: APPROVE
+              comment: Agreed, roll back.
+      responses:
+        '200':
+          description: Decision recorded; the updated remediation is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Remediation'
+              example:
+                remediation_id: d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f7a
+                action: rollback_deployment
+                target_service: order-service
+                parameters:
+                  to_revision: 7
+                explanation: Errors began right after revision 8 was deployed; rolling back is the smallest safe fix.
+                model: anthropic/claude-sonnet-5.5
+                status: APPROVED
+                requires_approval: true
+                proposed_at: '2026-11-20T11:05:44.118Z'
+                decided_at: '2026-11-20T11:05:58.899Z'
+                decided_by: presenter
+                executed_at: null
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+        '409':
+          description: Nothing pending, or the remediation was already decided or timed out.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/no-pending-remediation
+                title: Nothing to decide
+                status: 409
+                code: NO_PENDING_REMEDIATION
+                detail: Remediation d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f7a was already approved.
+                correlation_id: req-adm-3
+  /v1/agent/settings:
+    get:
+      tags: [Settings]
+      operationId: getAgentSettings
+      summary: Get agent settings
+      x-seeds-id: Q-20
+      description: '**Q-20** — Admin only. Current approval mode, pause switch and configured model for this environment.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSettings'
+              example:
+                environment: prod
+                approval_required: true
+                paused: false
+                model: anthropic/claude-sonnet-5.5
+                updated_at: '2026-11-20T10:00:00.000Z'
+                updated_by: presenter
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+    put:
+      tags: [Settings]
+      operationId: updateAgentSettings
+      summary: Update agent settings
+      x-seeds-id: A-14
+      description: |
+        **A-14** — Admin only. Switch the human-approval toggle and/or pause the agent. The model and the tool
+        allowlist are **not** settable through the API (configuration and code review only).
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: '#/components/parameters/NicknameHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentSettingsUpdate'
+            example:
+              approval_required: false
+              paused: false
+      responses:
+        '200':
+          description: Updated settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSettings'
+              example:
+                environment: prod
+                approval_required: false
+                paused: false
+                model: anthropic/claude-sonnet-5.5
+                updated_at: '2026-11-20T11:15:00.000Z'
+                updated_by: presenter
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+components:
+  parameters:
+    IncidentIdPath:
+      name: incident_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^INC-[0-9]{4}$'
+      example: INC-0007
+    NicknameHeader:
+      name: X-Nickname
+      in: header
+      required: true
+      description: Nickname of the authenticated user, set ONLY by api-gateway. Recorded as decided_by / updated_by.
+      schema:
+        type: string
+      example: presenter
+  schemas:
+    IncidentStatus:
+      type: string
+      enum: [OPEN, AWAITING_APPROVAL, RESOLVED]
+    Resolution:
+      type: [string, 'null']
+      enum: [RECOVERED, AUTO_CLEARED, ESCALATED, null]
+    IncidentSummary:
+      type: object
+      required: [incident_id, alert_name, service, severity, status, resolution, summary, opened_at, resolved_at,
+                 time_to_recover_seconds, actions_taken]
+      properties:
+        incident_id:
+          type: string
+          pattern: '^INC-[0-9]{4}$'
+        alert_name:
+          type: string
+        service:
+          $ref: './shared/common.yaml#/components/schemas/ServiceName'
+        severity:
+          type: string
+          enum: [warning, critical]
+        status:
+          $ref: '#/components/schemas/IncidentStatus'
+        resolution:
+          $ref: '#/components/schemas/Resolution'
+        summary:
+          type: string
+        opened_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        resolved_at:
+          type: [string, 'null']
+          format: date-time
+        time_to_recover_seconds:
+          type: [integer, 'null']
+        actions_taken:
+          type: array
+          items:
+            $ref: './shared/common.yaml#/components/schemas/AgentAction'
+    IncidentList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentSummary'
+        next_cursor:
+          type: [string, 'null']
+    Remediation:
+      type: object
+      required: [remediation_id, action, target_service, parameters, explanation, model, status, requires_approval,
+                 proposed_at, decided_at, decided_by, executed_at]
+      properties:
+        remediation_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        action:
+          $ref: './shared/common.yaml#/components/schemas/AgentAction'
+        target_service:
+          oneOf:
+            - $ref: './shared/common.yaml#/components/schemas/ServiceName'
+            - type: 'null'
+        parameters:
+          type: object
+          properties:
+            replicas:
+              type: integer
+              minimum: 1
+              maximum: 5
+            to_revision:
+              type: integer
+              minimum: 1
+        explanation:
+          type: string
+          maxLength: 600
+        model:
+          type: string
+          description: OpenRouter model slug used for the diagnosis.
+        status:
+          type: string
+          enum: [PROPOSED, APPROVED, DECLINED, EXECUTED, FAILED]
+        requires_approval:
+          type: boolean
+        proposed_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        decided_at:
+          type: [string, 'null']
+          format: date-time
+        decided_by:
+          type: [string, 'null']
+          description: Admin nickname, "guardrail", or null if no decision was needed.
+        executed_at:
+          type: [string, 'null']
+          format: date-time
+    TimelineEntry:
+      type: object
+      required: [at, kind, message]
+      properties:
+        at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        kind:
+          type: string
+          enum: [OPENED, EVIDENCE_COLLECTED, DIAGNOSIS, PROPOSED, APPROVED, DECLINED, EXECUTED, VERIFIED, RESOLVED, ESCALATED]
+        message:
+          type: string
+          description: Plain-English line shown on the incident feed.
+    Incident:
+      allOf:
+        - $ref: '#/components/schemas/IncidentSummary'
+        - type: object
+          required: [evidence_summary, pending_remediation, remediations, timeline]
+          properties:
+            evidence_summary:
+              type: string
+            pending_remediation:
+              oneOf:
+                - $ref: '#/components/schemas/Remediation'
+                - type: 'null'
+            remediations:
+              type: array
+              items:
+                $ref: '#/components/schemas/Remediation'
+            timeline:
+              type: array
+              items:
+                $ref: '#/components/schemas/TimelineEntry'
+    DecisionRequest:
+      type: object
+      required: [remediation_id, decision]
+      properties:
+        remediation_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        decision:
+          type: string
+          enum: [APPROVE, DECLINE]
+        comment:
+          type: [string, 'null']
+          maxLength: 280
+      additionalProperties: false
+    AgentSettings:
+      type: object
+      required: [environment, approval_required, paused, model, updated_at, updated_by]
+      properties:
+        environment:
+          type: string
+          enum: [dev, staging, prod]
+        approval_required:
+          type: boolean
+        paused:
+          type: boolean
+        model:
+          type: string
+          description: Read-only; set by configuration (SRE_AGENT_MODEL).
+        updated_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        updated_by:
+          type: [string, 'null']
+    AgentSettingsUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        approval_required:
+          type: boolean
+        paused:
+          type: boolean
+      additionalProperties: false

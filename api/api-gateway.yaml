@@ -1,0 +1,865 @@
+openapi: 3.1.0
+info:
+  title: CircuitBreaker public API (api-gateway)
+  version: 1.0.0
+  summary: The single public entry point used by the web app and the bots.
+  description: |
+    Owned by the **Platform & Reliability Team** (Mohammad Oweis).
+
+    This is the **public API**: everything a phone, the presenter laptop or a bot can call. `api-gateway`:
+    1. issues sessions (signed JWTs) — the only operations it implements itself (A-01, A-03, A-04, Q-01);
+    2. verifies the `Authorization: Bearer` token, checks the role, applies rate limits;
+    3. strips any client-sent `X-Trader-Id` / `X-Role` / `X-Nickname`, sets them from the token, adds
+       `X-Correlation-Id`, and proxies to the owning service (`x-upstream`);
+    4. **refuses every `/internal/` path**.
+
+    Request/response schemas are referenced from the owning service's spec, so there is one definition of each
+    shape. WebSocket channels (`/v1/ws/...`) are proxied too and documented in api/README.md.
+
+    Roles: `trader` (joined via QR), `bot` (bot-traders and chaos load accounts), `admin` (presenter).
+servers:
+  - url: http://localhost:8080
+    description: Local Docker Compose
+  - url: http://circuitbreaker.localtest.me
+    description: kind cluster ingress (prod namespace)
+security:
+  - bearerAuth: []
+tags:
+  - name: Sessions
+    description: Joining and signing in. Implemented by api-gateway itself.
+  - name: Orders
+    description: Proxied to order-service.
+  - name: Market data
+    description: Proxied to market-data-service.
+  - name: Time travel
+    description: Proxied to market-data-service.
+  - name: Portfolio
+    description: Proxied to portfolio-service.
+  - name: Incidents
+    description: Proxied to sre-agent.
+  - name: Chaos
+    description: Proxied to chaos-service. Admin only.
+paths:
+  /v1/sessions:
+    post:
+      tags: [Sessions]
+      operationId: joinMarket
+      summary: Join the market as a trader
+      x-seeds-id: A-01
+      description: |
+        **A-01** — Called by the web app after scanning the QR code. Opens a trading account with 1,00,000 rupees via
+        portfolio-service (A-02) and returns a 12-hour access token with role `trader`. No password.
+      security: []
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinRequest'
+            example:
+              nickname: RajuTrader
+      responses:
+        '201':
+          description: 'Joined. Store the token and send it as `Authorization: Bearer <token>`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+              example:
+                access_token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIzZDJhMWIwYy05ZThmIiwicm9sZSI6InRyYWRlciJ9.c2lnbmF0dXJl
+                token_type: Bearer
+                expires_at: '2026-11-20T22:30:12.000Z'
+                trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                nickname: RajuTrader
+                role: trader
+        '409':
+          description: Nickname already taken.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/nickname-taken
+                title: Nickname taken
+                status: 409
+                code: NICKNAME_TAKEN
+                detail: Someone is already trading as RajuTrader. Please pick another nickname.
+                correlation_id: req-1a2b3c
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+        '429':
+          $ref: './shared/common.yaml#/components/responses/TooManyRequests'
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
+  /v1/bot-sessions:
+    post:
+      tags: [Sessions]
+      operationId: startBotSession
+      summary: Start a bot session
+      x-seeds-id: A-03
+      description: |
+        **A-03** — Used by bot-traders (`bot-01`…`bot-20`) and by chaos-service's load generator (`load-01`…`load-10`).
+        Requires the shared bot secret. Returns a token with role `bot`.
+      security: []
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: X-Bot-Secret
+          in: header
+          required: true
+          description: Shared secret from Kubernetes Secret `bot-secret` (LocalStack Secrets Manager).
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BotSessionRequest'
+            example:
+              account_name: bot-07
+      responses:
+        '201':
+          description: Bot session started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+              example:
+                access_token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJiMGIwYjBiMC0wMDA3Iiwicm9sZSI6ImJvdCJ9.c2lnbmF0dXJl
+                token_type: Bearer
+                expires_at: '2026-11-20T21:00:00.000Z'
+                trader_id: b0b0b0b0-0007-4000-8000-000000000007
+                nickname: bot-07
+                role: bot
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /v1/admin/sessions:
+    post:
+      tags: [Sessions]
+      operationId: startAdminSession
+      summary: Start an admin session
+      x-seeds-id: A-04
+      description: '**A-04** — Presenter login with the admin passcode. Returns a token with role `admin` (no trading account).'
+      security: []
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminSessionRequest'
+            example:
+              nickname: presenter
+              passcode: correct-horse-battery
+      responses:
+        '201':
+          description: Admin session started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+              example:
+                access_token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwcmVzZW50ZXIiLCJyb2xlIjoiYWRtaW4ifQ.c2lnbmF0dXJl
+                token_type: Bearer
+                expires_at: '2026-11-20T22:00:00.000Z'
+                trader_id: null
+                nickname: presenter
+                role: admin
+        '401':
+          description: Wrong passcode.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/invalid-passcode
+                title: Wrong passcode
+                status: 401
+                code: INVALID_PASSCODE
+                detail: The admin passcode is incorrect.
+                correlation_id: req-adm-0
+        '429':
+          $ref: './shared/common.yaml#/components/responses/TooManyRequests'
+  /v1/session:
+    get:
+      tags: [Sessions]
+      operationId: getCurrentSession
+      summary: Get my current session
+      x-seeds-id: Q-01
+      description: '**Q-01** — Who am I? Decodes the caller''s token. Used by the web app on start-up.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Session details (without the token).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+              example:
+                trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                nickname: RajuTrader
+                role: trader
+                expires_at: '2026-11-20T22:30:12.000Z'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+
+  # ---------------- Orders -> order-service ----------------
+  /v1/orders:
+    post:
+      tags: [Orders]
+      operationId: placeOrder
+      summary: Place an order
+      x-seeds-id: A-05
+      x-upstream: order-service
+      description: '**A-05** — Proxied to order-service `POST /v1/orders`. Roles: trader, bot. Returns 202 (matching is asynchronous).'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - $ref: './order-service.yaml#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './order-service.yaml#/components/schemas/PlaceOrderRequest'
+            example:
+              ticker: CHAIWALA
+              side: BUY
+              order_type: LIMIT
+              quantity: 50
+              limit_price_paise: 24600
+      responses:
+        '202':
+          description: Order accepted for matching.
+          content:
+            application/json:
+              schema:
+                $ref: './order-service.yaml#/components/schemas/Order'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+        '429':
+          $ref: './shared/common.yaml#/components/responses/TooManyRequests'
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
+    get:
+      tags: [Orders]
+      operationId: listMyOrders
+      summary: List my orders
+      x-seeds-id: Q-07
+      x-upstream: order-service
+      description: '**Q-07** — Proxied to order-service `GET /v1/orders`. Roles: trader, bot.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [open, PENDING, OPEN, PARTIALLY_FILLED, FILLED, CANCELLED, REJECTED]
+        - name: ticker
+          in: query
+          required: false
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Ticker'
+        - $ref: './shared/common.yaml#/components/parameters/Limit'
+        - $ref: './shared/common.yaml#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of orders.
+          content:
+            application/json:
+              schema:
+                $ref: './order-service.yaml#/components/schemas/OrderList'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '429':
+          $ref: './shared/common.yaml#/components/responses/TooManyRequests'
+  /v1/orders/{order_id}:
+    parameters:
+      - $ref: './order-service.yaml#/components/parameters/OrderIdPath'
+    get:
+      tags: [Orders]
+      operationId: getOrder
+      summary: Get one of my orders
+      x-seeds-id: Q-08
+      x-upstream: order-service
+      description: '**Q-08** — Proxied to order-service `GET /v1/orders/{order_id}`. Roles: trader, bot.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The order.
+          content:
+            application/json:
+              schema:
+                $ref: './order-service.yaml#/components/schemas/Order'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+    delete:
+      tags: [Orders]
+      operationId: cancelOrder
+      summary: Cancel an order
+      x-seeds-id: A-07
+      x-upstream: order-service
+      description: '**A-07** — Proxied to order-service `DELETE /v1/orders/{order_id}`. Roles: trader, bot. Returns 202.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '202':
+          description: Cancel requested.
+          content:
+            application/json:
+              schema:
+                $ref: './order-service.yaml#/components/schemas/Order'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+        '409':
+          description: Order cannot be cancelled.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+
+  # ---------------- Market data -> market-data-service ----------------
+  /v1/instruments:
+    get:
+      tags: [Market data]
+      operationId: listInstruments
+      summary: List instruments with last price and change
+      x-seeds-id: Q-02
+      x-upstream: market-data-service
+      description: '**Q-02** — Proxied to market-data-service. Any role.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: All instruments.
+          content:
+            application/json:
+              schema:
+                $ref: './market-data-service.yaml#/components/schemas/InstrumentList'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+  /v1/market/{ticker}/candles:
+    get:
+      tags: [Market data]
+      operationId: getCandles
+      summary: Get candles for a ticker
+      x-seeds-id: Q-03
+      x-upstream: market-data-service
+      description: '**Q-03** — Proxied to market-data-service. Any role.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TickerPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: interval
+          in: query
+          required: true
+          schema:
+            $ref: './market-data-service.yaml#/components/schemas/CandleInterval'
+        - name: from
+          in: query
+          required: false
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        - name: to
+          in: query
+          required: false
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Candles.
+          content:
+            application/json:
+              schema:
+                $ref: './market-data-service.yaml#/components/schemas/CandleSeries'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /v1/market/{ticker}/order-book:
+    get:
+      tags: [Market data]
+      operationId: getOrderBook
+      summary: Get order-book depth for a ticker
+      x-seeds-id: Q-04
+      x-upstream: market-data-service
+      description: '**Q-04** — Proxied to market-data-service. Any role.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TickerPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - $ref: './market-data-service.yaml#/components/parameters/Depth'
+      responses:
+        '200':
+          description: Depth.
+          content:
+            application/json:
+              schema:
+                $ref: './market-data-service.yaml#/components/schemas/OrderBookDepth'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /v1/market/{ticker}/trades:
+    get:
+      tags: [Market data]
+      operationId: getRecentTrades
+      summary: Get recent trades for a ticker
+      x-seeds-id: Q-05
+      x-upstream: market-data-service
+      description: '**Q-05** — Proxied to market-data-service. Any role.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TickerPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Trades.
+          content:
+            application/json:
+              schema:
+                $ref: './market-data-service.yaml#/components/schemas/TradeList'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /v1/time-travel/{ticker}:
+    get:
+      tags: [Time travel]
+      operationId: getMarketAt
+      summary: Get the market as it was at time T
+      x-seeds-id: Q-12
+      x-upstream: market-data-service
+      description: '**Q-12** — Proxied to market-data-service. Any role. Read-only: never changes the live market.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TickerPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: at
+          in: query
+          required: true
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        - $ref: './market-data-service.yaml#/components/parameters/Depth'
+      responses:
+        '200':
+          description: The market at time T.
+          content:
+            application/json:
+              schema:
+                $ref: './market-data-service.yaml#/components/schemas/TimeTravelView'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+
+  # ---------------- Portfolio -> portfolio-service ----------------
+  /v1/portfolio:
+    get:
+      tags: [Portfolio]
+      operationId: getMyPortfolio
+      summary: Get my portfolio
+      x-seeds-id: Q-09
+      x-upstream: portfolio-service
+      description: '**Q-09** — Proxied to portfolio-service. Roles: trader, bot.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The portfolio.
+          content:
+            application/json:
+              schema:
+                $ref: './portfolio-service.yaml#/components/schemas/Portfolio'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+  /v1/leaderboard:
+    get:
+      tags: [Portfolio]
+      operationId: getLeaderboard
+      summary: Get the leaderboard
+      x-seeds-id: Q-11
+      x-upstream: portfolio-service
+      description: '**Q-11** — Proxied to portfolio-service. Any role.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - $ref: './shared/common.yaml#/components/parameters/Limit'
+        - name: include_bots
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: The leaderboard.
+          content:
+            application/json:
+              schema:
+                $ref: './portfolio-service.yaml#/components/schemas/Leaderboard'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+
+  # ---------------- Incidents and agent -> sre-agent ----------------
+  /v1/incidents:
+    get:
+      tags: [Incidents]
+      operationId: listIncidents
+      summary: List incidents
+      x-seeds-id: Q-17
+      x-upstream: sre-agent
+      description: '**Q-17** — Proxied to sre-agent. Any role (shown on the projector for transparency).'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: './sre-agent.yaml#/components/schemas/IncidentStatus'
+        - $ref: './shared/common.yaml#/components/parameters/Limit'
+        - $ref: './shared/common.yaml#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of incidents.
+          content:
+            application/json:
+              schema:
+                $ref: './sre-agent.yaml#/components/schemas/IncidentList'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+  /v1/incidents/{incident_id}:
+    get:
+      tags: [Incidents]
+      operationId: getIncident
+      summary: Get one incident with its timeline
+      x-seeds-id: Q-18
+      x-upstream: sre-agent
+      description: '**Q-18** — Proxied to sre-agent. Any role.'
+      parameters:
+        - $ref: './sre-agent.yaml#/components/parameters/IncidentIdPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The incident.
+          content:
+            application/json:
+              schema:
+                $ref: './sre-agent.yaml#/components/schemas/Incident'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+  /v1/incidents/{incident_id}/decision:
+    post:
+      tags: [Incidents]
+      operationId: decideRemediation
+      summary: Approve or decline a proposed remediation
+      x-seeds-id: A-15
+      x-upstream: sre-agent
+      description: '**A-15** — Proxied to sre-agent. Role: admin.'
+      parameters:
+        - $ref: './sre-agent.yaml#/components/parameters/IncidentIdPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './sre-agent.yaml#/components/schemas/DecisionRequest'
+            example:
+              remediation_id: d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f7a
+              decision: APPROVE
+              comment: Agreed, roll back.
+      responses:
+        '200':
+          description: Decision recorded.
+          content:
+            application/json:
+              schema:
+                $ref: './sre-agent.yaml#/components/schemas/Remediation'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+        '409':
+          description: Nothing pending to decide.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+  /v1/agent/settings:
+    get:
+      tags: [Incidents]
+      operationId: getAgentSettings
+      summary: Get agent settings
+      x-seeds-id: Q-20
+      x-upstream: sre-agent
+      description: '**Q-20** — Proxied to sre-agent. Role: admin.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Settings.
+          content:
+            application/json:
+              schema:
+                $ref: './sre-agent.yaml#/components/schemas/AgentSettings'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+    put:
+      tags: [Incidents]
+      operationId: updateAgentSettings
+      summary: Update agent settings
+      x-seeds-id: A-14
+      x-upstream: sre-agent
+      description: '**A-14** — Proxied to sre-agent. Role: admin. Toggles human approval and the pause switch.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './sre-agent.yaml#/components/schemas/AgentSettingsUpdate'
+            example:
+              approval_required: true
+      responses:
+        '200':
+          description: Updated settings.
+          content:
+            application/json:
+              schema:
+                $ref: './sre-agent.yaml#/components/schemas/AgentSettings'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+
+  # ---------------- Chaos -> chaos-service ----------------
+  /v1/chaos/scenarios:
+    get:
+      tags: [Chaos]
+      operationId: listChaosScenarios
+      summary: List chaos scenarios
+      x-seeds-id: Q-21
+      x-upstream: chaos-service
+      description: '**Q-21** — Proxied to chaos-service. Role: admin.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Scenarios.
+          content:
+            application/json:
+              schema:
+                $ref: './chaos-service.yaml#/components/schemas/ScenarioList'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+  /v1/chaos/experiments:
+    post:
+      tags: [Chaos]
+      operationId: startChaosExperiment
+      summary: Start a chaos experiment
+      x-seeds-id: A-10
+      x-upstream: chaos-service
+      description: '**A-10** — Proxied to chaos-service. Role: admin.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './chaos-service.yaml#/components/schemas/StartExperimentRequest'
+            example:
+              scenario: BAD_DEPLOY
+      responses:
+        '201':
+          description: Experiment running.
+          content:
+            application/json:
+              schema:
+                $ref: './chaos-service.yaml#/components/schemas/Experiment'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+        '409':
+          description: Another experiment is already running.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+    get:
+      tags: [Chaos]
+      operationId: listChaosExperiments
+      summary: List chaos experiments
+      x-seeds-id: Q-22
+      x-upstream: chaos-service
+      description: '**Q-22** — Proxied to chaos-service. Role: admin.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Experiments.
+          content:
+            application/json:
+              schema:
+                $ref: './chaos-service.yaml#/components/schemas/ExperimentList'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+  /v1/chaos/experiments/{experiment_id}:
+    get:
+      tags: [Chaos]
+      operationId: getChaosExperiment
+      summary: Get one chaos experiment
+      x-seeds-id: Q-23
+      x-upstream: chaos-service
+      description: '**Q-23** — Proxied to chaos-service. Role: admin.'
+      parameters:
+        - $ref: './chaos-service.yaml#/components/parameters/ExperimentIdPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The experiment.
+          content:
+            application/json:
+              schema:
+                $ref: './chaos-service.yaml#/components/schemas/Experiment'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+  /v1/chaos/experiments/{experiment_id}/stop:
+    post:
+      tags: [Chaos]
+      operationId: stopChaosExperiment
+      summary: Stop a chaos experiment
+      x-seeds-id: A-11
+      x-upstream: chaos-service
+      description: '**A-11** — Proxied to chaos-service. Role: admin.'
+      parameters:
+        - $ref: './chaos-service.yaml#/components/parameters/ExperimentIdPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Experiment stopped.
+          content:
+            application/json:
+              schema:
+                $ref: './chaos-service.yaml#/components/schemas/Experiment'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
+        '409':
+          description: The experiment is not running.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Token from A-01, A-03 or A-04. Claims: sub (trader_id or nickname for admin), role, nickname, exp.'
+  schemas:
+    JoinRequest:
+      type: object
+      required: [nickname]
+      properties:
+        nickname:
+          type: string
+          pattern: '^[A-Za-z0-9_]{3,20}$'
+          description: 3–20 letters, digits or underscores. Must be unique.
+      additionalProperties: false
+    BotSessionRequest:
+      type: object
+      required: [account_name]
+      properties:
+        account_name:
+          type: string
+          pattern: '^(bot|load)-[0-9]{2}$'
+      additionalProperties: false
+    AdminSessionRequest:
+      type: object
+      required: [nickname, passcode]
+      properties:
+        nickname:
+          type: string
+          pattern: '^[A-Za-z0-9_]{3,20}$'
+        passcode:
+          type: string
+          minLength: 8
+      additionalProperties: false
+    Session:
+      type: object
+      required: [access_token, token_type, expires_at, trader_id, nickname, role]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          const: Bearer
+        expires_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        trader_id:
+          type: [string, 'null']
+          format: uuid
+          description: Null for admin sessions (admins have no trading account).
+        nickname:
+          type: string
+        role:
+          $ref: './shared/common.yaml#/components/schemas/Role'
+    SessionInfo:
+      type: object
+      required: [trader_id, nickname, role, expires_at]
+      properties:
+        trader_id:
+          type: [string, 'null']
+          format: uuid
+        nickname:
+          type: string
+        role:
+          $ref: './shared/common.yaml#/components/schemas/Role'
+        expires_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'

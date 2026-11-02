@@ -1,0 +1,567 @@
+openapi: 3.1.0
+info:
+  title: market-data-service API
+  version: 1.0.0
+  summary: Instruments, candles, order-book depth, trades and time travel.
+  description: |
+    Owned by the **Market Insights Team** (MD Asif Ali). A CQRS read side: builds its models from `matching.v1`
+    and stores candles and trades in Cassandra (keyspace `market_data`). Publishes `CandleClosed` to `candles.v1`.
+
+    Live data is pushed over WebSockets `/v1/ws/market/{ticker}` (Q-06) and `/v1/ws/replay/{ticker}` (Q-13),
+    documented in api/README.md. Time travel reads the event store **only** through matching-engine's internal API.
+
+    The `/internal/v1/faults` endpoints exist only when `CHAOS_HOOKS_ENABLED=true` and are reachable only from
+    chaos-service.
+servers:
+  - url: http://localhost:8003
+    description: Local Docker Compose
+  - url: http://market-data-service:8000
+    description: Inside the Kubernetes namespace (staging or prod)
+security: []
+tags:
+  - name: Market data
+    description: Live market read models.
+  - name: Time travel
+    description: Rebuilding the market at a past moment from stored events.
+  - name: Internal
+    description: Chaos hooks. Never routed by api-gateway.
+paths:
+  /v1/instruments:
+    get:
+      tags: [Market data]
+      operationId: listInstruments
+      summary: List instruments with last price and change
+      x-seeds-id: Q-02
+      description: '**Q-02** — The five tradable instruments with reference data, last traded price and today''s change.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: All instruments.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstrumentList'
+              example:
+                instruments:
+                  - ticker: CHAIWALA
+                    name: Chaiwala Beverages Ltd
+                    tick_size_paise: 5
+                    lot_size: 1
+                    reference_price_paise: 24550
+                    last_price_paise: 24600
+                    day_open_paise: 24550
+                    day_high_paise: 24620
+                    day_low_paise: 24480
+                    change_paise: 50
+                    change_percent: 0.2
+                    day_volume: 18230
+                    updated_at: '2026-11-20T10:42:05.000Z'
+                  - ticker: MONSOON
+                    name: Monsoon Power Ltd
+                    tick_size_paise: 5
+                    lot_size: 1
+                    reference_price_paise: 8820
+                    last_price_paise: 8705
+                    day_open_paise: 8820
+                    day_high_paise: 8840
+                    day_low_paise: 8690
+                    change_paise: -115
+                    change_percent: -1.3
+                    day_volume: 40110
+                    updated_at: '2026-11-20T10:42:04.500Z'
+        '400':
+          $ref: './shared/common.yaml#/components/responses/BadRequest'
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
+  /v1/market/{ticker}/candles:
+    get:
+      tags: [Market data]
+      operationId: getCandles
+      summary: Get candles for a ticker
+      x-seeds-id: Q-03
+      description: '**Q-03** — OHLCV candles for one ticker and interval, oldest first, in the time window.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TickerPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: interval
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/CandleInterval'
+        - name: from
+          in: query
+          required: false
+          description: Defaults to 100 intervals before `to`.
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        - name: to
+          in: query
+          required: false
+          description: Defaults to now.
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Candles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandleSeries'
+              example:
+                ticker: CHAIWALA
+                interval: 1m
+                candles:
+                  - bucket_start: '2026-11-20T10:41:00Z'
+                    open_paise: 24520
+                    high_paise: 24560
+                    low_paise: 24500
+                    close_paise: 24500
+                    volume: 1210
+                    trade_count: 51
+                  - bucket_start: '2026-11-20T10:42:00Z'
+                    open_paise: 24500
+                    high_paise: 24620
+                    low_paise: 24480
+                    close_paise: 24550
+                    volume: 1830
+                    trade_count: 74
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /v1/market/{ticker}/order-book:
+    get:
+      tags: [Market data]
+      operationId: getOrderBook
+      summary: Get order-book depth for a ticker
+      x-seeds-id: Q-04
+      description: '**Q-04** — Aggregated depth (quantity and order count per price level). Trader identities are never exposed.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TickerPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - $ref: '#/components/parameters/Depth'
+      responses:
+        '200':
+          description: Depth.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderBookDepth'
+              example:
+                ticker: CHAIWALA
+                as_of_sequence: 1042
+                as_of: '2026-11-20T10:42:01.263Z'
+                best_bid_paise: 24600
+                best_ask_paise: 24650
+                spread_paise: 50
+                bids:
+                  - price_paise: 24600
+                    quantity: 30
+                    order_count: 1
+                  - price_paise: 24500
+                    quantity: 140
+                    order_count: 3
+                asks:
+                  - price_paise: 24650
+                    quantity: 75
+                    order_count: 2
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /v1/market/{ticker}/trades:
+    get:
+      tags: [Market data]
+      operationId: getRecentTrades
+      summary: Get recent trades for a ticker
+      x-seeds-id: Q-05
+      description: '**Q-05** — Most recent trades, newest first.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TickerPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: Trades.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradeList'
+              example:
+                ticker: CHAIWALA
+                trades:
+                  - trade_id: a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d
+                    sequence: 1042
+                    price_paise: 24550
+                    quantity: 20
+                    aggressor_side: BUY
+                    executed_at: '2026-11-20T10:42:01.263Z'
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /v1/time-travel/{ticker}:
+    get:
+      tags: [Time travel]
+      operationId: getMarketAt
+      summary: Get the market as it was at time T
+      x-seeds-id: Q-12
+      description: |
+        **Q-12** — Rebuilds the ticker's order book at `at` by loading the nearest snapshot (Q-15) and applying stored
+        events (Q-14) from matching-engine, and returns it with the candles and trades up to that moment.
+        Never changes live state.
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TickerPath'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - name: at
+          in: query
+          required: true
+          schema:
+            $ref: './shared/common.yaml#/components/schemas/Timestamp'
+          example: '2026-11-20T10:42:15Z'
+        - $ref: '#/components/parameters/Depth'
+      responses:
+        '200':
+          description: The market at time T.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeTravelView'
+              example:
+                ticker: CHAIWALA
+                at: '2026-11-20T10:42:15Z'
+                as_of_sequence: 1187
+                last_price_paise: 24570
+                order_book:
+                  ticker: CHAIWALA
+                  as_of_sequence: 1187
+                  as_of: '2026-11-20T10:42:14.870Z'
+                  best_bid_paise: 24565
+                  best_ask_paise: 24575
+                  spread_paise: 10
+                  bids:
+                    - price_paise: 24565
+                      quantity: 60
+                      order_count: 2
+                  asks:
+                    - price_paise: 24575
+                      quantity: 45
+                      order_count: 1
+                candles:
+                  - bucket_start: '2026-11-20T10:42:00Z'
+                    open_paise: 24500
+                    high_paise: 24620
+                    low_paise: 24480
+                    close_paise: 24570
+                    volume: 905
+                    trade_count: 33
+                recent_trades:
+                  - trade_id: b1c2d3e4-f5a6-4b7c-8d8e-9f0a1b2c3d4e
+                    sequence: 1186
+                    price_paise: 24570
+                    quantity: 5
+                    aggressor_side: SELL
+                    executed_at: '2026-11-20T10:42:14.870Z'
+        '422':
+          description: Invalid request, or `at` is in the future.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/time-in-future
+                title: That moment hasn't happened yet
+                status: 422
+                code: TIME_IN_FUTURE
+                detail: at=2027-01-01T00:00:00Z is in the future.
+                correlation_id: req-7c8d9e
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
+  /internal/v1/faults:
+    post:
+      tags: [Internal]
+      operationId: injectFault
+      summary: Inject a fault (chaos hook)
+      x-seeds-id: A-12
+      description: |
+        **A-12** — Switch on a fault inside this process. Only `MEMORY_LEAK` is supported. Only available when
+        `CHAOS_HOOKS_ENABLED=true`; only chaos-service may call it (network policy).
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaultRequest'
+            example:
+              fault: MEMORY_LEAK
+              rate_mb_per_minute: 40
+      responses:
+        '201':
+          description: Fault active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FaultState'
+              example:
+                fault: MEMORY_LEAK
+                active: true
+                rate_mb_per_minute: 40
+                started_at: '2026-11-20T11:30:00.000Z'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+        '409':
+          description: A fault is already active.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/fault-already-active
+                title: Fault already active
+                status: 409
+                code: FAULT_ALREADY_ACTIVE
+                detail: MEMORY_LEAK has been active since 11:30:00.
+                correlation_id: req-chaos-1
+    delete:
+      tags: [Internal]
+      operationId: clearFault
+      summary: Clear the active fault (chaos hook)
+      x-seeds-id: A-13
+      description: '**A-13** — Switch off the active fault. Memory already leaked is only freed by a restart.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Fault cleared.
+        '404':
+          description: No active fault, or chaos hooks are disabled.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/no-active-fault
+                title: No active fault
+                status: 404
+                code: NO_ACTIVE_FAULT
+                detail: There is no fault to clear.
+                correlation_id: req-chaos-2
+components:
+  parameters:
+    Depth:
+      name: depth
+      in: query
+      required: false
+      description: Number of price levels per side.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 10
+  schemas:
+    CandleInterval:
+      type: string
+      enum: [5s, 1m, 5m]
+    Instrument:
+      type: object
+      required: [ticker, name, tick_size_paise, lot_size, reference_price_paise, last_price_paise, day_open_paise,
+                 day_high_paise, day_low_paise, change_paise, change_percent, day_volume, updated_at]
+      properties:
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        name:
+          type: string
+        tick_size_paise:
+          type: integer
+          const: 5
+        lot_size:
+          type: integer
+          const: 1
+        reference_price_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        last_price_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        day_open_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        day_high_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        day_low_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        change_paise:
+          type: integer
+        change_percent:
+          type: number
+        day_volume:
+          type: integer
+          minimum: 0
+        updated_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+    InstrumentList:
+      type: object
+      required: [instruments]
+      properties:
+        instruments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Instrument'
+    Candle:
+      type: object
+      required: [bucket_start, open_paise, high_paise, low_paise, close_paise, volume, trade_count]
+      properties:
+        bucket_start:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        open_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        high_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        low_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        close_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        volume:
+          type: integer
+          minimum: 0
+        trade_count:
+          type: integer
+          minimum: 0
+    CandleSeries:
+      type: object
+      required: [ticker, interval, candles]
+      properties:
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        interval:
+          $ref: '#/components/schemas/CandleInterval'
+        candles:
+          type: array
+          items:
+            $ref: '#/components/schemas/Candle'
+    DepthLevel:
+      type: object
+      required: [price_paise, quantity, order_count]
+      properties:
+        price_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        quantity:
+          type: integer
+          minimum: 1
+        order_count:
+          type: integer
+          minimum: 1
+    OrderBookDepth:
+      type: object
+      required: [ticker, as_of_sequence, as_of, best_bid_paise, best_ask_paise, spread_paise, bids, asks]
+      properties:
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        as_of_sequence:
+          type: integer
+          minimum: 0
+        as_of:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        best_bid_paise:
+          type: [integer, 'null']
+        best_ask_paise:
+          type: [integer, 'null']
+        spread_paise:
+          type: [integer, 'null']
+        bids:
+          type: array
+          description: Highest price first.
+          items:
+            $ref: '#/components/schemas/DepthLevel'
+        asks:
+          type: array
+          description: Lowest price first.
+          items:
+            $ref: '#/components/schemas/DepthLevel'
+    Trade:
+      type: object
+      required: [trade_id, sequence, price_paise, quantity, aggressor_side, executed_at]
+      properties:
+        trade_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        sequence:
+          type: integer
+          minimum: 1
+        price_paise:
+          $ref: './shared/common.yaml#/components/schemas/PricePaise'
+        quantity:
+          $ref: './shared/common.yaml#/components/schemas/Quantity'
+        aggressor_side:
+          $ref: './shared/common.yaml#/components/schemas/Side'
+        executed_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+    TradeList:
+      type: object
+      required: [ticker, trades]
+      properties:
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        trades:
+          type: array
+          items:
+            $ref: '#/components/schemas/Trade'
+    TimeTravelView:
+      type: object
+      required: [ticker, at, as_of_sequence, last_price_paise, order_book, candles, recent_trades]
+      properties:
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        as_of_sequence:
+          type: integer
+          minimum: 0
+          description: Last event applied to rebuild this view.
+        last_price_paise:
+          type: [integer, 'null']
+        order_book:
+          $ref: '#/components/schemas/OrderBookDepth'
+        candles:
+          type: array
+          description: 1-minute candles up to `at` (last 60).
+          items:
+            $ref: '#/components/schemas/Candle'
+        recent_trades:
+          type: array
+          description: Up to 50 trades at or before `at`, newest first.
+          items:
+            $ref: '#/components/schemas/Trade'
+    FaultRequest:
+      type: object
+      required: [fault, rate_mb_per_minute]
+      properties:
+        fault:
+          type: string
+          enum: [MEMORY_LEAK]
+        rate_mb_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 200
+      additionalProperties: false
+    FaultState:
+      type: object
+      required: [fault, active, rate_mb_per_minute, started_at]
+      properties:
+        fault:
+          type: string
+          enum: [MEMORY_LEAK]
+        active:
+          type: boolean
+        rate_mb_per_minute:
+          type: integer
+        started_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'

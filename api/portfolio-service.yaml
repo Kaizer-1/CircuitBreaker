@@ -1,0 +1,441 @@
+openapi: 3.1.0
+info:
+  title: portfolio-service API
+  version: 1.0.0
+  summary: Accounts, cash, holdings, reservations and the leaderboard.
+  description: |
+    Owned by the **Market Insights Team** (MD Asif Ali). Stores data in Postgres (database `portfolio`).
+
+    - **Public** (via `api-gateway`): my portfolio (Q-09), leaderboard (Q-11). Live updates are pushed over the
+      WebSocket `/v1/ws/portfolio` (Q-10), documented in api/README.md.
+    - **Internal**: open an account (A-02, called by api-gateway), reserve cash/shares (A-06, called by
+      order-service).
+    - **Event-driven** (no endpoint): settles trades and releases reservations from `matching.v1` (A-09).
+servers:
+  - url: http://localhost:8004
+    description: Local Docker Compose
+  - url: http://portfolio-service:8000
+    description: Inside the Kubernetes namespace (staging or prod)
+security: []
+tags:
+  - name: Portfolio
+    description: A trader's cash and holdings.
+  - name: Leaderboard
+    description: Ranking of traders by net worth.
+  - name: Internal
+    description: Service-to-service operations. Never routed by api-gateway.
+paths:
+  /v1/portfolio:
+    get:
+      tags: [Portfolio]
+      operationId: getMyPortfolio
+      summary: Get my portfolio
+      x-seeds-id: Q-09
+      description: '**Q-09** — Cash, reserved cash, holdings valued at last traded prices, and profit/loss for the caller.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/TraderIdHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: The portfolio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Portfolio'
+              example:
+                trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                nickname: RajuTrader
+                kind: HUMAN
+                cash_paise: 9509000
+                reserved_cash_paise: 738000
+                available_cash_paise: 8771000
+                holdings:
+                  - ticker: CHAIWALA
+                    quantity: 20
+                    reserved_quantity: 0
+                    available_quantity: 20
+                    avg_cost_paise: 24550
+                    last_price_paise: 24600
+                    market_value_paise: 492000
+                    unrealised_pnl_paise: 1000
+                net_worth_paise: 10001000
+                starting_value_paise: 10000000
+                pnl_paise: 1000
+                pnl_percent: 0.01
+                as_of: '2026-11-20T10:42:05.000Z'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+  /v1/leaderboard:
+    get:
+      tags: [Leaderboard]
+      operationId: getLeaderboard
+      summary: Get the leaderboard
+      x-seeds-id: Q-11
+      description: '**Q-11** — Traders ranked by net worth (cash plus holdings at last price). Recomputed every 2 seconds.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+        - $ref: './shared/common.yaml#/components/parameters/Limit'
+        - name: include_bots
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: The leaderboard.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Leaderboard'
+              example:
+                as_of: '2026-11-20T10:45:00.000Z'
+                entries:
+                  - rank: 1
+                    trader_id: 5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b
+                    nickname: MeeraMoon
+                    kind: HUMAN
+                    net_worth_paise: 10425050
+                    pnl_percent: 4.25
+                  - rank: 2
+                    trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                    nickname: RajuTrader
+                    kind: HUMAN
+                    net_worth_paise: 10001000
+                    pnl_percent: 0.01
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /internal/v1/accounts:
+    post:
+      tags: [Internal]
+      operationId: openAccount
+      summary: Open a trading account
+      x-seeds-id: A-02
+      description: |
+        **A-02** — Called by api-gateway when someone joins. `HUMAN` accounts start with 1,00,00,000 paise
+        (1,00,000 rupees) and no shares; nickname must be unique (409 otherwise). `BOT` and `LOAD` accounts are
+        seeded at start-up from configuration (bots also get shares); for those kinds the call is idempotent and
+        returns the existing account with **200**.
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAccountRequest'
+            example:
+              nickname: RajuTrader
+              kind: HUMAN
+      responses:
+        '200':
+          description: Existing BOT/LOAD account returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+              example:
+                trader_id: b0b0b0b0-0003-4000-8000-000000000003
+                nickname: bot-03
+                kind: BOT
+                cash_paise: 50000000
+                created_at: '2026-11-20T09:00:00.000Z'
+        '201':
+          description: Account created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+              example:
+                trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                nickname: RajuTrader
+                kind: HUMAN
+                cash_paise: 10000000
+                created_at: '2026-11-20T10:30:12.000Z'
+        '409':
+          description: Nickname already taken.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/nickname-taken
+                title: Nickname taken
+                status: 409
+                code: NICKNAME_TAKEN
+                detail: Someone is already trading as RajuTrader. Please pick another nickname.
+                correlation_id: req-1a2b3c
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+  /internal/v1/reservations:
+    post:
+      tags: [Internal]
+      operationId: createReservation
+      summary: Reserve cash or shares for an order
+      x-seeds-id: A-06
+      description: |
+        **A-06** — Called synchronously by order-service before an order is published. In one SQL transaction:
+        BUY reserves `quantity x price` of cash (for MARKET buys, price = protection price = last price + 10%);
+        SELL reserves `quantity` shares. Enforces **no margin** and **no short selling**.
+        Idempotent per `order_id`: a repeat returns the existing reservation with **200**.
+        Reservations are later consumed by `TradeExecuted` and released by `OrderCancelled` or order completion.
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationRequest'
+            examples:
+              limitBuy:
+                summary: Limit buy
+                value:
+                  order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+                  trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                  ticker: CHAIWALA
+                  side: BUY
+                  order_type: LIMIT
+                  quantity: 50
+                  limit_price_paise: 24600
+              marketBuy:
+                summary: Market buy (portfolio-service computes the protection price)
+                value:
+                  order_id: 2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d
+                  trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                  ticker: MONSOON
+                  side: BUY
+                  order_type: MARKET
+                  quantity: 100
+                  limit_price_paise: null
+      responses:
+        '200':
+          description: Reservation for this order already existed (idempotent repeat).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+              example:
+                reservation_id: c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f
+                order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+                status: ACTIVE
+                reserved_cash_paise: 1230000
+                reserved_quantity: 0
+                protection_price_paise: null
+                created_at: '2026-11-20T10:42:01.240Z'
+        '201':
+          description: Reservation created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reservation'
+              examples:
+                limitBuy:
+                  summary: 50 x 24600 paise reserved
+                  value:
+                    reservation_id: c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f
+                    order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
+                    status: ACTIVE
+                    reserved_cash_paise: 1230000
+                    reserved_quantity: 0
+                    protection_price_paise: null
+                    created_at: '2026-11-20T10:42:01.240Z'
+                marketBuy:
+                  summary: Last price 8820, protection 9705, 100 x 9705 reserved
+                  value:
+                    reservation_id: d2e3f4a5-b6c7-4d8e-9f0a-1b2c3d4e5f6a
+                    order_id: 2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d
+                    status: ACTIVE
+                    reserved_cash_paise: 970500
+                    reserved_quantity: 0
+                    protection_price_paise: 9705
+                    created_at: '2026-11-20T10:44:00.100Z'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+        '422':
+          description: Not enough available cash (BUY) or shares (SELL).
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              examples:
+                insufficientFunds:
+                  summary: Not enough cash
+                  value:
+                    type: https://circuitbreaker.local/errors/insufficient-funds
+                    title: Not enough cash
+                    status: 422
+                    code: INSUFFICIENT_FUNDS
+                    detail: Needs 1230000 paise, available 950000 paise.
+                    correlation_id: req-5f1c2a
+                insufficientShares:
+                  summary: Selling more than you own (no short selling)
+                  value:
+                    type: https://circuitbreaker.local/errors/insufficient-shares
+                    title: Not enough shares
+                    status: 422
+                    code: INSUFFICIENT_SHARES
+                    detail: You have 20 available CHAIWALA shares; this order sells 50.
+                    correlation_id: req-6a7b8c
+components:
+  schemas:
+    Holding:
+      type: object
+      required: [ticker, quantity, reserved_quantity, available_quantity, avg_cost_paise, last_price_paise,
+                 market_value_paise, unrealised_pnl_paise]
+      properties:
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        quantity:
+          type: integer
+          minimum: 0
+        reserved_quantity:
+          type: integer
+          minimum: 0
+          description: Shares set aside for open SELL orders.
+        available_quantity:
+          type: integer
+          minimum: 0
+        avg_cost_paise:
+          type: integer
+          minimum: 0
+        last_price_paise:
+          type: integer
+          minimum: 0
+        market_value_paise:
+          type: integer
+          minimum: 0
+        unrealised_pnl_paise:
+          type: integer
+    Portfolio:
+      type: object
+      required: [trader_id, nickname, kind, cash_paise, reserved_cash_paise, available_cash_paise, holdings,
+                 net_worth_paise, starting_value_paise, pnl_paise, pnl_percent, as_of]
+      properties:
+        trader_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        nickname:
+          type: string
+        kind:
+          $ref: './shared/common.yaml#/components/schemas/AccountKind'
+        cash_paise:
+          type: integer
+          minimum: 0
+          description: Total cash including the reserved part.
+        reserved_cash_paise:
+          type: integer
+          minimum: 0
+        available_cash_paise:
+          type: integer
+          minimum: 0
+        holdings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Holding'
+        net_worth_paise:
+          type: integer
+          description: cash + sum(holding quantity x last price).
+        starting_value_paise:
+          type: integer
+        pnl_paise:
+          type: integer
+        pnl_percent:
+          type: number
+        as_of:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+    LeaderboardEntry:
+      type: object
+      required: [rank, trader_id, nickname, kind, net_worth_paise, pnl_percent]
+      properties:
+        rank:
+          type: integer
+          minimum: 1
+        trader_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        nickname:
+          type: string
+        kind:
+          $ref: './shared/common.yaml#/components/schemas/AccountKind'
+        net_worth_paise:
+          type: integer
+        pnl_percent:
+          type: number
+    Leaderboard:
+      type: object
+      required: [as_of, entries]
+      properties:
+        as_of:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeaderboardEntry'
+    OpenAccountRequest:
+      type: object
+      required: [nickname, kind]
+      properties:
+        nickname:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{3,20}$'
+        kind:
+          $ref: './shared/common.yaml#/components/schemas/AccountKind'
+      additionalProperties: false
+    Account:
+      type: object
+      required: [trader_id, nickname, kind, cash_paise, created_at]
+      properties:
+        trader_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        nickname:
+          type: string
+        kind:
+          $ref: './shared/common.yaml#/components/schemas/AccountKind'
+        cash_paise:
+          type: integer
+          minimum: 0
+        created_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+    ReservationRequest:
+      type: object
+      required: [order_id, trader_id, ticker, side, order_type, quantity, limit_price_paise]
+      properties:
+        order_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        trader_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+        side:
+          $ref: './shared/common.yaml#/components/schemas/Side'
+        order_type:
+          $ref: './shared/common.yaml#/components/schemas/OrderType'
+        quantity:
+          $ref: './shared/common.yaml#/components/schemas/Quantity'
+        limit_price_paise:
+          type: [integer, 'null']
+          multipleOf: 5
+          description: Required for LIMIT, null for MARKET.
+      additionalProperties: false
+    Reservation:
+      type: object
+      required: [reservation_id, order_id, status, reserved_cash_paise, reserved_quantity, protection_price_paise, created_at]
+      properties:
+        reservation_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        order_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        status:
+          type: string
+          enum: [ACTIVE, CONSUMED, RELEASED]
+        reserved_cash_paise:
+          type: integer
+          minimum: 0
+        reserved_quantity:
+          type: integer
+          minimum: 0
+        protection_price_paise:
+          type: [integer, 'null']
+          multipleOf: 5
+          description: For MARKET orders, the worst price the engine may fill at. order-service copies it into OrderPlaced.
+        created_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'

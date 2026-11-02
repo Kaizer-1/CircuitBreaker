@@ -10,7 +10,7 @@
 |---|---|
 | **One experiment at a time** | `chaos-service` refuses to start a second one (`409 EXPERIMENT_ALREADY_RUNNING`). Clear cause and effect. |
 | **Every fault is reversible** | Each scenario has an explicit undo, used by `POST /v1/chaos/experiments/{experiment_id}/stop`. |
-| **Bounded duration** | Each experiment auto-expires (default 5 minutes) and cleans up. |
+| **Bounded duration** | Each experiment auto-expires (default 5 minutes; 10 for the memory leak, which needs time to grow) and cleans up. |
 | **Small blast radius** | Faults target one service; data stores are never touched; no data is lost. |
 | **Blind diagnosis** | The SRE agent never reads chaos-service. It sees only symptoms. |
 | **Measured** | chaos-service records time to detect (`IncidentOpened` − start), action taken, and time to recover (`IncidentResolved` − start). |
