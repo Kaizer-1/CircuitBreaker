@@ -147,6 +147,21 @@ Query parameters: `from`, `to` (ISO-8601, window ≤ 30 minutes, `to` not in the
 {"type": "incident_update", "data": {"incident_id": "INC-0007", "entry": {"at": "2026-11-20T11:06:01.398Z", "kind": "EXECUTED", "message": "Rolled back order-service to revision 7. 2/2 pods ready."}}}
 ```
 
+## Feedback (SEED(S) step 6)
+
+An API design is only "done" once its consumers have tried it. Our feedback loop:
+
+1. **Review by consumers:** every spec change is a pull request reviewed by the *consuming* team (e.g. Market Insights
+   reviews `matching-engine.yaml`; Trading reviews `portfolio-service.yaml` reservations).
+2. **Try before building:** the web app and bots are developed against a **mock server** generated from these specs
+   (e.g. `npx @stoplight/prism-cli mock api/api-gateway.yaml`), so UI feedback arrives before backend code exists.
+3. **Record the outcome:** accepted changes update the spec, the actions/queries table and, if a decision changed, an
+   ADR — in the same PR.
+4. **Automate the contract:** once code exists, contract tests fail the build if responses drift from the spec.
+
+Phase 0 feedback already applied: cancel became asynchronous (202) after the cancel/fill race was found in the
+sequence diagrams; reservations gained idempotency by `order_id` and the orphan rule (ADR-0011).
+
 ## Error code catalog
 
 | `code` | HTTP | Meaning |
