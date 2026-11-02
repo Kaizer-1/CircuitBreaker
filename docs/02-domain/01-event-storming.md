@@ -154,7 +154,7 @@ flowchart LR
 | P-03 | Whenever 500 events have been appended for a ticker, take a snapshot | `matching-engine` |
 | P-04 | Whenever `OrderAccepted` / `TradeExecuted` / `OrderCancelled` / `OrderCancelRejected`, update the order's status | `order-service` |
 | P-05 | Whenever `TradeExecuted`, settle cash and shares for buyer and seller | `portfolio-service` |
-| P-06 | Whenever an order is finished (filled or `OrderCancelled`), release its leftover reservation | `portfolio-service` |
+| P-06 | Whenever an order is finished (filled or `OrderCancelled`) — or its reservation has seen no `OrderAccepted` for 120 s — release the leftover reservation | `portfolio-service` |
 | P-07 | Whenever `TradeExecuted`, update last price, candles, trades; whenever book events arrive, update depth | `market-data-service` |
 | P-08 | Whenever a candle interval (5s, 1m, 5m) ends, publish `CandleClosed` | `market-data-service` |
 | P-09 | Whenever `CandleClosed`, let each bot re-evaluate its strategy | `bot-traders` |

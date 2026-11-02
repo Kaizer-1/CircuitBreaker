@@ -95,7 +95,9 @@ partitions* (and therefore different tickers) — never two replicas on one tick
 order-service has the same "save + publish" problem: it appends `OrderPlaced` to `order_events` with
 `published = false`, publishes to `orders.v1`, then sets `published = true`. A background **outbox relay** re-publishes
 any rows still `false` after 5 seconds. Result: once the API returns `202`, the order *will* reach the engine,
-possibly twice — and the engine deduplicates via `processed_commands`.
+possibly twice — and the engine deduplicates via `processed_commands`. One limit: the relay never publishes an
+`OrderPlaced` older than **60 s**; it marks the order `REJECTED` (`PUBLISH_TIMEOUT`) instead, because portfolio-service
+releases reservations that the engine hasn't accepted within **120 s** ([ADR-0011](../adr/0011-synchronous-reservation-over-saga.md)).
 
 > **Outbox pattern:** write the outgoing message into your own database in the same step as your state change, and
 > publish it from there. It avoids the "saved but not published" (or the reverse) problem without distributed

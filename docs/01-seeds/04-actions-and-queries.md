@@ -29,7 +29,7 @@ starts its description with one of these IDs. IDs never change meaning; new item
 | A-06 | Reserve cash or shares for an order | order-service | J-30 | `portfolio-service` | HTTP | `POST /internal/v1/reservations` | Internal |
 | A-07 | Cancel an order | Trader, Bot | J-06, J-12 | `order-service` | HTTP | `DELETE /v1/orders/{order_id}` | Yes |
 | A-08 | Match an order / process a cancel request | matching-engine | J-31 | `matching-engine` | Event | consumes `OrderPlaced`, `OrderCancelRequested` | — |
-| A-09 | Settle a trade / release a reservation | portfolio-service | J-32 | `portfolio-service` | Event | consumes `TradeExecuted`, `OrderCancelled` | — |
+| A-09 | Settle a trade / release a reservation | portfolio-service | J-32 | `portfolio-service` | Event | consumes `OrderAccepted`, `TradeExecuted`, `OrderCancelled` | — |
 | A-10 | Start a chaos experiment | Admin | J-15 | `chaos-service` | HTTP | `POST /v1/chaos/experiments` | Yes (admin) |
 | A-11 | Stop a chaos experiment | Admin | J-16 | `chaos-service` | HTTP | `POST /v1/chaos/experiments/{experiment_id}/stop` | Yes (admin) |
 | A-12 | Inject a fault into a service | chaos-service | J-35 | `market-data-service` | HTTP | `POST /internal/v1/faults` | Internal |

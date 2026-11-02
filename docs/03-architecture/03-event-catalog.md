@@ -218,7 +218,9 @@ events in the event store and the basis of replay.
 
 The engine took the order into processing for its ticker. Any trades it causes follow immediately.
 
-- **Producer:** `matching-engine` **Consumers:** `order-service` (status `OPEN`), `market-data-service` (depth)
+- **Producer:** `matching-engine` **Consumers:** `order-service` (status `OPEN`), `market-data-service` (depth),
+  `portfolio-service` (marks the reservation as confirmed; unconfirmed reservations are released after 120 s —
+  [ADR-0011](../adr/0011-synchronous-reservation-over-saga.md))
 - **Key:** `ticker`
 
 ```json
@@ -748,7 +750,7 @@ notice.
 | `AccountOpened` | `portfolio-service` | Postgres (`accounts` row + audit) | A new trader/bot/load account was created with its starting cash (and shares for bots). |
 | `ReservationCreated` | `portfolio-service` | Postgres `reservations` | Cash or shares set aside for an order. |
 | `TradeSettled` | `portfolio-service` | Postgres `settlements` | One side of a trade applied to an account. |
-| `ReservationReleased` | `portfolio-service` | Postgres `reservations` | Leftover reservation returned (order filled with price improvement, or cancelled). |
+| `ReservationReleased` | `portfolio-service` | Postgres `reservations` | Leftover reservation returned (order filled with price improvement, cancelled, or orphaned — no `OrderAccepted` within 120 s). |
 | `OrderRejected` | `order-service` | Cassandra `order_events` | Order failed validation or reservation; never reached the bus. |
 | `BookSnapshotTaken` | `matching-engine` | Cassandra `book_snapshots` | Full book for a ticker saved at a sequence number. |
 | `ChaosExperimentStarted` / `ChaosExperimentEnded` | `chaos-service` | memory + Loki | Experiment lifecycle; `ended` carries outcome `REMEDIATED`, `STOPPED` or `EXPIRED`. |
@@ -760,7 +762,7 @@ notice.
 |---|---|---|:-:|:-:|:-:|:-:|:-:|:-:|
 | `OrderPlaced` | `orders.v1` | order-service | — | ✅ | | | | |
 | `OrderCancelRequested` | `orders.v1` | order-service | — | ✅ | | | | |
-| `OrderAccepted` | `matching.v1` | matching-engine | ✅ | — | | ✅ | | |
+| `OrderAccepted` | `matching.v1` | matching-engine | ✅ | — | ✅ | ✅ | | |
 | `TradeExecuted` | `matching.v1` | matching-engine | ✅ | — | ✅ | ✅ | | |
 | `OrderCancelled` | `matching.v1` | matching-engine | ✅ | — | ✅ | ✅ | | |
 | `OrderCancelRejected` | `matching.v1` | matching-engine | ✅ | — | | | | |

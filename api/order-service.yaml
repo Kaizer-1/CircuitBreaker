@@ -330,7 +330,8 @@ components:
       description: |
         PENDING = accepted by order-service, not yet seen by the engine; OPEN = resting in the book;
         PARTIALLY_FILLED; FILLED; CANCELLED (by the owner, or the unfilled part of a MARKET order);
-        REJECTED = failed validation or reservation (never reached the engine).
+        REJECTED = failed validation or reservation, or could not be published within 60 s (PUBLISH_TIMEOUT);
+        a rejected order never reaches the engine.
     Order:
       type: object
       required: [order_id, trader_id, ticker, side, order_type, quantity, status, filled_quantity,
@@ -374,7 +375,7 @@ components:
           enum: [USER_REQUESTED, UNFILLED_MARKET_ORDER, null]
         rejection_reason:
           type: [string, 'null']
-          enum: [INSUFFICIENT_FUNDS, INSUFFICIENT_SHARES, INVALID_TICK_SIZE, UNKNOWN_TICKER, VALIDATION_FAILED, null]
+          enum: [INSUFFICIENT_FUNDS, INSUFFICIENT_SHARES, INVALID_TICK_SIZE, UNKNOWN_TICKER, VALIDATION_FAILED, PUBLISH_TIMEOUT, null]
         placed_at:
           $ref: './shared/common.yaml#/components/schemas/Timestamp'
         updated_at:

@@ -158,7 +158,7 @@ and ranks everyone on the leaderboard.
 | Service | Responsibility | Data | Produces | Consumes |
 |---|---|---|---|---|
 | `market-data-service` | Candles, depth, trades, live streams, time travel, replay | Cassandra `market_data` | `CandleClosed` | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`; matching-engine `/internal/v1/events`, `/internal/v1/snapshots/{ticker}` |
-| `portfolio-service` | Accounts, reservations, settlement, leaderboard | Postgres `portfolio` | — (local events only) | `TradeExecuted`, `OrderCancelled` |
+| `portfolio-service` | Accounts, reservations, settlement, leaderboard | Postgres `portfolio` | — (local events only) | `OrderAccepted`, `TradeExecuted`, `OrderCancelled` |
 
 **Concepts you must be able to explain:** CQRS read models and eventual consistency; replay applies events, never
 re-runs matching; snapshots; why time travel is a query; Cassandra partition and clustering keys (one table per query);
