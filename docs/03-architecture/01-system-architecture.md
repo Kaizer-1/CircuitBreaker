@@ -110,7 +110,7 @@ flowchart TB
 
 | Container | Tech | Port (container / local dev) | Store | Replicas (default / max) |
 |---|---|---|---|---|
-| `web` | React 18 + Vite + TradingView Lightweight Charts | 80 / 5173 | — | 1 / 3 |
+| `web` | React + Vite + TradingView Lightweight Charts | 80 / 5173 | — | 1 / 3 |
 | `api-gateway` | Python 3.12, FastAPI | 8000 / 8080 | none (stateless) | 2 / 5 |
 | `order-service` | Python 3.12, FastAPI | 8000 / 8001 | Cassandra `order_service` | 2 / 5 |
 | `matching-engine` | Python 3.12, FastAPI + Kafka consumer | 8000 / 8002 | Cassandra `matching_engine` | **1 / 1** (single writer) |
