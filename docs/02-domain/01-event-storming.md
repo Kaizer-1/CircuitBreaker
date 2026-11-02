@@ -1,16 +1,26 @@
 # 01 — Event Storming
 
-> **What is Event Storming?** A workshop technique invented by Alberto Brandolini. The team puts coloured sticky
-> notes on a long wall (or a digital board):
+> **What is Event Storming?** A lightweight workshop technique created by Alberto Brandolini and inspired by
+> Domain-Driven Design (DDD). Formal DDD can take weeks to find bounded contexts; Event Storming finds a good
+> approximation in a few hours of sticky notes on a long wall. The textbook therefore recommends it *instead of* formal
+> DDD for discovering aggregates and the edges of bounded contexts (Mitra & Nadareishvili, Ch. 4).
 >
-> 1. **Big picture:** everyone writes the *domain events* — things that happen, in past tense — and places them on
->    a timeline from left to right.
-> 2. **Process level:** for each event, ask "what caused it?" (a **command**, issued by an **actor**, sometimes
->    triggered by a **policy**) and "what data does someone need to decide?" (a **read model**).
-> 3. **Design level:** group commands and events around the thing that enforces the rules — the **aggregate**.
-> 4. Clusters of aggregates that share one language become **bounded contexts**, which become candidate services.
+> The textbook's session plan has **five phases** (Ch. 4):
 >
-> We ran it as a team on a digital whiteboard and transcribed the result here.
+> | Phase | Time (4-hour session) | What happens |
+> |---|---|---|
+> | 1. **Discover domain events** | ~30 min | Everyone writes events, one per orange sticky in the past tense, and places them roughly in time order. No discussion, duplicates allowed. |
+> | 2. **Enforce the timeline** | ~45 min | The group orders the stickies into a storyline and removes duplicates. Open questions become **hotspots** (purple stickies), answered later. |
+> | 3. **Reverse narrative and command identification** | ~60 min | Walk the timeline **backwards** and ask what caused each event. The causes are **commands** (blue stickies). |
+> | 4. **Identify aggregates / bounded contexts** | ~30 min | Regroup commands and events around the **aggregate** that accepts them. The resulting clusters are the bounded contexts. |
+> | 5. **Competitive analysis** | ~15 min | Rank each context by **difficulty** and **competitive edge** (S/M/L) to decide where to invest effort. This phase comes from Greg Young, not Brandolini's original process. |
+>
+> We ran it as a team on a digital whiteboard and transcribed the result here, one section per phase.
+>
+> **Known limitation.** The textbook stresses that participants should not be only engineers; product, design and
+> business people make a big difference (Ch. 4). We are three students with no such stakeholders. We used the actors
+> and jobs from SEED(S) ([01-actors](../01-seeds/01-actors.md), [02-jobs-to-be-done](../01-seeds/02-jobs-to-be-done.md))
+> to represent the users' point of view.
 
 ## Sticky-note legend
 
@@ -20,12 +30,23 @@
 | 🟦 Blue | **Command** | Intention to do something; may be rejected | `PlaceOrder` |
 | 🟨 Small yellow | **Actor** | Who issues the command | Trader |
 | 🟨 Large yellow | **Aggregate** | The thing that checks rules and emits events | `OrderBook` |
-| 🟪 Lilac | **Policy** | "Whenever *event*, then *command*" | "Whenever a trade executes, settle it" |
+| Lilac | **Policy** | "Whenever *event*, then *command*" | "Whenever a trade executes, settle it" |
 | 🟩 Green | **Read model** | Data an actor looks at before deciding | Order-book depth |
 | 🩷 Pink | **External system** | Outside our control | Prometheus, Kubernetes, OpenRouter (LLM) |
-| 🟥 Red | **Hotspot** | Question, conflict or risk to resolve | "Can a cancel race a fill?" |
+| 🟪 Purple | **Hotspot** | Question, conflict or risk to resolve later (the textbook's colour) | "Can a cancel race a fill?" |
 
-## Step 1 — Big picture: all domain events on a timeline
+## Phase 1 — Discover domain events
+
+Each of us wrote events individually, without discussion, and placed them roughly left (earlier) to right (later). The
+wall had many duplicates, such as "order placed", "order submitted" and "order received". Removing them was left for
+Phase 2. After de-duplication, **23 distinct domain events** remained: 13 integration events and 10 local events,
+listed in the timeline below.
+
+## Phase 2 — Enforce the timeline (and capture hotspots)
+
+We then arranged the events into one storyline: a trader joins, orders, gets matched, gets settled and watches the
+chart, followed by the admin breaking something and the agent healing it. Questions we could not answer on the spot
+became hotspots (table below).
 
 **Integration events** (published on Redpanda, other services rely on them) are in **bold**; *local events* (kept
 inside the owning service's store only) are in italics. The difference is explained in the
@@ -60,7 +81,29 @@ Integration events in this timeline: **OrderPlaced, OrderCancelRequested, OrderA
 OrderCancelled, OrderCancelRejected, CandleClosed, IncidentOpened, RemediationProposed, RemediationApproved,
 RemediationDeclined, RemediationExecuted, IncidentResolved** (13 in total).
 
-## Step 2 — Process level: commands, actors, policies, read models
+### Hotspots and how we resolved them (offline, after the session)
+
+| 🟪 Hotspot | Resolution |
+|---|---|
+| Where do we check the trader has enough cash or shares? | Reserve synchronously in portfolio-service before publishing `OrderPlaced` ([ADR-0011](../adr/0011-synchronous-reservation-over-saga.md)). |
+| How much cash does a MARKET buy reserve when the price is unknown? | Protection price = last price + 10%; the engine will not fill above it. |
+| A cancel can race with a fill. | Async cancel; engine emits `OrderCancelRejected` with reason `ALREADY_FILLED`. Same-ticker messages are ordered by partition key. |
+| Engine crashes between saving and publishing events. | Store first, publish second, re-publish unpublished events on restart; all consumers idempotent. |
+| Should the agent read chaos-service's log? | No — it would be cheating. The agent only sees metrics, logs and deploy history. |
+| Who owns the list of tickers? | Static reference data in deployment config (Helm values), served for the UI by market-data-service. Not a database. |
+| Floating-point money. | Integer paise everywhere ([ADR-0012](../adr/0012-prices-in-integer-paise.md)). |
+
+## Phase 3 — Reverse narrative: commands (plus actors, policies, read models)
+
+We walked the timeline **backwards** and asked "what caused this?" for each event. For example: `IncidentResolved` ←
+the alert cleared after `RemediationExecuted` ← `ExecuteRemediation` ← an approval or the approval-off policy ←
+`RemediationProposed` ← … ← `OpenIncident` ← a Prometheus alert. Each cause is a **command** (blue). As the textbook
+warns, many commands look like the event in the present tense (`PlaceOrder` → `OrderPlaced`). That is expected,
+and some commands trigger several events: one `PlaceOrder` can lead to `OrderAccepted` and several `TradeExecuted`.
+
+The textbook's description of this phase covers commands. We also recorded **actors**, **policies** and **read
+models** on the wall. These come from Brandolini's fuller "process level" format and helped us find the asynchronous
+reactions between services.
 
 ### Trading flow
 
@@ -110,7 +153,7 @@ flowchart LR
     classDef actor fill:#fff3bf,stroke:#e67700,color:#000
     classDef aggregate fill:#ffe066,stroke:#e67700,color:#000
     classDef policy fill:#d0bfff,stroke:#5f3dc4,color:#000
-    classDef hotspot fill:#ff8787,stroke:#c92a2a,color:#000
+    classDef hotspot fill:#e599f7,stroke:#862e9c,color:#000
 
     TR([Trader / Bot]):::actor --> C1[CancelOrder]:::command --> AG1[Order]:::aggregate
     AG1 --> E1[OrderCancelRequested]:::event --> P1{{Whenever cancel requested,<br/>remove from book}}:::policy --> AG2[OrderBook]:::aggregate
@@ -163,19 +206,12 @@ flowchart LR
 | P-12 | Whenever the alert stays resolved for 60 s after a remediation, resolve the incident | `sre-agent` |
 | P-13 | Whenever `IncidentResolved` arrives while an experiment is running, mark it `REMEDIATED` | `chaos-service` |
 
-### Hotspots and how we resolved them
+## Phase 4 — Aggregates and bounded contexts
 
-| 🟥 Hotspot | Resolution |
-|---|---|
-| Where do we check the trader has enough cash or shares? | Reserve synchronously in portfolio-service before publishing `OrderPlaced` ([ADR-0011](../adr/0011-synchronous-reservation-over-saga.md)). |
-| How much cash does a MARKET buy reserve when the price is unknown? | Protection price = last price + 10%; the engine will not fill above it. |
-| A cancel can race with a fill. | Async cancel; engine emits `OrderCancelRejected` with reason `ALREADY_FILLED`. Same-ticker messages are ordered by partition key. |
-| Engine crashes between saving and publishing events. | Store first, publish second, re-publish unpublished events on restart; all consumers idempotent. |
-| Should the agent read chaos-service's log? | No — it would be cheating. The agent only sees metrics, logs and deploy history. |
-| Who owns the list of tickers? | Static reference data in deployment config (Helm values), served for the UI by market-data-service. Not a database. |
-| Floating-point money. | Integer paise everywhere ([ADR-0012](../adr/0012-prices-in-integer-paise.md)). |
+We regrouped commands and events around the aggregate that accepts them. As the textbook predicts, the wall stopped
+looking like a timeline and became clusters, and **the clusters are the bounded contexts** (Ch. 4).
 
-## Step 3 — Aggregates
+### Aggregates
 
 | Aggregate | Invariants it protects (rules that must always hold) | Emits |
 |---|---|---|
@@ -186,7 +222,7 @@ flowchart LR
 | **Incident** | At most one open incident per alert; at most 3 executed remediations per incident; cooldown respected | `IncidentOpened`, `Remediation*`, `IncidentResolved` |
 | **ChaosExperiment** | Only one running experiment at a time; every fault is reversible | `ChaosExperimentStarted`, `FaultInjected`, `FaultCleared`, `ChaosExperimentEnded` |
 
-## Step 4 — How the boundaries emerged
+### How the boundaries emerged
 
 We looked for **pivotal events** — events where the "owner" of the story changes hands — and for places where the
 **same word meant different things**.
@@ -234,6 +270,30 @@ flowchart LR
 
 The resulting contexts and their relationships are in [02-bounded-contexts.md](02-bounded-contexts.md).
 
+## Phase 5 — Competitive analysis
+
+> **Competitive analysis** (Ch. 4, credited to Greg Young): rank each bounded context by **difficulty** (effort) and
+> **competitive edge** (how much it makes the product special), using T-shirt sizes **S / M / L**. The textbook's
+> guidelines: **large edge + large effort** → design and build in-house and spend most time there;
+> **small edge + large effort** → buy; **small edge + small effort** → good work for trainees; anything else → a
+> judgment call. It is similar to DDD's core / supporting / generic subdomains ([02-bounded-contexts.md](02-bounded-contexts.md)).
+
+| Bounded context (service) | Difficulty | Competitive edge | Textbook guideline | Our decision |
+|---|---|---|---|---|
+| Matching (`matching-engine`) | L | L | Build in-house, most time | Build in-house; complicated-subsystem focus; 100% branch coverage on `domain/`. |
+| Reliability Operations (`sre-agent`) | L | L | Build in-house, most time | Build in-house: evidence collector, guardrails, approvals, incident feed. |
+| ↳ LLM reasoning inside Reliability Operations | L | S | **Buy** | Buy: hosted models through OpenRouter ([ADR-0013](../adr/0013-openrouter-llm-gateway.md)). |
+| Order Management (`order-service`) | M | L | Judgment call | Build. It is on every trade's critical path and owns the reservation hand-off. |
+| Market Data incl. time travel (`market-data-service`) | L | M | Judgment call | Build. Time travel and live charts are what the audience sees. |
+| Chaos Engineering (`chaos-service`) | M | M | Judgment call | Build a small service. Our 3 scenarios need recovery-time measurement and the Chaos Panel. |
+| Portfolio and Accounts (`portfolio-service`) | M | S | Judgment call | Build simply on Postgres transactions. |
+| Automated Trading (`bot-traders`) | S | M | Judgment call | Build with simple strategies. |
+| Access (`api-gateway`) | S | S | Good work for trainees | Build a thin FastAPI gateway: a good learning task. |
+| Observability | L | S | **Buy** | Use off-the-shelf Prometheus, Grafana and Loki ([ADR-0008](../adr/0008-observability-stack.md)). |
+
+The result matches where we spend effort: the matching engine and the agent get the most design and testing time, and
+the two "buy" rows are the places where we use off-the-shelf products.
+
 ## Viva Notes
 
 **Q: What is a pivotal event and why does it matter?**
@@ -248,9 +308,10 @@ A: A command is an intention that can be refused (`PlaceOrder`); an event is a f
 A: A cluster of data treated as one unit for changes, which protects invariants. `OrderBook` is one: every command
 for a ticker goes through it, and it guarantees bids and asks never cross after a command.
 
-**Q: What is a policy?**
-A: An automatic reaction: "whenever event X, do command Y". Example: whenever `TradeExecuted`, settle the trade.
-Policies are where services collaborate asynchronously.
+**Q: What are the phases of an Event Storming session?**
+A: Five, in the textbook's plan: discover domain events; enforce the timeline and capture hotspots; reverse narrative
+to find commands; group around aggregates to reveal bounded contexts; and a competitive analysis of difficulty versus
+competitive edge.
 
 **Q: Why are some events "local"?**
 A: Only events that other services need become integration events (a public contract). Events like

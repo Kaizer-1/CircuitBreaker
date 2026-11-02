@@ -39,21 +39,40 @@ tested heavily, owned explicitly.
 | **Trader** | Owner of orders (`trader_id`) | Anonymous (only IDs needed for the trade record) | An account holder with a nickname | Not relevant |
 
 This table is the strongest evidence that the contexts are real: forcing one shared `Order` model would make every
-team negotiate every change — exactly the **coordination cost** microservices are meant to remove.
+team negotiate every change — exactly the **coordination cost** microservices are meant to remove. It is also the
+textbook's method: bounded-context boundaries are found at the edges **where terms change their meaning**, and the
+terms of each context's ubiquitous language can be harvested from the key nouns of well-written job stories
+(Mitra & Nadareishvili, Ch. 4). The "Key terms" column above came from our [jobs to be done](../01-seeds/02-jobs-to-be-done.md).
 
 ## Context map
 
 > **Context map**: shows which contexts depend on which, and the *relationship pattern* between them.
 > **U** = upstream (the one others depend on), **D** = downstream (the one that depends).
 >
-> Patterns used:
-> - **Customer/Supplier (C/S):** the downstream team's needs are taken into account by the upstream team.
-> - **Open Host Service (OHS):** the upstream offers a well-defined, documented API for many consumers.
-> - **Published Language (PL):** a shared, documented message format — our [event catalog](../03-architecture/03-event-catalog.md) JSON schemas.
-> - **Conformist (CF):** the downstream simply adopts the upstream's model as-is.
-> - **Anti-Corruption Layer (ACL):** the downstream translates the upstream's model into its own, so outside
->   concepts don't leak in.
-> - **Separate Ways:** deliberately no integration.
+> **Relationship vocabulary** (DDD context mapping as described in Mitra & Nadareishvili, Ch. 4, unless marked):
+>
+> - **Shared Kernel:** two contexts overlap and share part of their model, possibly including code and data model.
+>   It needs a lot of coordination to start and to change, so the book calls it problematic for microservices. If
+>   one is unavoidable, one team should be its owner/curator and the others contributors.
+> - **Upstream–Downstream:** the upstream provides a capability and the downstream consumes it. The models don't
+>   overlap, so this is looser than a shared kernel. It comes in several forms:
+>   - **Customer–Supplier (C/S):** the upstream supplier serves the downstream customer. The supplier carries the
+>     cost of staying backward compatible; the customer carries the risk that the supplier breaks something or
+>     ignores its future needs.
+>   - **Conformist (CF):** the upstream does not or cannot cater to the downstream, so the downstream must keep
+>     conforming to the upstream's model and changes.
+>   - **Anti-Corruption Layer (ACL):** the downstream builds a translation layer between the upstream's language and
+>     its own, to protect itself from upstream changes. Effective, but it can be expensive to maintain long term.
+>   - **Open Host Service (OHS):** an upstream with many consumers publishes one standard, versioned interface that
+>     all consumers adopt, instead of coordinating with each one. Practically all public APIs work this way.
+> - **Separate Ways:** deliberately no integration (the book mentions it as the alternative to becoming a conformist).
+> - **Published Language (PL):** *(from Evans' DDD; not described in Ch. 4)* a shared, documented message format —
+>   our [event catalog](../03-architecture/03-event-catalog.md) JSON schemas. It usually goes with an Open Host Service.
+>
+> **Synchronous or asynchronous?** None of these patterns assumes one or the other. The textbook notes that
+> publish–subscribe integration is harder to build and debug, but gives better scalability, resilience and
+> flexibility, because many consumers can subscribe to the same events (Ch. 4). That is why most of our
+> relationships are events (thick arrows below).
 
 ```mermaid
 flowchart TB
@@ -105,6 +124,7 @@ calls / who receives the event.
 | Reliability ← Observability/Kubernetes | Anti-Corruption Layer | The agent's prompt uses *our* words (`Evidence`, `Deployment revision`), not raw PromQL results or Kubernetes JSON. If we swapped Prometheus for something else, only the ACL changes. |
 | Chaos ← Reliability (`incidents.v1`) | Conformist | Chaos only needs to know when an incident resolved, to measure time to recover. |
 | Reliability ↔ Chaos | **Separate Ways** (one direction) | The agent must not learn what chaos was injected; this is a deliberate *non*-relationship. |
+| All specs ← `api/shared/common.yaml` | **Shared Kernel** (tiny, curated) | The only shared model: the error format (Problem Details), `Ticker` and `PricePaise`. As the textbook advises, it has one curator, the API Team (MD Asif Ali); other teams contribute by pull request. Everything else is shared through contracts, not shared code. |
 
 ## Viva Notes
 
@@ -125,5 +145,6 @@ A: Between the agent and chaos-service, on purpose: the agent must diagnose from
 chaos did.
 
 **Q: Is one bounded context always one microservice?**
-A: Not necessarily — a context can be several services. In our case each context maps to one service because each
-is small enough for one team to own (see the sizing document).
+A: No. The textbook warns that microservice boundaries are not the same as bounded contexts: contexts are the
+starting point, and services are split further as coordination needs appear (Ch. 4). We start with one service per
+context and list the triggers for splitting in the sizing document.

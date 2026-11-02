@@ -6,23 +6,50 @@
 
 ## 1. The Universal Sizing Formula
 
-> ⚠️ VERIFY AGAINST TEXTBOOK — the wording below is our best understanding of the Universal Sizing Formula
-> in *Microservices: Up and Running* (Mitra & Nadareishvili). Replace it with the textbook's exact wording
-> before the viva.
+> **Source:** Mitra & Nadareishvili, *Microservices: Up and Running*, Ch. 4 ("Introducing the Universal Sizing
+> Formula"). Paraphrased below.
 
-Our understanding of the formula has three parts:
+**The goal behind it.** The textbook states the primary goal of a microservices architecture: to **minimise
+coordination costs** in a complex, multi-team environment, so that teams can balance **speed and safety at scale**
+(Ch. 4, restating Ch. 1). Services should therefore be cut so that the teams working on different services need to
+coordinate as little as possible. Boundaries drawn by size (lines of code) or by technical function (one serverless
+function = one service) don't reliably reduce coordination. The book calls boundaries based on technical needs an
+anti-pattern; services should be organised around business capabilities (Ch. 4).
 
-1. **Start with a few, coarser services**, usually one per **bounded context**, rather than guessing many tiny
-   ones up front.
-2. **Keep splitting when you need to**, to remove **coordination**: if two parts of a service need different
-   teams, different release rhythms or different scaling, keeping them together forces people to coordinate, so
-   split them.
-3. **Stop splitting when a split would *add* coordination**: if two pieces would always have to change and
-   deploy together, they belong in one service. Independent deployability is the test.
+**The formula: three principles that work together** (Ch. 4):
 
-The underlying goal (which the textbook stresses throughout) is to **minimise coordination between teams** while
-keeping each service **independently deployable** and **owning its own data**.
-⚠️ VERIFY AGAINST TEXTBOOK — confirm the textbook's phrasing of this goal.
+1. **Start with just a few microservices**, possibly one per **bounded context**.
+2. **Keep splitting as the application and services grow**, guided by the need to **avoid coordination**.
+3. **Be on the right trajectory for decreasing coordination.** That direction matters far more than how "perfectly"
+   the services are sized today.
+
+**Two points the book adds** (Ch. 4):
+
+- **Microservice boundaries are not the same as bounded contexts.** Bounded contexts are a great *starting point*.
+  Service boundaries evolve, usually towards *more* granularity as the organisation and system mature. Nobody gets
+  them perfect at the outset.
+- **Splitting is easier than merging.** It is typically easier to split a service than to merge several back
+  together or to move a capability between services. So start coarse-grained and split once you know the domain
+  better. The book also warns against creating too many microservices too early.
+
+### Why CircuitBreaker starts at 8
+
+- **Principle 1 gives us the starting point.** Event storming found 8 bounded contexts
+  ([02-bounded-contexts.md](02-bounded-contexts.md)), and we start with **one service per context**. That is the
+  coarsest cut that still separates things which would otherwise force coordination: different owners, different
+  scaling rules (single-writer matching vs. stateless order intake), and the agent/chaos separation. The merges
+  rejected in §3 are exactly those conflicts.
+- **We deliberately did not split further.** Every tempting split *below* the context level (per-ticker engines;
+  separate candle, depth and time-travel services; a reservation service) was rejected in §3. Each would add services
+  without removing any coordination. That follows the book's warning about too many services too early, and its
+  advice that splitting later is easier than merging.
+- **Principle 3 is why §5 exists.** We don't claim 8 is perfect. We name the triggers (a new team, real
+  authentication, very different load) that would justify the next split, so the trajectory keeps reducing
+  coordination as the system grows.
+
+The rest of this document is how we applied the formula: six yes/no heuristics (§2), the merges and splits we tested
+(§3), the extremes compared (§4) and the re-sizing triggers (§5). The heuristics are our own checklist, not the
+textbook's.
 
 ## 2. Heuristics we used to apply the formula
 
@@ -103,8 +130,9 @@ flowchart LR
 | Operational cost for a 3-person team | Low | Moderate | Very high |
 | Demonstrates microservices syllabus | Weakly | ✅ | ✅ but unmanageable |
 
-**Conclusion:** 8 is where every remaining split *adds* coordination and every remaining merge *re-introduces*
-coordination or a scaling conflict — the stopping point that the sizing formula asks for.
+**Conclusion:** 8 is the right *starting* size. Every merge would re-introduce coordination or a scaling conflict,
+and every further split would add services without removing coordination *today*. Following the formula, it is a
+starting point on a trajectory, not a final answer (see §5).
 
 ## 5. When we would re-size
 
@@ -118,17 +146,18 @@ coordination or a scaling conflict — the stopping point that the sizing formul
 ## Viva Notes
 
 **Q: What is the Universal Sizing Formula?**
-A: (Check the textbook's exact wording.) In short: start with a few services aligned to bounded contexts, split
-further only when it reduces coordination, and stop when a split would make services change and deploy together.
+A: Three principles from Ch. 4 of the textbook: start with just a few microservices, possibly one per bounded
+context; keep splitting as the system grows, guided by avoiding coordination; and stay on a trajectory of decreasing
+coordination, which matters more than getting the size perfect now.
+
+**Q: Is a microservice the same as a bounded context?**
+A: No. The textbook says bounded contexts are a good starting point, but service boundaries evolve, usually towards
+finer granularity. We started with one service per context and listed the triggers for future splits.
 
 **Q: Why not merge order-service and matching-engine — they are so closely related?**
 A: Different scaling physics. Order intake is stateless and we scale it to 5 replicas during a traffic spike;
 the matching engine must be a single writer per ticker to keep price-time priority correct. Merged, we could not
 scale one without breaking the other.
-
-**Q: Why not one matching engine per ticker?**
-A: They'd be identical code always deployed together by one team — a split with no independence gain. We get
-per-ticker isolation from partitions and per-ticker books inside one service.
 
 **Q: How do you know you haven't built a distributed monolith?**
 A: Test H6: every service can be deployed alone; contracts are versioned events and APIs; no shared database;
