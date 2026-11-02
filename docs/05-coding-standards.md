@@ -17,7 +17,7 @@
 | API lint | `npx @redocly/cli lint` | Must pass with 0 errors |
 | Containers | Docker, multi-stage builds, non-root user | |
 | Kubernetes | kind, kubectl, Helm 3 | |
-| IaC | Terraform ≥ 1.6, LocalStack | |
+| IaC and deployment | Terraform ≥ 1.6 (kind, kubernetes, helm providers), Argo CD; LocalStack optional | |
 
 ## 2. Repository layout (monorepo)
 
@@ -30,7 +30,8 @@ CircuitBreaker/
 ├── services/<service>/      # one folder per service (layout below)
 ├── web/                     # React frontend
 ├── charts/circuitbreaker/   # Helm umbrella chart
-├── infra/                   # Terraform
+├── deploy/                  # GitOps config Argo CD watches: envs/<env>/<service>.yaml (image tags), argocd/
+├── infra/                   # Terraform: modules/ (kind-cluster, environment, argo-cd, optional localstack) + envs/local
 ├── observability/           # Prometheus rules, Grafana dashboards (as code)
 └── .github/workflows/       # CI/CD
 ```
@@ -39,9 +40,21 @@ CircuitBreaker/
 and CI path filters still build and deploy each service independently. Each service folder is self-contained
 (own dependencies, Dockerfile, tests) so it could be moved to its own repository later without code changes.
 
-⚠️ VERIFY AGAINST TEXTBOOK — the textbook's "umbrella project" may be a separate workspace repository that pulls in
-one repository per microservice (e.g. via git submodules) plus a Makefile and Docker Compose. Check its exact
-approach and be ready to compare it with our monorepo + Helm umbrella chart.
+### The umbrella project (our interpretation)
+
+> **Umbrella project:** the top-level project that pulls every service together so the whole system can be run as
+> one. *This definition is **our interpretation** of the syllabus term; it is not taken from the textbook chapters we
+> have read.*
+
+We use the idea at two levels:
+
+| Level | Our umbrella | What it pulls together |
+|---|---|---|
+| **Local** | The repository root: `docker-compose.yml` + `Makefile` | Every service (built from `services/<name>/`), the data stores and observability, started with `make up` and seeded with `make seed`. |
+| **Kubernetes** | The Helm umbrella chart `charts/circuitbreaker` | One sub-chart per service plus the data stores, with shared defaults. Argo CD deploys each service from it ([deployment §3](03-architecture/07-deployment-and-environments.md#3-kubernetes-with-kind--helm-umbrella-chart)). |
+
+A common alternative is a separate "workspace" repository that pulls in one repository per service (for example with
+git submodules). With a monorepo, the root itself plays that role.
 
 ## 3. Folder layout inside every service
 
@@ -160,8 +173,8 @@ query, so they must not change without updating [06-chaos-scenarios.md](03-archi
 
 - Twelve-factor style: all configuration from **environment variables**, parsed by one `Settings` class per service.
 - Secrets (`JWT_SECRET`, `BOT_SECRET`, `ADMIN_PASSCODE`, `OPENROUTER_API_KEY`, DB passwords) come from Kubernetes
-  Secrets populated from LocalStack Secrets Manager; in dev from a local `.env` (git-ignored, with a committed
-  `.env.example`).
+  Secrets created by Terraform from git-ignored inputs; in dev from a local `.env` (git-ignored, with a committed
+  `.env.example`). Terraform state (`*.tfstate`) also contains them and is git-ignored.
 - Feature flags for chaos hooks: `CHAOS_HOOKS_ENABLED` (default `false`).
 
 ## 11. Git workflow and commit messages
@@ -195,7 +208,8 @@ supersedes it (never silently edit history).
 ## 13. Developer setup
 
 **Prerequisites:** Docker Desktop (or Colima) with ≥ 8 GB RAM for Docker, Python 3.12 + uv, Node.js LTS, kind,
-kubectl, Helm 3, Terraform, the LocalStack CLI, and an OpenRouter API key (only for running the SRE agent live).
+kubectl, Helm 3, Terraform, the Argo CD CLI (optional), and an OpenRouter API key (only for running the SRE agent
+live). LocalStack only if you enable the optional module.
 
 | Command | What it does |
 |---|---|
@@ -204,9 +218,9 @@ kubectl, Helm 3, Terraform, the LocalStack CLI, and an OpenRouter API key (only 
 | `make seed` | Create topics, keyspaces, Postgres schema, bot and load accounts |
 | `make test s=order-service` | Unit + integration tests for one service |
 | `make lint` | ruff, mypy, eslint, redocly, helm lint |
-| `make cluster` | Create the kind cluster `circuitbreaker` |
-| `make infra env=staging` | Terraform apply against LocalStack |
-| `make deploy-staging` / `make promote` | Helm upgrade to staging / same image tag to prod |
+| `make infra` | Terraform plan + apply of `infra/envs/local`: kind cluster, namespaces, RBAC, Secrets, Argo CD |
+| `make sync env=staging` | Ask Argo CD to refresh and sync now (instead of waiting for its poll) |
+| `make promote s=<service>` | Open a PR copying the service's staging image tag to `deploy/envs/prod/` |
 
 ## Viva Notes
 

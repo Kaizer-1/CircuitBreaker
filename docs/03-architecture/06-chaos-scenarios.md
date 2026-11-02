@@ -49,6 +49,11 @@ and rolls back within 3 minutes of detection.
 > separate broken image. From Kubernetes' and the agent's point of view it is indistinguishable: a new revision whose
 > pods misbehave. Rolling back restores the previous pod template, without the flag.
 
+> **GitOps note:** the patch is made live, not through Git. Argo CD's self-heal is off
+> ([ADR-0014](../adr/0014-gitops-with-argo-cd.md)), so it leaves the patch in place and marks the `order-service`
+> Application `OutOfSync`. When the agent rolls back, the Deployment matches Git again and the Application returns to
+> `Synced`. The audience can watch this in the Argo CD UI.
+
 **Signals:**
 ```promql
 # 5xx ratio for order-service, alert if above 5% for 1 minute

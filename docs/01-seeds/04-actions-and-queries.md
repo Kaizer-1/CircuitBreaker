@@ -38,7 +38,7 @@ starts its description with one of these IDs. IDs never change meaning; new item
 | A-15 | Approve or decline a proposed remediation | Admin | J-18, J-23 | `sre-agent` | HTTP | `POST /v1/incidents/{incident_id}/decision` | Yes (admin) |
 | A-16 | Open an incident | SRE Agent | J-21 | `sre-agent` | Event | Prometheus alert detected by the agent loop; emits `IncidentOpened` | — |
 | A-17 | Execute a remediation (`rollback_deployment`, `scale_deployment`, `restart_deployment`, `do_nothing`) | SRE Agent | J-22, J-23 | `sre-agent` | Tool | Kubernetes API calls; emits `RemediationExecuted` | — |
-| A-18 | Deploy a new version (staging, then prod) | Developer | J-26, J-27 | (platform) | CI | GitHub Actions + `helm upgrade` | — |
+| A-18 | Deploy a new version (staging, then prod) | Developer | J-26, J-27 | (platform) | CI | GitHub Actions builds and commits the image tag; Argo CD deploys (GitOps) | — |
 
 ## Queries
 

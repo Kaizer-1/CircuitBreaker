@@ -12,13 +12,15 @@
 | [0004](0004-cassandra-event-store.md) | Cassandra as the event store | Accepted |
 | [0005](0005-event-sourcing-for-matching-engine.md) | Event sourcing for the matching engine | Accepted |
 | [0006](0006-cqrs-portfolio-read-model.md) | CQRS with a Postgres portfolio read model | Accepted |
-| [0007](0007-kubernetes-kind-and-helm-umbrella.md) | Kubernetes (kind) with a Helm umbrella chart; staging and prod namespaces | Accepted |
+| [0007](0007-kubernetes-kind-and-helm-umbrella.md) | Kubernetes (kind) with a Helm umbrella chart; staging and prod namespaces | Accepted (CD amended by 0014) |
 | [0008](0008-observability-stack.md) | Prometheus, Grafana and Loki for observability | Accepted |
 | [0009](0009-sre-agent-fixed-tool-allowlist.md) | SRE agent with a fixed tool allowlist | Accepted (LLM provider amended by 0013) |
-| [0010](0010-terraform-localstack.md) | Terraform against LocalStack | Accepted |
+| [0010](0010-terraform-localstack.md) | Terraform against LocalStack | Accepted (scope amended by 0015) |
 | [0011](0011-synchronous-reservation-over-saga.md) | Synchronous reservation instead of an asynchronous saga | Accepted |
 | [0012](0012-prices-in-integer-paise.md) | Money and prices as integer paise | Accepted |
 | [0013](0013-openrouter-llm-gateway.md) | OpenRouter as the SRE agent's LLM gateway | Accepted |
+| [0014](0014-gitops-with-argo-cd.md) | GitOps deployment with Argo CD | Accepted |
+| [0015](0015-terraform-local-platform.md) | Terraform for the local platform; LocalStack optional | Accepted |
 
 **Template:** `# NNNN — Title` · Status · Date · Deciders · Context · Decision · Alternatives considered ·
 Consequences (positive / negative) · Viva Notes.
@@ -30,8 +32,9 @@ A: Months later nobody remembers *why* a choice was made. ADRs keep the reasonin
 code, so new team members (and examiners) can understand and challenge decisions without guesswork.
 
 **Q: What do you do when a decision changes?**
-A: Write a new ADR that supersedes the old one and link them both ways. Example: ADR-0013 changed the SRE agent's LLM
-access from the Claude API directly to OpenRouter, amending ADR-0009.
+A: Write a new ADR that supersedes the old one and link them both ways. Examples: ADR-0013 changed the SRE agent's LLM
+access from the Claude API directly to OpenRouter, amending ADR-0009; ADR-0014 replaced push-based deploys with Argo CD
+GitOps, amending ADR-0007.
 
 **Q: Which ADR would you defend first in an interview?**
 A: ADR-0011 (sync reservation vs saga): it shows a real trade-off between consistency, availability and complexity.

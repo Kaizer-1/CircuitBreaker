@@ -1,6 +1,7 @@
 # 0010 — Terraform against LocalStack
 
-- **Status:** Accepted
+- **Status:** Accepted — amended by [ADR-0015](0015-terraform-local-platform.md): Terraform's primary target is now
+  the local platform (kind cluster, namespaces, Argo CD); LocalStack is optional
 - **Date:** 2026-11-02
 - **Deciders:** Mohammad Oweis (owner), Kaizer Dewaswala, MD Asif Ali
 
@@ -16,7 +17,7 @@ Use **Terraform** with an `environment` module instantiated for `staging` and `p
 secret, admin passcode, DB passwords), SSM parameters (agent defaults), an S3 event-archive bucket, IAM roles/policies,
 Kubernetes namespaces, quotas, the `sre-agent` Role and network policies. Terraform state lives in LocalStack S3 with
 DynamoDB locking. Plans are shown in PRs and applied by CI. Details:
-[07-deployment-and-environments.md](../03-architecture/07-deployment-and-environments.md#5-infrastructure-as-code-terraform--localstack).
+[07-deployment-and-environments.md](../03-architecture/07-deployment-and-environments.md#5-infrastructure-as-code-terraform).
 
 ## Alternatives considered
 
@@ -33,10 +34,12 @@ DynamoDB locking. Plans are shown in PRs and applied by CI. Details:
   and credentials).
 - ✅ Secrets never in Git.
 - ❌ LocalStack is an emulation: some behaviours differ from AWS, and some services are not in its free tier
-  (⚠️ check the current LocalStack licence/free-tier terms when implementing Phase 6).
+  (LocalStack is optional since ADR-0015; ⚠️ check its current licence/free-tier terms before using it).
 - ❌ Another tool to learn and run.
 
-⚠️ VERIFY AGAINST TEXTBOOK — compare our module layout with the textbook's IaC pipeline (it targets real AWS).
+**Comparison with the textbook (added 2026-11-03).** The textbook builds a network, EKS and Argo CD as Terraform
+modules on real AWS (Mitra & Nadareishvili, Ch. 7). The component-by-component mapping to our local setup, and the
+resulting change of scope, are in [ADR-0015](0015-terraform-local-platform.md#textbook-component--our-local-equivalent).
 
 ## Viva Notes
 

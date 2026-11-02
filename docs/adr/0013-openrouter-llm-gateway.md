@@ -16,14 +16,16 @@ gateway that exposes many models (Claude, GPT, Llama, Mistral, …) through one 
 The agent calls the LLM through **OpenRouter's OpenAI-compatible chat-completions API**, behind a small internal
 `LLMClient` interface with one implementation (`OpenRouterClient`):
 
-- Model chosen by configuration: `SRE_AGENT_MODEL` (an OpenRouter model slug; default a Claude Sonnet model, e.g.
-  `anthropic/claude-sonnet-5.5` — confirm the exact slug on OpenRouter), optional `SRE_AGENT_FALLBACK_MODELS`.
+- Model chosen by configuration: `SRE_AGENT_MODEL` (an OpenRouter model slug; default
+  `anthropic/claude-sonnet-5.5`, the latest Claude Sonnet slug listed by OpenRouter's public `/api/v1/models` endpoint
+  on 2026-11-03), optional `SRE_AGENT_FALLBACK_MODELS`.
 - The chosen model **must support tool calling**; requests ask OpenRouter to route only to providers that support all
   request parameters.
 - `tool_choice: "auto"`, `parallel_tool_calls: false`, a system-prompt rule to call exactly one tool, and **our own
   JSON Schema validation** of the returned arguments. A reply without exactly one valid tool call → `do_nothing` +
   escalate.
-- `OPENROUTER_API_KEY` from Secrets Manager (LocalStack) → Kubernetes Secret; the key has a **credit limit**.
+- `OPENROUTER_API_KEY` from a Kubernetes Secret created by Terraform ([ADR-0015](0015-terraform-local-platform.md));
+  the key has a **credit limit**.
 - Only minimised evidence is sent (no nicknames or trader IDs).
 
 Everything in ADR-0009 (four tools, guardrails, RBAC, approval toggle) is unchanged.

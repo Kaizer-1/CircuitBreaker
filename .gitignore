@@ -35,6 +35,8 @@ web/dist/
 *.tfstate
 *.tfstate.*
 *.tfplan
+secrets.auto.tfvars
+*.secret.tfvars
 .terraform.lock.hcl.bak
 .localstack/
 
