@@ -125,9 +125,20 @@ and is only ever needed "now".
 Duplication is the price of independence: portfolio-service can value portfolios even if market-data-service is
 down (as in the memory-leak scenario).
 
-⚠️ VERIFY AGAINST TEXTBOOK — the textbook discusses techniques for sharing data between microservices without a
-shared database; if it names specific techniques (e.g. embedding data vs. delegating to the owner), map our
-"copy via events" and "ask the owner's API" approaches to those names.
+## 6. How services share data without a shared database
+
+There are three standard ways to give a service data it does not own, while keeping one owner per piece of data.
+**Source:** standard microservices patterns, e.g. C. Richardson, *Microservices Patterns* (Manning, 2018) and
+microservices.io (Database per service, API Composition, Domain event, Event sourcing, CQRS). These are not cited from
+the textbook; its chapter on data is not among those we have read.
+
+| Pattern | How it works | Trade-off | Where CircuitBreaker uses it |
+|---|---|---|---|
+| **(a) Synchronous API call to the owner** | Ask the owning service's API at the moment you need the data or decision. | Always fresh, but the caller depends on the owner being up, which is why we add timeouts and a circuit breaker. | order-service → portfolio-service `POST /internal/v1/reservations`; api-gateway → portfolio-service `POST /internal/v1/accounts`; market-data-service → matching-engine `/internal/v1/events` and `/internal/v1/snapshots/{ticker}` (time travel). |
+| **(b) Published events + local read-only copies** | The owner publishes events; other services keep their own copy of only the fields they need. | Works even when the owner is down, but the copy is briefly stale (eventual consistency) and uses extra storage. | Last price in `market_data.last_prices` and `portfolio.last_prices` (from `TradeExecuted`); order status in order-service (from `matching.v1`); bots' latest candles (from `candles.v1`). |
+| **(c) Event sourcing + CQRS read models** | The owner stores every change as an event; read-side services build query-shaped models by replaying and following those events. | The most flexible: new views and time travel can be built from history. It is also the most moving parts. | matching-engine's event store → market-data candles, depth and time travel; portfolio balances and leaderboard ([ES and CQRS](04-event-sourcing-and-cqrs.md)). |
+
+What we **never** do: read or write another service's tables (the *integration database* anti-pattern, [§2](#2-why-no-shared-database)).
 
 ## Viva Notes
 

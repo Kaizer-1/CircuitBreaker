@@ -1,19 +1,22 @@
 # SEED(S) Step 1 — Actors
 
-> **What is SEED(S)?** The textbook's step-by-step process for designing services and their APIs
-> *from the outside in*: start from the people (and systems) that use the software and what they are
-> trying to achieve, and only then design endpoints. The steps are:
+> **What is SEED(S)?** **Seven Essential Evolutions of Design for Services**: a step-by-step process for designing
+> services and their APIs *from the outside in*. You start from the people (and systems) that use the software and
+> what they are trying to achieve, and only then design endpoints. The seven steps, as listed in our course syllabus:
 >
 > 1. **Identify actors** ← *this document*
 > 2. Identify the **jobs** actors have to get done ([02-jobs-to-be-done.md](02-jobs-to-be-done.md))
 > 3. Discover interaction patterns with **sequence diagrams** ([03-sequence-diagrams.md](03-sequence-diagrams.md))
 > 4. Derive high-level **actions and queries** ([04-actions-and-queries.md](04-actions-and-queries.md))
-> 5. Describe each action and query as an **open-standard spec** (OpenAPI — see [`api/`](../../api/README.md))
+> 5. Describe each action and query with an **open standard**: OpenAPI for HTTP APIs (see [`api/`](../../api/README.md));
+>    AsyncAPI is the equivalent open standard for event APIs. We document events as JSON Schemas in the
+>    [event catalog](../03-architecture/03-event-catalog.md), which could be published as AsyncAPI later.
 > 6. Get **feedback** on the API design
-> 7. Implement the **(S)ervices** (later phases, see [roadmap](../07-roadmap.md))
+> 7. Implement the **microservices**, the "(S)" (later phases, see [roadmap](../07-roadmap.md))
 >
-> ⚠️ VERIFY AGAINST TEXTBOOK — confirm the exact names and number of SEED(S) steps (we believe it is seven,
-> with "(S)" standing for the services implementation step).
+> *Source: course syllabus.* The textbook chapter describing SEED(S) (Ch. 3) is not among the chapters we have read,
+> so the step names above follow the syllabus headings. Ch. 4 does refer back to Ch. 3's job stories; see
+> [bounded contexts](../02-domain/02-bounded-contexts.md#same-word-different-meaning).
 
 ## Why start with actors?
 

@@ -81,7 +81,8 @@ The **reference price** is the starting price used before any trade has happened
 - Three chaos scenarios and an AI SRE agent with a fixed tool allowlist and a human-approval toggle.
 - Docker Compose for local development; kind + Helm umbrella chart with `staging` and `prod` namespaces.
 - Prometheus, Grafana and Loki for observability.
-- Terraform against LocalStack (simulated AWS) and GitHub Actions CI/CD.
+- Terraform for the local platform (kind cluster, namespaces, Argo CD), GitHub Actions CI and Argo CD GitOps
+  deployment; LocalStack (simulated AWS) optional.
 
 ### Out of scope (deliberately)
 
@@ -91,7 +92,7 @@ The **reference price** is the starting price used before any trade has happened
 | User accounts with passwords, KYC | Joining must take 10 seconds on a phone; a nickname is enough |
 | Short selling, margin, derivatives, stop-loss orders | Each adds a large new domain with no extra architecture learning |
 | Exchange trading halts ("market circuit breakers") | Interesting, but a business feature, not an architecture lesson |
-| Real cloud (AWS/GCP/Azure) | Costs money; LocalStack + kind give the same learning for free |
+| Real cloud (AWS/GCP/Azure) | Costs money; kind + Terraform + Argo CD reproduce the textbook's cloud setup locally for free |
 | mTLS / service mesh between services | Valuable in production but adds a lot of complexity; we rely on Kubernetes network policies |
 | Agent tools beyond rollback/scale/restart/do_nothing | Safety: see [ADR-0009](adr/0009-sre-agent-fixed-tool-allowlist.md) |
 
@@ -99,14 +100,14 @@ The **reference price** is the starting price used before any trade has happened
 
 | Service | One-line responsibility | Owner |
 |---|---|---|
-| `api-gateway` | Single public entry point: sessions/JWTs, routing, rate limiting, WebSocket proxy | Platform & Reliability (Mohammad Oweis) |
+| `api-gateway` | Single public entry point: sessions/JWTs, routing, rate limiting, WebSocket proxy | API Team (MD Asif Ali) |
 | `order-service` | Validates orders, reserves money/shares, tracks each order's status | Trading (Kaizer Dewaswala) |
 | `matching-engine` | Keeps the order books, matches orders by price-time priority, writes the market event store | Trading (Kaizer Dewaswala) |
 | `market-data-service` | Builds candles, order-book depth and trade lists; streams them live; time travel and replay | Market Insights (MD Asif Ali) |
 | `portfolio-service` | Trader accounts, cash, holdings, reservations, leaderboard | Market Insights (MD Asif Ali) |
 | `bot-traders` | Runs 20 automated traders with 4 strategies | Trading (Kaizer Dewaswala) |
-| `sre-agent` | Detects incidents, asks an LLM (via OpenRouter) to diagnose, executes one allowlisted fix, explains it | Kaizer Dewaswala (with Platform & Reliability) |
-| `chaos-service` | Runs chaos experiments: bad deploy, memory leak, traffic spike | Platform & Reliability (Mohammad Oweis) |
+| `sre-agent` | Detects incidents, asks an LLM (via OpenRouter) to diagnose, executes one allowlisted fix, explains it | Kaizer Dewaswala (SRE agent role, with Release & Reliability) |
+| `chaos-service` | Runs chaos experiments: bad deploy, memory leak, traffic spike | Release & Reliability (Mohammad Oweis) |
 | `web` | React + Vite single-page app: trader view, presenter view, chaos panel, incident feed | Trading (Kaizer Dewaswala) |
 
 How we arrived at exactly these services is explained in
@@ -166,7 +167,7 @@ Terms are grouped by topic. Every document uses these exact meanings.
 
 | Term | Meaning |
 |---|---|
-| **Microservice** | A small, independently deployable unit of software that owns one business capability and its data. ⚠️ VERIFY AGAINST TEXTBOOK — use the textbook's exact definition in the viva. |
+| **Microservice** | An independently deployable component of bounded scope that supports interoperability through message-based communication (Nadareishvili et al., *Microservice Architecture*, O'Reilly, 2016). **Why we use them**, in the textbook's framing: a microservices architecture exists primarily to **minimise coordination costs** between teams in a complex, multi-team environment, balancing **speed and safety at scale** (Mitra & Nadareishvili, Ch. 4, restating Ch. 1). In our design each one owns one business capability and its data. |
 | **Monolith** | One deployable unit containing all features. |
 | **Distributed monolith** | Services that are split physically but must be changed and deployed together — the worst of both worlds. |
 | **API (Application Programming Interface)** | The contract a piece of software exposes to others. An API is an *interface*; a microservice is a *deployable unit* that may expose one. |
@@ -179,18 +180,23 @@ Terms are grouped by topic. Every document uses these exact meanings.
 | **Aggregate** | A cluster of objects treated as one unit for changes, protected by rules called invariants (e.g. an `OrderBook`). |
 | **Invariant** | A rule that must always be true (e.g. "available cash is never negative"). |
 | **Context map** | A diagram of bounded contexts and how they relate. |
-| **Event Storming** | A workshop technique: put domain events on a timeline with sticky notes, then add commands, actors, policies and aggregates to discover boundaries. |
+| **Upstream / downstream** | In a context map, the upstream context provides a capability; the downstream one consumes it. |
+| **Customer–Supplier, Conformist, Anti-Corruption Layer (ACL), Open Host Service (OHS), Shared Kernel, Separate Ways** | Context-mapping relationship types: the supplier serves a customer and keeps compatibility; a conformist adopts the upstream's model as-is; an ACL translates the upstream's model into your own; an OHS publishes one standard interface for all consumers; a shared kernel is a jointly owned piece of model (avoid it); separate ways means no integration. Defined in [bounded contexts](02-domain/02-bounded-contexts.md#context-map). |
+| **Event Storming** | A lightweight, DDD-inspired workshop (Alberto Brandolini) that finds bounded contexts in hours. Five phases in the textbook's plan: discover events → enforce the timeline (with hotspots) → reverse narrative to find commands → group around aggregates into bounded contexts → competitive analysis (Mitra & Nadareishvili, Ch. 4). |
+| **Hotspot** | In Event Storming, a sticky note (purple) recording an open question or conflict, answered after the session. |
+| **Reverse narrative** | Walking the Event Storming timeline backwards, asking what *caused* each event, to find the commands. |
+| **Competitive analysis** | Ranking bounded contexts by difficulty and competitive edge (S/M/L) to decide what to build in-house, buy, or give to learners (Ch. 4, credited to Greg Young). |
 | **Domain event** | Something that happened in the business, named in the past tense (`TradeExecuted`). |
 | **Integration event** | A domain event published on the event bus for other services. |
 | **Local event** | A domain event stored only inside its own service (not published). |
 | **Command** | A request to do something (`PlaceOrder`); it may be rejected. |
 | **Policy** | A rule "whenever event X happens, do command Y" (e.g. "whenever a trade executes, settle it"). |
 | **Read model / projection** | Data reshaped specifically for answering queries, built by processing events. |
-| **SEED(S)** | The textbook's API design process: actors → jobs to be done → sequence diagrams → actions and queries → OpenAPI spec → feedback → (S)ervices implementation. ⚠️ VERIFY AGAINST TEXTBOOK. |
+| **SEED(S)** | **Seven Essential Evolutions of Design for Services**: a seven-step, outside-in way to design services and their APIs — identify actors → identify jobs to be done (JTBDs) → sequence diagrams → derive actions and queries → specify them with an open standard (OpenAPI / AsyncAPI) → get feedback on the spec → implement the microservices. Steps as listed in our course syllabus. |
 | **Actor** | Anyone or anything that uses the system to get a job done. |
 | **JTBD (Job To Be Done)** | What an actor is trying to achieve, written as "When ___, I want to ___, so I can ___". |
 | **Action / Query** | An action changes state (a command); a query only reads state. |
-| **Universal Sizing Formula** | The textbook's guidance for deciding how big microservices should be. ⚠️ VERIFY AGAINST TEXTBOOK. |
+| **Universal Sizing Formula** | The textbook's three principles for sizing microservices: (1) start with just a few, possibly one per bounded context; (2) keep splitting as the system grows, guided by avoiding coordination; (3) stay on a trajectory of decreasing coordination — more important than "perfect" sizing now (Mitra & Nadareishvili, Ch. 4). See [service sizing](02-domain/03-service-sizing.md). |
 | **Team Topologies** | A model of four team types (stream-aligned, platform, enabling, complicated-subsystem) and three interaction modes (collaboration, X-as-a-Service, facilitating). |
 | **ADR (Architecture Decision Record)** | A short document recording one decision: context, decision, alternatives, consequences. |
 | **C4 model** | A way of drawing architecture at four zoom levels: Context, Container, Component, Code. |
@@ -263,7 +269,11 @@ Terms are grouped by topic. Every document uses these exact meanings.
 | **GitHub Actions** | GitHub's built-in CI/CD service. |
 | **IaC (Infrastructure as Code)** | Describing infrastructure in versioned code files instead of clicking in consoles. |
 | **Terraform** | An IaC tool; you declare the desired infrastructure and it works out the changes. |
-| **LocalStack** | A tool that emulates AWS services locally so Terraform can run without a real AWS account. |
+| **Terraform module / provider** | A module is a reusable folder of Terraform code with inputs and outputs; a provider is the plug-in Terraform uses to talk to one platform (kind, Kubernetes, Helm, AWS). |
+| **GitOps** | Git is the source of truth for what should run; a tool in the cluster keeps the running system matching Git and reports **drift** (live state that differs from Git). |
+| **Argo CD** | The GitOps deployment server we use (also the textbook's choice): it watches `deploy/` in Git and *pulls* changes into Kubernetes. Its words: **sync** (make the cluster match Git), **`Synced` / `OutOfSync`**. |
+| **Promotion (commit)** | Releasing to prod by copying an image tag that already passed staging into `deploy/envs/prod/`, through an approved pull request. |
+| **LocalStack** | A tool that emulates AWS services locally. **Optional** in our design (see ADR-0015). |
 | **Staging / production (prod)** | Staging = a production-like environment to test releases; prod = where "real" users (our demo audience) are. |
 | **Observability** | Being able to understand a system's internal state from its outputs: metrics, logs, traces. |
 | **Prometheus** | Collects numeric **metrics** by scraping each service's `/metrics` endpoint; also evaluates **alert rules**. |

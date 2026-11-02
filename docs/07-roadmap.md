@@ -1,8 +1,8 @@
 # 07 — Roadmap
 
 Nine phases, each ending with something that runs (from Phase 1) and a clear **"done when"** check. Owners:
-**K** = Kaizer Dewaswala (Trading + SRE agent), **A** = MD Asif Ali (Market Insights),
-**O** = Mohammad Oweis (Platform & Reliability).
+**K** = Kaizer Dewaswala (System Design, Trading, SRE agent), **A** = MD Asif Ali (Market Insights, API Team),
+**O** = Mohammad Oweis (Cloud Platform, Release & Reliability).
 
 ```mermaid
 flowchart LR
@@ -12,38 +12,43 @@ flowchart LR
 
 | Phase | Goal | Main work (owner) | Done when |
 |---|---|---|---|
-| **0 — Design and documentation** | Agree on what to build and why | All docs, ADRs, OpenAPI specs, service READMEs (all) | All docs written; specs pass `redocly lint` with 0 errors; consistency check passes; every owner has reviewed their study guide; every ⚠️ VERIFY marker checked against the textbook |
+| **0 — Design and documentation** | Agree on what to build and why | All docs, ADRs, OpenAPI specs, service READMEs (all) | All docs written; specs pass `redocly lint` with 0 errors; consistency check passes; every owner has reviewed their study guide; every textbook-verification marker resolved against the textbook chapters or a cited standard source |
 | **1 — Developer workspace and skeletons** | Everyone can run everything locally | Makefile, Docker Compose with Redpanda/Cassandra/Postgres, `make seed` (O); FastAPI skeleton per service with `/healthz`, `/readyz`, `/metrics` (each owner); `contracts/events/*.schema.json`; CI lint + unit tests; CODEOWNERS (O); mock server from specs (K) | `make up` starts all services healthy; CI green on a PR; each service's OpenAPI matches its spec in a contract test |
-| **2 — Core trading (write side)** | Orders become trades and balances change correctly | order-service + matching-engine with event store, snapshots, outbox (K); portfolio accounts, reservations, settlement, orphan release (A) | In Compose: join → place order → match → settle works end to end; matching `domain/` has 100% branch coverage; property test "replay rebuilds the same book" passes; duplicate events don't change balances |
-| **3 — Read side, web and bots** | A live, watchable market | market-data candles, depth, trades, WebSockets, `CandleClosed` (A); web join/trade/charts/portfolio (K); bot-traders with 4 strategies (K) | 5 phones + 20 bots trade for 10 minutes with no errors; charts update live; spec contract tests green |
+| **2 — Core trading (write side)** | Orders become trades and balances change correctly | order-service + matching-engine with event store, snapshots, outbox (K); portfolio accounts, reservations, settlement, orphan release (A); api-gateway sessions/JWT, routing, rate limits, `/internal/` blocking (A) | In Compose: join → place order → match → settle works end to end; matching `domain/` has 100% branch coverage; property test "replay rebuilds the same book" passes; duplicate events don't change balances |
+| **3 — Read side, web and bots** | A live, watchable market | market-data candles, depth, trades, WebSockets, `CandleClosed` (A); gateway WebSocket proxy (A); web join/trade/charts/portfolio (K); bot-traders with 4 strategies (K) | 5 phones + 20 bots trade for 10 minutes with no errors; charts update live; spec contract tests green |
 | **4 — Time travel and leaderboard** | Show event sourcing to an audience | Q-12 time travel, Q-13 replay stream (A); leaderboard (A); time-travel UI (K) | Time-travel book equals the live book recorded at 3 sampled moments; replay at 10× plays smoothly |
-| **5 — Kubernetes and observability** | Production-like platform | kind cluster, Helm umbrella chart, staging/prod namespaces, network policies (O); Prometheus, Grafana, Loki, Alloy, dashboards, alert rules (O); probes and metrics in every service (all) | `helm upgrade --install` works for both namespaces; dashboards show golden signals for all 8 services; alert fires on a synthetic error burst |
-| **6 — IaC and CI/CD** | Repeatable environments and releases | Terraform modules against LocalStack, secrets sync (O); GitHub Actions: build once → staging → smoke → approval → prod → auto-rollback (O) | A merged PR reaches prod via the pipeline with no manual `kubectl`; `terraform plan` shows no drift; a deliberately failing deploy is auto-rolled back |
-| **7 — Chaos and SRE agent** | Self-healing, explained | chaos-service with 3 scenarios (O); sre-agent loop, evidence collector, OpenRouter client, guardrails, approval, incident feed (K); feed UI (K) | In staging, each scenario is fixed by the expected action within 3 minutes of detection, 3 runs in a row; guardrail tests prove out-of-allowlist requests are declined; agent survives LLM outage (do_nothing + escalate) |
+| **5 — Kubernetes and observability** | Production-like platform | Terraform modules `kind-cluster` and `environment`: kind cluster, staging/prod namespaces, quotas, agent RBAC, Secrets (O); Helm umbrella chart with the shared service sub-chart and network policies (O); Prometheus, Grafana, Loki, Alloy, dashboards, alert rules (O); probes and metrics in every service (all) | `make infra` builds the cluster from nothing; `helm install` of the umbrella works in both namespaces; dashboards show golden signals for all 8 services; alert fires on a synthetic error burst |
+| **6 — IaC, CI/CD and GitOps** | Repeatable environments and releases | Terraform `argo-cd` module (Argo CD via the Helm provider) + `ApplicationSet` (O); GitHub Actions: build once → tag bump in `deploy/envs/staging/` → Argo CD sync + PostSync smoke tests → `make promote` PR → Release & Reliability approval → Argo CD syncs prod (O); CI create–check–destroy test of `infra/envs/local` (O); optional LocalStack module (O) | A merged PR reaches prod through commits only, with no manual `kubectl` or `helm`; Argo CD shows every Application `Synced` and `Healthy`; `terraform plan` shows no changes; a deliberately failing release is undone by `git revert` and Argo CD re-syncs |
+| **7 — Chaos and SRE agent** | Self-healing, explained | chaos-service with 3 scenarios (O); sre-agent loop, evidence collector, OpenRouter client, guardrails, approval, incident feed (K); feed UI (K); agent + Argo CD coexistence checks (K, O) | In staging, each scenario is fixed by the expected action within 3 minutes of detection, 3 runs in a row; guardrail tests prove out-of-allowlist requests are declined; agent survives LLM outage (do_nothing + escalate); after a `BAD_DEPLOY` rollback the Argo CD Application returns to `Synced`, and scale/restart create no `OutOfSync` |
 | **8 — Hardening, measurement and demo** | Ready for the viva | Load test, runbook, transformation metrics report, demo script and rehearsal (all) | Two full demo rehearsals without manual fixes; metrics report produced; all viva notes reviewed |
 
 ## Phase status
 
 | Phase | Status |
 |---|---|
-| 0 | 🟡 In review (docs written; textbook checks pending) |
+| 0 | 🟡 In review (docs written; textbook markers resolved; owner reviews pending) |
 | 1–8 | ⚪ Not started |
 
 ## Measuring progress
 
-> How do we know the move to microservices is actually working? We measure delivery speed and stability (DORA) and
-> how independent the services really are.
-
-⚠️ VERIFY AGAINST TEXTBOOK — check which measures the textbook recommends for "measuring microservices transformation
-progress" and add or rename metrics to match.
+> How do we know the move to microservices is actually working? We measure delivery speed and stability with the
+> **DORA "four key metrics"**, then add metrics specific to CircuitBreaker's self-healing goal and to how independent
+> the services really are.
+>
+> **Source:** the four key metrics come from N. Forsgren, J. Humble and G. Kim, *Accelerate: The Science of Lean
+> Software and DevOps* (IT Revolution, 2018), the DORA research programme. They are a standard industry source, not
+> the textbook. Later DORA reports rename the fourth metric "failed deployment recovery time"; we keep the
+> *Accelerate* name.
 
 | Metric | Type | How we measure it | Target by Phase 8 |
 |---|---|---|---|
-| **Deployment frequency** | DORA | Count of prod deploys per week (GitHub Actions) | ≥ 5 per week across services |
-| **Lead time for changes** | DORA | Merge → running in prod (pipeline timestamps) | < 30 minutes |
-| **Change failure rate** | DORA | Deploys followed by rollback or incident within 1 hour | < 15% |
-| **Time to restore service (MTTR)** | DORA | `IncidentResolved.time_to_recover_seconds` + chaos-service measurements | < 3 minutes for the 3 scenarios |
-| **Independent deploy ratio** | Architecture | % of deploys that changed exactly one service | > 80% |
+| **Deployment frequency** | DORA | Count of prod promotion merges per week (`git log deploy/envs/prod/`) | ≥ 5 per week across services |
+| **Lead time for changes** | DORA | Merge to `main` → Argo CD reports the prod Application `Synced` with that tag | < 30 minutes (excluding approval wait) |
+| **Change failure rate** | DORA | Promotions followed by a `git revert` or an incident within 1 hour | < 15% |
+| **Time to restore service** | DORA | `IncidentResolved.time_to_recover_seconds` + chaos-service measurements | < 3 minutes for the 3 scenarios |
+| **Incidents auto-remediated** | CircuitBreaker | Share of incidents resolved `RECOVERED` after an agent action (approved or not) rather than `ESCALATED` (`sre_agent_incidents_total{resolution}`) | ≥ 90% of chaos runs |
+| **Mean time to detect (MTTD)** | CircuitBreaker | Chaos experiment start → `IncidentOpened` (recorded by chaos-service) | < 90 seconds |
+| **Independent deploy ratio** | Architecture | % of promotions that changed exactly one service | > 80% |
 | **Cross-service change ratio** | Architecture | % of PRs touching more than one `services/*` folder | < 20% |
 | **Contract breakages** | Architecture | Contract-test failures caught in CI (good) vs found in staging (bad) | 0 in staging |
 | **Shared-data violations** | Architecture | Any service credential with access to another keyspace/DB | 0 (checked by a test) |
@@ -61,6 +66,7 @@ A: An objective check that a phase is finished — no "almost done". It also tel
 A: It depends on everything else: metrics and alerts (Phase 5), real rollouts and history (Phases 5–6), and chaos to
 test against (Phase 7). Building it earlier would mean mocking all of that.
 
-**Q: What are the DORA metrics?**
-A: Deployment frequency, lead time for changes, change failure rate and time to restore service — four measures of
-delivery speed and stability.
+**Q: What are the DORA metrics, and where do they come from?**
+A: Deployment frequency, lead time for changes, change failure rate and time to restore service: two measures of
+speed and two of stability, from Forsgren, Humble and Kim's *Accelerate* (2018). We add mean time to detect and the
+share of incidents the agent fixed.

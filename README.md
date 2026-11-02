@@ -46,7 +46,7 @@ Full diagrams: [system architecture](docs/03-architecture/01-system-architecture
 
 | Service | Responsibility | Owner |
 |---|---|---|
-| [`api-gateway`](services/api-gateway/README.md) | Sessions/JWT, routing, rate limits, WebSocket proxy | Mohammad Oweis |
+| [`api-gateway`](services/api-gateway/README.md) | Sessions/JWT, routing, rate limits, WebSocket proxy | MD Asif Ali |
 | [`order-service`](services/order-service/README.md) | Validate, reserve, track orders | Kaizer Dewaswala |
 | [`matching-engine`](services/matching-engine/README.md) | Price-time matching, market event store | Kaizer Dewaswala |
 | [`market-data-service`](services/market-data-service/README.md) | Candles, depth, live streams, time travel | MD Asif Ali |
@@ -57,7 +57,7 @@ Full diagrams: [system architecture](docs/03-architecture/01-system-architecture
 | [`web`](web/README.md) | Trader, presenter and admin UI | Kaizer Dewaswala |
 
 **Stack:** Python 3.12 + FastAPI · Redpanda · Cassandra · Postgres · React + Vite + TradingView Lightweight Charts ·
-Docker Compose → kind + Helm · Prometheus, Grafana, Loki · Terraform + LocalStack · GitHub Actions · LLM via OpenRouter.
+Docker Compose → kind + Helm · Argo CD (GitOps) · Prometheus, Grafana, Loki · Terraform · GitHub Actions · LLM via OpenRouter.
 
 ## How to navigate the docs
 
@@ -80,11 +80,14 @@ Every document ends with **Viva Notes**: likely examiner questions with short an
 
 ## Team
 
-| Team | Owner |
+Designed with the textbook's five-step team topology ([details](docs/04-team-topology.md)); three people play
+several team roles each.
+
+| Person | Team roles |
 |---|---|
-| Trading (+ SRE agent) | Kaizer Dewaswala |
-| Market Insights | MD Asif Ali |
-| Platform & Reliability | Mohammad Oweis |
+| Kaizer Dewaswala | System Design (enabling) · Trading (stream-aligned) · SRE agent (enabling) |
+| MD Asif Ali | Market Insights (stream-aligned) · API Team (stream-aligned) |
+| Mohammad Oweis | Cloud Platform (platform) · Release & Reliability (complicated-subsystem) |
 
 ## Viva Notes
 
