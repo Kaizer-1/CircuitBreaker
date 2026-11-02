@@ -15,7 +15,7 @@
 > | 4. **Identify aggregates / bounded contexts** | ~30 min | Regroup commands and events around the **aggregate** that accepts them. The resulting clusters are the bounded contexts. |
 > | 5. **Competitive analysis** | ~15 min | Rank each context by **difficulty** and **competitive edge** (S/M/L) to decide where to invest effort. This phase comes from Greg Young, not Brandolini's original process. |
 >
-> We ran it as a team on a digital whiteboard and transcribed the result here, one section per phase.
+> We modelled it as a design exercise, following the five phases, and recorded the result here, one section per phase.
 >
 > **Known limitation.** The textbook stresses that participants should not be only engineers; product, design and
 > business people make a big difference (Ch. 4). We are three students with no such stakeholders. We used the actors
@@ -37,8 +37,8 @@
 
 ## Phase 1 — Discover domain events
 
-Each of us wrote events individually, without discussion, and placed them roughly left (earlier) to right (later).
-Removing duplicates was left for Phase 2. After de-duplication, **23 distinct domain events** remained: 13 integration
+Following Phase 1's rules, we listed every domain event we could think of, roughly left (earlier) to right (later),
+without filtering. Removing duplicates was left for Phase 2. After de-duplication, **23 distinct domain events** remained: 13 integration
 events and 10 local events, listed in the timeline below.
 
 ## Phase 2 — Enforce the timeline (and capture hotspots)
@@ -80,7 +80,7 @@ Integration events in this timeline: **OrderPlaced, OrderCancelRequested, OrderA
 OrderCancelled, OrderCancelRejected, CandleClosed, IncidentOpened, RemediationProposed, RemediationApproved,
 RemediationDeclined, RemediationExecuted, IncidentResolved** (13 in total).
 
-### Hotspots and how we resolved them (offline, after the session)
+### Hotspots and how we resolved them (answered afterwards, as the textbook advises)
 
 | 🟪 Hotspot | Resolution |
 |---|---|
