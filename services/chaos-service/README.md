@@ -6,9 +6,9 @@
 
 | | |
 |---|---|
-| **Owning team** | Platform & Reliability Team |
+| **Owning team** | Release & Reliability Team (based on the textbook's release team) |
 | **Owner** | **Mohammad Oweis** |
-| **Team type** | Enabling ([team topology](../../docs/04-team-topology.md)) |
+| **Team type** | Complicated-subsystem ([team topology](../../docs/04-team-topology.md)) |
 | **Bounded context** | Chaos Engineering (supporting) |
 
 ## Responsibility

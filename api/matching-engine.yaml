@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   summary: Read-only access to the market event store and order books.
   description: |
-    Owned by the **Trading Team** (Kaizer Dewaswala) — complicated-subsystem.
+    Owned by the **Trading Team** (Kaizer Dewaswala); treated as a complicated subsystem.
 
     The matching engine's main work is **not** HTTP: it consumes `OrderPlaced` / `OrderCancelRequested` from
     `orders.v1`, matches by price-time priority (A-08), appends results to its Cassandra event store and publishes

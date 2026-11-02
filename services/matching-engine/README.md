@@ -8,7 +8,7 @@
 |---|---|
 | **Owning team** | Trading Team |
 | **Owner** | **Kaizer Dewaswala** |
-| **Team type** | Complicated-subsystem ([team topology](../../docs/04-team-topology.md)) |
+| **Team type** | Stream-aligned team; the matching engine is treated as a complicated subsystem ([team topology](../../docs/04-team-topology.md)) |
 | **Bounded context** | Matching (core, complicated) |
 
 ## Responsibility

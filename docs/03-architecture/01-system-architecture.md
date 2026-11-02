@@ -24,15 +24,13 @@ flowchart TB
     CB["CircuitBreaker<br/>[Software System]<br/>Self-healing simulated stock exchange<br/>with bots, time travel and an AI SRE agent"]:::system
 
     CL["OpenRouter<br/>[External System]<br/>LLM gateway; the SRE agent<br/>uses an LLM for diagnosis"]:::external
-    GH["GitHub<br/>[External System]<br/>Code, Actions CI/CD,<br/>container registry (GHCR)"]:::external
-    LS["LocalStack<br/>[External System]<br/>Simulated AWS:<br/>S3, Secrets Manager, SSM"]:::external
+    GH["GitHub<br/>[External System]<br/>Code, deploy config,<br/>Actions CI, registry (GHCR)"]:::external
 
     T -- "Places orders, watches charts<br/>[HTTPS, WebSocket]" --> CB
     A -- "Chaos, agent settings, approvals<br/>[HTTPS, WebSocket]" --> CB
     D -- "Pushes code" --> GH
-    GH -- "Builds images, deploys with Helm" --> CB
+    CB -- "Argo CD pulls deploy config<br/>and images [HTTPS]" --> GH
     CB -- "Sends evidence, receives tool call<br/>[HTTPS]" --> CL
-    CB -- "Reads secrets and config, archives events<br/>[AWS API]" --> LS
 ```
 
 Bot traders do not appear here because they are *inside* the system (the `bot-traders` service).
@@ -170,14 +168,22 @@ means the agent may restart or roll back that service but never scale it.
 | Can exist without the other? | Yes — a monolith has APIs | Yes — `bot-traders` has no business API |
 | Relationship | One microservice can expose several APIs (public, internal, events) | One public API can be served by several microservices (the gateway composes them) |
 
-**In CircuitBreaker:** the *public API* the phone sees (all under `/v1/…` on the gateway) is deliberately **not**
-the same shape as the service boundaries — the client doesn't need to know that orders and portfolio are separate
-services. Internally, services expose *internal APIs* (`/internal/v1/…`) and *event contracts* (topics). We could
-merge or split services behind the gateway without changing the public API — the API is a stable product; the
-services are an implementation choice.
+**The textbook's framing (Ch. 2).** The textbook's operating model has an **API team**, a stream-aligned *consumer*
+team that designs, develops and maintains the **APIs at the boundary of the system** and connects them to the
+internal microservices. Consumers, such as a mobile-app team, call that API and **never call the microservices
+directly** (Mitra & Nadareishvili, Ch. 2). In other words, the API is the consumer-facing contract and the
+microservices are the implementation behind it.
 
-⚠️ VERIFY AGAINST TEXTBOOK — check how the textbook frames "microservices vs APIs" (for example, whether it
-emphasises that API design comes first via SEED(S) and services are an implementation detail) and align wording.
+**In CircuitBreaker:**
+
+- `api-gateway` **is that boundary**, owned by our API Team ([team topology](../04-team-topology.md)). Phones, the
+  presenter screen and the bots all call `/v1/…` on the gateway. No client ever calls a microservice directly, and
+  `/internal/v1/…` is blocked at the gateway.
+- The public API is deliberately **not** the same shape as the service boundaries. The client doesn't need to know
+  that orders and portfolio are separate services.
+- Behind the gateway, services talk through *internal APIs* (`/internal/v1/…`) and *event contracts* (topics). We
+  could merge or split services without changing the public API. The API is a stable product; the services are an
+  implementation choice that can evolve, as the [Universal Sizing Formula](../02-domain/03-service-sizing.md#1-the-universal-sizing-formula) expects.
 
 ## 5. Cross-cutting concerns
 
@@ -188,7 +194,7 @@ emphasises that API design comes first via SEED(S) and services are an implement
 | Rate limiting | Gateway: 20 requests/s per trader, 50/s per bot token; returns `429 RATE_LIMITED`. |
 | Logging | JSON logs to stdout with `service`, `level`, `correlation_id`, `trader_id` (if any); collected by Grafana Alloy into Loki. |
 | Metrics | `GET /metrics` on every service (Prometheus format), standard names in [coding standards](../05-coding-standards.md). |
-| Configuration | Environment variables (12-factor); secrets from Kubernetes Secrets populated from LocalStack Secrets Manager. |
+| Configuration | Environment variables (12-factor) from Helm values in `deploy/envs/<env>/`; secrets from Kubernetes Secrets created by Terraform ([ADR-0015](../adr/0015-terraform-local-platform.md)). |
 | Reference data | The five instruments are defined once in Helm values (`global.instruments`) and injected into every service as config. |
 
 ## Viva Notes

@@ -6,9 +6,9 @@
 
 | | |
 |---|---|
-| **Owning team** | Platform & Reliability Team |
-| **Owner** | **Mohammad Oweis** |
-| **Team type** | Platform ([team topology](../../docs/04-team-topology.md)) |
+| **Owning team** | API Team (the textbook's consumer-facing API team: owns the APIs at the system boundary) |
+| **Owner** | **MD Asif Ali** |
+| **Team type** | Stream-aligned ([team topology](../../docs/04-team-topology.md)) |
 | **Bounded context** | Access (generic subdomain) |
 
 ## Responsibility

@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| **Owning team** | Kaizer Dewaswala (enabling role, collaborating with the Platform & Reliability Team) |
+| **Owning team** | SRE agent role (enabling), collaborating with the Release & Reliability Team |
 | **Owner** | **Kaizer Dewaswala** |
 | **Team type** | Enabling ([team topology](../../docs/04-team-topology.md)) |
 | **Bounded context** | Reliability Operations (core for this project) |

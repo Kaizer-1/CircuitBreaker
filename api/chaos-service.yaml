@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   summary: Run controlled chaos experiments.
   description: |
-    Owned by the **Platform & Reliability Team** (Mohammad Oweis). Admin only (api-gateway enforces the `admin`
+    Owned by the **Release & Reliability Team** (Mohammad Oweis). Admin only (api-gateway enforces the `admin`
     role; the service re-checks `X-Role`).
 
     One experiment at a time; each has an automatic expiry and an explicit undo. chaos-service consumes

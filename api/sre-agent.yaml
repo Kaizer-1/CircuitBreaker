@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   summary: Incidents, remediation approvals and agent settings.
   description: |
-    Owned by **Kaizer Dewaswala** (enabling role, in collaboration with the Platform & Reliability Team).
+    Owned by **Kaizer Dewaswala** (SRE agent role, enabling; in collaboration with the Release & Reliability Team).
 
     The agent's main work is its loop: poll Prometheus alerts, open incidents (A-16), collect evidence, ask an LLM
     through OpenRouter to choose one allowlisted tool, check guardrails, and execute against the Kubernetes API (A-17).

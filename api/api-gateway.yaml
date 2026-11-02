@@ -4,7 +4,8 @@ info:
   version: 1.0.0
   summary: The single public entry point used by the web app and the bots.
   description: |
-    Owned by the **Platform & Reliability Team** (Mohammad Oweis).
+    Owned by the **API Team** (MD Asif Ali) — the system's boundary API: consumers call it and never call
+    microservices directly.
 
     This is the **public API**: everything a phone, the presenter laptop or a bot can call. `api-gateway`:
     1. issues sessions (signed JWTs) — the only operations it implements itself (A-01, A-03, A-04, Q-01);
@@ -108,7 +109,7 @@ paths:
         - name: X-Bot-Secret
           in: header
           required: true
-          description: Shared secret from Kubernetes Secret `bot-secret` (LocalStack Secrets Manager).
+          description: Shared secret from Kubernetes Secret `bot-secret` (created by Terraform; never in Git).
           schema:
             type: string
       requestBody:
