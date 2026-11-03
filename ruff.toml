@@ -9,4 +9,5 @@ select = ["E", "F", "I", "B", "UP", "SIM", "N", "ASYNC", "S"]
 [lint.per-file-ignores]
 # These dev tools run fixed, trusted commands (docker, git); there is no untrusted input to inject into.
 "scripts/*" = ["S603", "S607"]
-"tools/*" = ["S603", "S607"]
+# E501: scaffold.py holds long template strings that read better unwrapped.
+"tools/*" = ["S603", "S607", "E501"]
