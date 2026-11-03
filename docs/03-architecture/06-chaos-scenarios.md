@@ -63,6 +63,10 @@ revert pull request, the Release & Reliability Team merges a deliberately bad im
 back (a), then opens the `git revert` pull request (b). Merging it returns the Application to `Synced` with no new
 rollout. chaos-service itself never writes to Git, which keeps its blast radius small.
 
+**Demo plan:** the **live** demo uses the chaos-patch `BAD_DEPLOY` above, which is fast and reliable with no wait for
+Argo CD. The Git-revert path is shown as a **pre-recorded clip** in the presentation, because waiting up to ~3
+minutes for Argo CD's polling in front of a panel is a poor use of the time.
+
 **Signals:**
 ```promql
 # 5xx ratio for order-service, alert if above 5% for 1 minute

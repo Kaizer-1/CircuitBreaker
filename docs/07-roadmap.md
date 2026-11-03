@@ -20,14 +20,26 @@ flowchart LR
 | **5 — Kubernetes and observability** | Production-like platform | Terraform modules `kind-cluster` and `environment`: kind cluster, staging/prod namespaces, quotas, agent RBAC, Secrets (O); Helm umbrella chart with the shared service sub-chart and network policies (O); Prometheus, Grafana, Loki, Alloy, dashboards, alert rules (O); probes and metrics in every service (all) | `make infra` builds the cluster from nothing; `helm install` of the umbrella works in both namespaces; dashboards show golden signals for all 8 services; alert fires on a synthetic error burst |
 | **6 — IaC, CI/CD and GitOps** | Repeatable environments and releases | Terraform `argo-cd` module (Argo CD via the Helm provider) + `ApplicationSet` (O); GitHub Actions: build once → tag bump in `deploy/envs/staging/` → Argo CD sync + PostSync smoke tests → `make promote` PR → Release & Reliability approval → Argo CD syncs prod (O); CI create–check–destroy test of `infra/envs/local` (O); optional LocalStack module (O) | A merged PR reaches prod through commits only, with no manual `kubectl` or `helm`; Argo CD shows every Application `Synced` and `Healthy`; `terraform plan` shows no changes; a deliberately failing release is undone by `git revert` and Argo CD re-syncs |
 | **7 — Chaos and SRE agent** | Self-healing, explained | chaos-service with 3 scenarios (O); sre-agent loop, evidence collector, OpenRouter client, guardrails, approval, incident feed (K); feed UI (K); rollback's Git step: Argo CD pre-check + revert PR via a GitHub App (K); `main` ruleset and read-only Argo CD account (O); agent + Argo CD coexistence checks (K, O) | In staging, each scenario is fixed by the expected action within 3 minutes of detection, 3 runs in a row; guardrail tests prove out-of-allowlist requests are declined; agent survives LLM outage (do_nothing + escalate); after a `BAD_DEPLOY` rollback the Argo CD Application returns to `Synced` (`git_reconciliation: NOT_NEEDED`), and scale/restart create no `OutOfSync`; in a Git-delivered bad-release rehearsal the rollback opens a `git revert` PR whose merge returns the Application to `Synced` with no new rollout |
-| **8 — Hardening, measurement and demo** | Ready for the viva | Load test, runbook, transformation metrics report, demo script and rehearsal (all) | Two full demo rehearsals without manual fixes; metrics report produced; all viva notes reviewed |
+| **8 — Hardening, measurement and demo** | Ready for the viva | Load test, runbook, transformation metrics report, demo script and rehearsal (all); pre-recorded clip of the Git-delivered bad release → rollback → `git revert` PR path (K, O) | Two full demo rehearsals without manual fixes; metrics report produced; all viva notes reviewed |
 
 ## Phase status
 
 | Phase | Status |
 |---|---|
-| 0 | 🟡 In review (docs written; textbook markers resolved; owner reviews pending) |
+| 0 | 🔒 Design frozen on 2026-11-03 (owners still to review their study guides) |
 | 1–8 | ⚪ Not started |
+
+## Design freeze
+
+The Phase 0 design was **frozen on 2026-11-03**. From now until Phase 7, phases add **code, not design**:
+
+- **Not allowed:** new scope. That means no new services, agent tools, infrastructure components, integrations, or
+  ADRs that add capability.
+- **Allowed:** fixing errors and inconsistencies found while coding, in the same PR as the code (docs stay the
+  source of truth).
+- **Allowed:** a superseding ADR only if implementation proves a frozen decision *unworkable*. It replaces the
+  decision; it does not extend it.
+- Ideas that come up meanwhile go to a "Later" list in the Phase 8 runbook, not into the design.
 
 ## Measuring progress
 
