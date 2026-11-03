@@ -53,6 +53,26 @@ jobs:
       - name: pytest (unit, smoke and contract tests against api/)
         run: uv run --frozen pytest
 
+  integration:
+    name: ${{ matrix.service }} (integration tests, real stores in Docker)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - matching-engine
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --frozen
+      - name: pytest -m integration (testcontainers)
+        run: uv run --frozen pytest -m integration --no-cov
+
   contracts:
     name: API specs, event contracts, template drift, Compose file
     runs-on: ubuntu-latest

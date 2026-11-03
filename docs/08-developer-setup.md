@@ -105,7 +105,9 @@ exist, so "healthy" means "can do its job", not just "the process started".
 | `make build` | Builds the Docker images (`s=<service>` for one) |
 | `make lint` | `ruff check`, `ruff format --check` and `mypy` per service, `redocly lint`, the template-drift check, and web ESLint + Prettier |
 | `make fmt` | Auto-fixes and formats Python (ruff) and web (Prettier) |
-| `make test` | `pytest` per service (unit, smoke and contract tests) and `vitest` for the web app |
+| `make test` | `pytest` per service (unit, property, smoke and contract tests; matching-engine also enforces 100% branch coverage of `domain/`) and `vitest` for the web app |
+| `make test-integration` | Integration tests against real Cassandra/Postgres/Redpanda started by testcontainers (needs Docker); `s=<service>` for one |
+| `make test-deep` | Property tests (Hypothesis) at 25,000 examples each instead of 1,000; slow |
 | `make status` | Calls the gateway's `/v1/system/status` and prints the report |
 
 > **Not the same as the Terraform target.** `make infra` means *the Compose infrastructure*. The Terraform platform from

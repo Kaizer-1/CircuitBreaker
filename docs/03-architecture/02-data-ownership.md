@@ -66,12 +66,15 @@ clusters without changing any code.
 | Table | Partition key | Clustering key | Answers the query |
 |---|---|---|---|
 | `market_events` | `(ticker, day)` | `sequence ASC` | "Events for CHAIWALA after sequence N until time T" (replay, time travel, re-publish) |
+| `ticker_days` | `ticker` | `day ASC` | "Which day partitions of `market_events` exist, and the first sequence in each" (where a rebuild or a Q-14 page starts) |
 | `book_snapshots` | `ticker` | `sequence DESC` | "Latest snapshot at or before time T" |
 | `processed_commands` | `command_id` (the `event_id` of the incoming `OrderPlaced`/`OrderCancelRequested`) | — | "Have I already processed this command?" (idempotency) |
 | `publish_cursor` | `ticker` | — | "Last sequence successfully published to `matching.v1`" |
 
 `market_events` columns: `sequence`, `event_id`, `event_type`, `occurred_at`, `payload` (the full JSON envelope).
-`day` bucketing keeps partitions from growing forever.
+`day` bucketing keeps partitions from growing forever. A command's events, its `ticker_days` row (on a new day) and its
+`processed_commands` row are written in **one logged batch**. A snapshot's `state` is the whole book, including every
+finished or expired order ID (so cancel rejections and tombstones give the same answer after a restart).
 
 ### Keyspace `order_service` (owner: order-service)
 

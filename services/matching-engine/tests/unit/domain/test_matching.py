@@ -1,5 +1,7 @@
 """Example tests: one per matching rule (docs/03-architecture/03-event-catalog.md, matching.v1)."""
 
+from collections.abc import Sequence
+
 from matching_engine.domain.model import (
     CancelReason,
     OrderAccepted,
@@ -9,11 +11,10 @@ from matching_engine.domain.model import (
     Side,
     TradeExecuted,
 )
-
 from tests.builders import ALICE, BOB, CARA, DEV, Market, limit, market, oid
 
 
-def trades(events: list[object]) -> list[TradeExecuted]:
+def trades(events: Sequence[object]) -> list[TradeExecuted]:
     return [e for e in events if isinstance(e, TradeExecuted)]
 
 

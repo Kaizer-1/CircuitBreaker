@@ -81,8 +81,8 @@ services/order-service/
 │   ├── domain/               # pure business logic and models (Order, OrderStatus, validation rules)
 │   ├── ports/                # interfaces the application needs (OrderRepository, EventPublisher, PortfolioClient)
 │   ├── adapters/             # implementations: cassandra/, redpanda/, http/
-│   └── events/               # Pydantic models of produced/consumed events (match contracts/events/)
-├── migrations/               # CQL (Cassandra) or SQL (Postgres) migrations, numbered
+│   ├── events/               # models of produced/consumed events (match contracts/events/)
+│   └── migrations/           # CQL (Cassandra) or SQL (Postgres) migrations, numbered; applied at start-up
 └── tests/
     ├── unit/                 # domain + application, no I/O, fast
     ├── integration/          # real Cassandra/Redpanda/Postgres via testcontainers

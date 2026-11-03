@@ -3,9 +3,9 @@
 from datetime import UTC, datetime
 
 import pytest
+
 from matching_engine.application.engine import MatchingEngine
 from matching_engine.domain.model import InvalidCommandError, Outcome
-
 from matching_engine.runtime.events import build_event
 from tests.builders import ALICE, BOB, CARA, cancel, expire, id_source, limit, market
 from tests.fakes import Crash, InMemoryEventStore, RecordingPublisher
@@ -313,3 +313,25 @@ async def test_a_crash_between_append_and_apply_is_healed_by_recovery(
         "OrderAccepted",
         "TradeExecuted",
     ]
+
+
+async def test_an_append_that_timed_out_but_was_written_is_found_by_rebuilding(
+    store: InMemoryEventStore, publisher: RecordingPublisher
+) -> None:
+    # A Cassandra write timeout does not mean the logged batch failed: it may still be applied.
+    engine = await started(store, publisher)
+
+    def timeout_after_write(point: str) -> None:
+        if point == "append.after":
+            raise TimeoutError("write timed out, but the batch was written")
+
+    store.hook = timeout_after_write
+    command = limit(1, ALICE, "BUY", 10, 24600)
+    with pytest.raises(TimeoutError):
+        await engine.handle(command)
+    store.hook = lambda point: None
+    assert await engine.handle(command) is None  # rebuilt from the store: already processed
+    assert engine.book("CHAIWALA").best_bid() == 24600
+    await engine.handle(limit(2, BOB, "SELL", 4, 24600))
+    assert [e.data["sequence"] for e in store.events["CHAIWALA"]] == [1, 2, 3]
+    assert [e.data["sequence"] for e in publisher.first_copies("CHAIWALA")] == [1, 2, 3]

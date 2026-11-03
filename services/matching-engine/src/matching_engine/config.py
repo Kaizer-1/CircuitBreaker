@@ -15,3 +15,6 @@ class Settings(BaseServiceSettings):
     cassandra_keyspace: str = "matching_engine"
     cassandra_username: str = "matching_engine_role"
     cassandra_password: SecretStr  # no default: a secret never lives in code
+
+    snapshot_every: int = 500  # events per ticker between snapshots (policy P-03)
+    start_consumers: bool = True  # False in unit tests: no Cassandra or Kafka at start-up

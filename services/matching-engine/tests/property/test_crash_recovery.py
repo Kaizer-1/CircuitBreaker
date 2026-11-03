@@ -12,11 +12,11 @@ from typing import Any
 
 from hypothesis import given
 from hypothesis import strategies as st
+
 from matching_engine.application.engine import MatchingEngine
 from matching_engine.domain.model import TICKERS as ALL_TICKERS
 from matching_engine.domain.model import Command
 from matching_engine.events.market import to_envelope
-
 from matching_engine.runtime.events import EventEnvelope
 from tests.builders import id_source
 from tests.fakes import Crash, InMemoryEventStore, RecordingPublisher
@@ -135,10 +135,11 @@ def test_redelivered_commands_never_change_the_books(
     clean = run(workload)
     commands = [s.command for s in clean.steps]
     delivered = list(commands)
-    for d in duplicates:  # deliver some commands again, some time after the first copy
+    for d in duplicates:  # deliver some commands again, some time after their first copy
         if commands:
-            i = d % len(commands)
-            delivered.insert(min(len(delivered), i + 1 + d % 5), commands[i])
+            original = commands[d % len(commands)]
+            first_copy = delivered.index(original)  # redelivery never overtakes the original
+            delivered.insert(min(len(delivered), first_copy + 1 + d % 5), original)
 
     async def go() -> MatchingEngine:
         engine = MatchingEngine(
