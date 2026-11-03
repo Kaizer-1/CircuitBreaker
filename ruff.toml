@@ -1,0 +1,12 @@
+# Ruff settings for the repo-level scripts (scripts/, tools/). Each service has its own in pyproject.toml.
+# Same rules as docs/05-coding-standards.md section 5.
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "N", "ASYNC", "S"]
+
+[lint.per-file-ignores]
+# These dev tools run fixed, trusted commands (docker, git); there is no untrusted input to inject into.
+"scripts/*" = ["S603", "S607"]
+"tools/*" = ["S603", "S607"]
