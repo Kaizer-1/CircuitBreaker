@@ -1,8 +1,9 @@
 # matching-engine
 
-> **Status:** Phase 0 — design only, no code yet. This folder will follow the layout in
+> **Status:** Phase 1 — runnable skeleton. Follows the layout in
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service)
-> (Python package `matching_engine`).
+> (Python package `matching_engine`). Every operation in its API spec answers `501 Not Implemented` until its phase;
+> `/healthz`, `/readyz` and `/metrics` work.
 
 | | |
 |---|---|
@@ -41,6 +42,25 @@ None.
 ## Scaling and operations
 
 **Exactly 1 replica** (single writer per ticker). The agent may restart or roll it back but never scale it. Recovery = snapshot + replay.
+
+## Run and test it alone
+
+```bash
+cd services/matching-engine
+cp .env.example .env                 # local settings (git-ignored)
+uv sync                              # create the virtual environment from uv.lock
+uv run pytest                        # unit, smoke and contract tests (contract test reads ../../api/)
+uv run ruff check . && uv run ruff format --check . && uv run mypy
+
+make infra                           # from the repo root: Redpanda, Cassandra, Postgres and their init jobs
+uv run uvicorn matching_engine.main:create_app --factory --reload --port 8002
+curl localhost:8002/readyz         # or `make up` from the repo root to run its container
+```
+
+**Ready means:**
+
+- Redpanda, and the topic(s) `orders.v1`, `matching.v1` must exist (the init job creates them)
+- Cassandra: logs in with its own role `matching_engine_role` and uses keyspace `matching_engine` only
 
 ## Viva Notes
 

@@ -11,7 +11,21 @@ scale, restart, do nothing), explaining itself in plain English on a live incide
 University Microservices Architecture course project. Textbook: *Microservices: Up and Running* (Mitra &
 Nadareishvili).
 
-> **Status: Phase 0 — design and documentation.** No service code yet. See the [roadmap](docs/07-roadmap.md).
+> **Status: Phase 1 — runnable skeletons.** The design is frozen (Phase 0). Every service, the infrastructure and a
+> System Status page run locally and report healthy; the business logic arrives from Phase 2. See the
+> [roadmap](docs/07-roadmap.md).
+
+## Quick start
+
+```bash
+git clone <repository-url> CircuitBreaker && cd CircuitBreaker
+make doctor     # check Docker (10 GB recommended), Python 3.12 + uv, Node 24, kind, kubectl, helm, ...
+make up         # build and start Redpanda, Cassandra, Postgres, the 8 services and the web app (about a minute)
+```
+
+Then open **<http://localhost:5173>**: the System Status page shows every service and dependency. `make help` lists the
+other commands (`make down`, `make reset`, `make logs s=<service>`, `make lint`, `make test`, `make status`).
+Full guide with ports, measured memory use and troubleshooting: [developer setup](docs/08-developer-setup.md).
 
 ## Architecture at a glance
 
@@ -75,6 +89,7 @@ Read them in this order — each builds on the previous one.
 | 8 | [ADRs](docs/adr/README.md) | Why each major decision was made, and what we rejected |
 | 9 | [Syllabus mapping](docs/06-syllabus-mapping.md) | Where every syllabus topic is covered |
 | 10 | [Roadmap](docs/07-roadmap.md) | Phases 0–8 with "done when" criteria |
+| 11 | [Developer setup](docs/08-developer-setup.md) | Run it locally: prerequisites, make targets, ports, resource use, troubleshooting |
 
 Every document ends with **Viva Notes**: likely examiner questions with short answers.
 

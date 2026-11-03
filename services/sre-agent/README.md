@@ -1,8 +1,9 @@
 # sre-agent
 
-> **Status:** Phase 0 — design only, no code yet. This folder will follow the layout in
+> **Status:** Phase 1 — runnable skeleton. Follows the layout in
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service)
-> (Python package `sre_agent`).
+> (Python package `sre_agent`). Every operation in its API spec answers `501 Not Implemented` until its phase;
+> `/healthz`, `/readyz` and `/metrics` work.
 
 | | |
 |---|---|
@@ -41,6 +42,25 @@ Prometheus HTTP API, Loki HTTP API, Kubernetes API (ServiceAccount `sre-agent`, 
 ## Scaling and operations
 
 **Exactly 1 replica** (one decision-maker). **Never give this service tools beyond the four in the allowlist** ([ADR-0009](../../docs/adr/0009-sre-agent-fixed-tool-allowlist.md)).
+
+## Run and test it alone
+
+```bash
+cd services/sre-agent
+cp .env.example .env                 # local settings (git-ignored)
+uv sync                              # create the virtual environment from uv.lock
+uv run pytest                        # unit, smoke and contract tests (contract test reads ../../api/)
+uv run ruff check . && uv run ruff format --check . && uv run mypy
+
+make infra                           # from the repo root: Redpanda, Cassandra, Postgres and their init jobs
+uv run uvicorn sre_agent.main:create_app --factory --reload --port 8006
+curl localhost:8006/readyz         # or `make up` from the repo root to run its container
+```
+
+**Ready means:**
+
+- Redpanda, and the topic(s) `incidents.v1` must exist (the init job creates them)
+- Cassandra: logs in with its own role `sre_agent_role` and uses keyspace `sre_agent` only
 
 ## Viva Notes
 

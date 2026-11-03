@@ -1,8 +1,9 @@
 # bot-traders
 
-> **Status:** Phase 0 — design only, no code yet. This folder will follow the layout in
+> **Status:** Phase 1 — runnable skeleton. Follows the layout in
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service)
-> (Python package `bot_traders`).
+> (Python package `bot_traders`). Every operation in its API spec answers `501 Not Implemented` until its phase;
+> `/healthz`, `/readyz` and `/metrics` work.
 
 | | |
 |---|---|
@@ -41,6 +42,24 @@ Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards 
 ## Scaling and operations
 
 **Exactly 1 replica** (a second copy would run every bot twice).
+
+## Run and test it alone
+
+```bash
+cd services/bot-traders
+cp .env.example .env                 # local settings (git-ignored)
+uv sync                              # create the virtual environment from uv.lock
+uv run pytest                        # unit, smoke and contract tests (contract test reads ../../api/)
+uv run ruff check . && uv run ruff format --check . && uv run mypy
+
+make infra                           # from the repo root: Redpanda, Cassandra, Postgres and their init jobs
+uv run uvicorn bot_traders.main:create_app --factory --reload --port 8005
+curl localhost:8005/readyz         # or `make up` from the repo root to run its container
+```
+
+**Ready means:**
+
+- Redpanda, and the topic(s) `candles.v1` must exist (the init job creates them)
 
 ## Viva Notes
 

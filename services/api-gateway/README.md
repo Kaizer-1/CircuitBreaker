@@ -1,8 +1,9 @@
 # api-gateway
 
-> **Status:** Phase 0 — design only, no code yet. This folder will follow the layout in
+> **Status:** Phase 1 — runnable skeleton. Follows the layout in
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service)
-> (Python package `api_gateway`).
+> (Python package `api_gateway`). Every operation in its API spec answers `501 Not Implemented` until its phase;
+> `/healthz`, `/readyz` and `/metrics` work.
 
 | | |
 |---|---|
@@ -41,6 +42,26 @@ Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards 
 ## Scaling and operations
 
 Default 2 replicas, agent may scale 1–5. Stateless, so any replica can serve any request.
+
+## Run and test it alone
+
+```bash
+cd services/api-gateway
+cp .env.example .env                 # local settings (git-ignored)
+uv sync                              # create the virtual environment from uv.lock
+uv run pytest                        # unit, smoke and contract tests (contract test reads ../../api/)
+uv run ruff check . && uv run ruff format --check . && uv run mypy
+
+make infra                           # from the repo root: Redpanda, Cassandra, Postgres and their init jobs
+uv run uvicorn api_gateway.main:create_app --factory --reload --port 8080
+curl localhost:8080/readyz         # or `make up` from the repo root to run its container
+```
+
+**Ready means:**
+
+- none of its own: it needs no database or broker. `/readyz` is `200` once it is configured and running. `GET /v1/system/status` asks every other service's `/readyz`.
+
+The gateway reads `SERVICE_UPSTREAMS` (a JSON map of service name to base URL; the defaults are the host ports of `make up`).
 
 ## Viva Notes
 

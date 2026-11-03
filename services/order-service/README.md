@@ -1,8 +1,9 @@
 # order-service
 
-> **Status:** Phase 0 — design only, no code yet. This folder will follow the layout in
+> **Status:** Phase 1 — runnable skeleton. Follows the layout in
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service)
-> (Python package `order_service`).
+> (Python package `order_service`). Every operation in its API spec answers `501 Not Implemented` until its phase;
+> `/healthz`, `/readyz` and `/metrics` work.
 
 | | |
 |---|---|
@@ -41,6 +42,25 @@ Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards 
 ## Scaling and operations
 
 Default 2 replicas, agent may scale 1–5 (traffic-spike target). Concurrency limit 50 in-flight requests per pod. Chaos target for `BAD_DEPLOY` and `TRAFFIC_SPIKE`.
+
+## Run and test it alone
+
+```bash
+cd services/order-service
+cp .env.example .env                 # local settings (git-ignored)
+uv sync                              # create the virtual environment from uv.lock
+uv run pytest                        # unit, smoke and contract tests (contract test reads ../../api/)
+uv run ruff check . && uv run ruff format --check . && uv run mypy
+
+make infra                           # from the repo root: Redpanda, Cassandra, Postgres and their init jobs
+uv run uvicorn order_service.main:create_app --factory --reload --port 8001
+curl localhost:8001/readyz         # or `make up` from the repo root to run its container
+```
+
+**Ready means:**
+
+- Redpanda, and the topic(s) `orders.v1`, `matching.v1` must exist (the init job creates them)
+- Cassandra: logs in with its own role `order_service_role` and uses keyspace `order_service` only
 
 ## Viva Notes
 

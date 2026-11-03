@@ -1,6 +1,7 @@
 # web
 
-> **Status:** Phase 0 — design only, no code yet.
+> **Status:** Phase 1 — one screen so far: **System Status** (polls the gateway's `/v1/system/status` every 3 s and shows every
+> service and dependency as healthy or not). The trader, presenter and admin views below arrive in Phase 3.
 
 |                 |                                                  |
 | --------------- | ------------------------------------------------ |
@@ -28,6 +29,21 @@ digit grouping (₹1,00,000.00).
 ## Owned data
 
 None on the server. The access token is kept in the browser's local storage.
+
+## Run and test it alone
+
+```bash
+cd web
+npm ci                  # install from package-lock.json (Node >= 22.12, 24 LTS recommended)
+npm run dev             # http://localhost:5173, proxies /v1 to the gateway on :8080 (start it with `make up`)
+npm test                # vitest + Testing Library
+npm run lint && npm run format:check && npm run typecheck
+npm run build           # type-check and build to dist/
+```
+
+In Docker (`make up`) the built files are served by unprivileged nginx on host port 5173, which forwards `/v1/` to
+`api-gateway` so the browser sees a single origin (no CORS). Versions: React 19, Vite 8, TypeScript 6.0 (pinned below 6.1
+because typescript-eslint does not support TypeScript 7 yet), ESLint 10, Vitest 5.
 
 ## Viva Notes
 
