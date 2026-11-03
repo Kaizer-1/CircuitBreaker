@@ -3,6 +3,13 @@
 # Use the Makefile (make infra / make up / make down); the app profile's depends_on needs the infra profile active.
 name: circuitbreaker
 
+# Settings every Python service gets. Credentials below are local-development placeholders only.
+x-python-env: &python-env
+  ENVIRONMENT: dev
+  LOG_LEVEL: INFO
+x-kafka-env: &kafka-env
+  KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+
 services:
   # --------------------------------------------------------------------------- infrastructure
   redpanda:
@@ -123,6 +130,148 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+
+  # --------------------------------------------------------------------------- application services
+
+  api-gateway:
+    build: ./services/api-gateway
+    image: circuitbreaker/api-gateway:dev
+    profiles: [app]
+    ports:
+      - "8080:8000"
+    environment:
+      <<: *python-env
+      SERVICE_UPSTREAMS: '{"order-service":"http://order-service:8000","matching-engine":"http://matching-engine:8000","market-data-service":"http://market-data-service:8000","portfolio-service":"http://portfolio-service:8000","bot-traders":"http://bot-traders:8000","sre-agent":"http://sre-agent:8000","chaos-service":"http://chaos-service:8000"}'
+    mem_limit: 192m
+    restart: unless-stopped
+
+  order-service:
+    build: ./services/order-service
+    image: circuitbreaker/order-service:dev
+    profiles: [app]
+    ports:
+      - "8001:8000"
+    environment:
+      <<: [*python-env, *kafka-env]
+      CASSANDRA_CONTACT_POINTS: cassandra
+      CASSANDRA_KEYSPACE: order_service
+      CASSANDRA_USERNAME: order_service_role
+      CASSANDRA_PASSWORD: cb_dev_order_service
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+      cassandra-init:
+        condition: service_completed_successfully
+    mem_limit: 192m
+    restart: unless-stopped
+
+  matching-engine:
+    build: ./services/matching-engine
+    image: circuitbreaker/matching-engine:dev
+    profiles: [app]
+    ports:
+      - "8002:8000"
+    environment:
+      <<: [*python-env, *kafka-env]
+      CASSANDRA_CONTACT_POINTS: cassandra
+      CASSANDRA_KEYSPACE: matching_engine
+      CASSANDRA_USERNAME: matching_engine_role
+      CASSANDRA_PASSWORD: cb_dev_matching_engine
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+      cassandra-init:
+        condition: service_completed_successfully
+    mem_limit: 192m
+    restart: unless-stopped
+
+  market-data-service:
+    build: ./services/market-data-service
+    image: circuitbreaker/market-data-service:dev
+    profiles: [app]
+    ports:
+      - "8003:8000"
+    environment:
+      <<: [*python-env, *kafka-env]
+      CASSANDRA_CONTACT_POINTS: cassandra
+      CASSANDRA_KEYSPACE: market_data
+      CASSANDRA_USERNAME: market_data_role
+      CASSANDRA_PASSWORD: cb_dev_market_data
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+      cassandra-init:
+        condition: service_completed_successfully
+    mem_limit: 192m
+    restart: unless-stopped
+
+  portfolio-service:
+    build: ./services/portfolio-service
+    image: circuitbreaker/portfolio-service:dev
+    profiles: [app]
+    ports:
+      - "8004:8000"
+    environment:
+      <<: [*python-env, *kafka-env]
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: portfolio
+      POSTGRES_USER: portfolio_service
+      POSTGRES_PASSWORD: cb_dev_portfolio
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    mem_limit: 192m
+    restart: unless-stopped
+
+  bot-traders:
+    build: ./services/bot-traders
+    image: circuitbreaker/bot-traders:dev
+    profiles: [app]
+    ports:
+      - "8005:8000"
+    environment:
+      <<: [*python-env, *kafka-env]
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+    mem_limit: 192m
+    restart: unless-stopped
+
+  sre-agent:
+    build: ./services/sre-agent
+    image: circuitbreaker/sre-agent:dev
+    profiles: [app]
+    ports:
+      - "8006:8000"
+    environment:
+      <<: [*python-env, *kafka-env]
+      CASSANDRA_CONTACT_POINTS: cassandra
+      CASSANDRA_KEYSPACE: sre_agent
+      CASSANDRA_USERNAME: sre_agent_role
+      CASSANDRA_PASSWORD: cb_dev_sre_agent
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+      cassandra-init:
+        condition: service_completed_successfully
+    mem_limit: 192m
+    restart: unless-stopped
+
+  chaos-service:
+    build: ./services/chaos-service
+    image: circuitbreaker/chaos-service:dev
+    profiles: [app]
+    ports:
+      - "8007:8000"
+    environment:
+      <<: [*python-env, *kafka-env]
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+    mem_limit: 192m
+    restart: unless-stopped
 
 volumes:
   redpanda-data:
