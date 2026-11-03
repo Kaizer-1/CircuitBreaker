@@ -47,8 +47,11 @@ documented in [ADR-0007](../adr/0007-kubernetes-kind-and-helm-umbrella.md).
 - One `docker-compose.yml` at the repo root starts the infrastructure (Redpanda, Cassandra, Postgres, Prometheus,
   Grafana, Loki) and all services, each built from `services/<name>/Dockerfile`.
 - Host ports: `api-gateway` 8080, `order-service` 8001, `matching-engine` 8002, `market-data-service` 8003,
-  `portfolio-service` 8004, `bot-traders` 8005, `sre-agent` 8006, `chaos-service` 8007, `web` 5173.
-- `make up`, `make down`, `make logs s=<service>`, `make seed` (create topics, keyspaces, bot accounts).
+  `portfolio-service` 8004, `bot-traders` 8005, `sre-agent` 8006, `chaos-service` 8007, `web` 5173, Redpanda Console 8088,
+  Postgres 5433. Compose has two profiles: `infra` and `app`.
+- `make up`, `make down`, `make logs s=<service>`, `make infra` (only the infrastructure). Two one-shot init jobs create
+  the topics and the per-service Cassandra keyspaces and roles ([developer setup](../08-developer-setup.md)); bot and load
+  accounts are created by the services in later phases.
 - Hot reload: service source folders are mounted and run with `uvicorn --reload`.
 
 ## 3. Kubernetes with kind + Helm umbrella chart
@@ -183,7 +186,7 @@ infra/
   committed.
 - **Pipeline:** every PR runs `terraform fmt -check` and `validate`. A CI job also runs `terraform apply` on
   `envs/local` inside the runner, checks that Argo CD's pods are running, then runs `terraform destroy`. This is the
-  textbook's "test the environment, then clean up". On the demo laptop the Cloud Platform Team runs `make infra`
+  textbook's "test the environment, then clean up". On the demo laptop the Cloud Platform Team runs `make platform`
   (plan, review, apply).
 
 ### How this maps onto the textbook's AWS infrastructure
@@ -197,7 +200,7 @@ managed Kubernetes service and a GitOps deployment server. A sandbox environment
 | EKS managed Kubernetes (`module-aws-kubernetes`) | kind cluster (`modules/kind-cluster`) |
 | Argo CD via Terraform's Helm provider (`module-argo-cd`) | Argo CD via Terraform's Helm provider (`modules/argo-cd`) |
 | Terraform modules called from a sandbox environment | Terraform modules called from `infra/envs/local` |
-| GitHub Actions infrastructure pipeline | GitHub Actions validate + create–check–destroy test; real apply via `make infra` |
+| GitHub Actions infrastructure pipeline | GitHub Actions validate + create–check–destroy test; real apply via `make platform` |
 
 ## 6. Managing change
 
@@ -208,7 +211,7 @@ managed Kubernetes service and a GitOps deployment server. A sandbox environment
 | Breaking API change | New version path (`/v2/...`) served alongside `/v1/` until all clients move ([coding standards](../05-coding-standards.md#9-api-versioning-rules)). |
 | Breaking event change | New topic `<stream>.v2` alongside v1 ([event catalog](03-event-catalog.md#versioning-rules)). |
 | Database schema change | Expand-and-contract: add the new column/table → deploy code writing both → backfill → switch reads → remove the old. Never a lock-step deploy. |
-| Infrastructure change | Terraform plan shown in the PR; validated and test-applied in CI; applied with `make infra` by the Cloud Platform Team. |
+| Infrastructure change | Terraform plan shown in the PR; validated and test-applied in CI; applied with `make platform` by the Cloud Platform Team. |
 | Bad release in prod | PostSync smoke test fails → `git revert` the promotion and Argo CD syncs back. If it degrades later, the SRE agent rolls back at once and opens the `git revert` pull request; Release & Reliability approves and merges it. |
 
 ## Viva Notes

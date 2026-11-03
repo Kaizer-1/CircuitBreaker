@@ -187,6 +187,8 @@ sequence diagrams; reservations gained idempotency by `order_id` and the orphan 
 | `RATE_LIMITED` | 429 | Too many requests |
 | `DEPENDENCY_UNAVAILABLE` | 503 | A dependency is down / circuit breaker open |
 | `OVERLOADED` | 503 | Service at its concurrency limit (traffic spike) |
+| `INTERNAL_ERROR` | 500 | Unexpected failure; no internals are leaked, quote the `correlation_id` |
+| `NOT_IMPLEMENTED` | 501 | The operation is in the spec but not built yet (the Phase 1 stubs) |
 
 ## Viva Notes
 

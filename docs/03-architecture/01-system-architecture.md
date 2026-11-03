@@ -108,7 +108,7 @@ flowchart TB
 
 | Container | Tech | Port (container / local dev) | Store | Replicas (default / max) |
 |---|---|---|---|---|
-| `web` | React + Vite + TradingView Lightweight Charts | 80 / 5173 | — | 1 / 3 |
+| `web` | React + Vite + TradingView Lightweight Charts, served by unprivileged nginx | 8080 / 5173 | — | 1 / 3 |
 | `api-gateway` | Python 3.12, FastAPI | 8000 / 8080 | none (stateless) | 2 / 5 |
 | `order-service` | Python 3.12, FastAPI | 8000 / 8001 | Cassandra `order_service` | 2 / 5 |
 | `matching-engine` | Python 3.12, FastAPI + Kafka consumer | 8000 / 8002 | Cassandra `matching_engine` | **1 / 1** (single writer) |
@@ -117,9 +117,10 @@ flowchart TB
 | `bot-traders` | Python 3.12, asyncio (+ FastAPI for health/metrics only) | 8000 / 8005 | none | **1 / 1** (one copy of each bot) |
 | `sre-agent` | Python 3.12, FastAPI + agent loop | 8000 / 8006 | Cassandra `sre_agent` | **1 / 1** (one decision-maker) |
 | `chaos-service` | Python 3.12, FastAPI | 8000 / 8007 | in memory (+ logs) | **1 / 1** |
-| Redpanda | Kafka-compatible broker | 9092 | its own log | 1 (dev) |
+| Redpanda | Kafka-compatible broker | 9092 (host 19092) | its own log | 1 (dev) |
+| Redpanda Console | Web UI for topics and messages, dev only | 8080 / 8088 | — | 1 (dev) |
 | Cassandra | Apache Cassandra 5 | 9042 | — | 1 (dev) |
-| Postgres | PostgreSQL 16 | 5432 | — | 1 (dev) |
+| Postgres | PostgreSQL 16 | 5432 (host 5433) | — | 1 (dev) |
 
 Every service listens on port **8000 inside its container**; local Docker Compose maps them to different host ports
 (second number) so they can run side by side. **Max replicas** is the upper bound the SRE agent may scale to; `1/1`

@@ -51,7 +51,7 @@ infra/
 - **Pipeline:** CI runs `terraform fmt -check` and `validate` on every PR. It also creates the whole local platform
   inside a runner (`terraform apply` on `envs/local`), checks that Argo CD's pods are running, and runs
   `terraform destroy`. These are the textbook's "test the environment" and "clean up" steps. On the demo laptop, the
-  Cloud Platform Team runs `make infra` (plan, then apply).
+  Cloud Platform Team runs `make platform` (plan, then apply).
 - **LocalStack becomes optional:** the `localstack` module adds AWS-style extras, such as the nightly event-archive
   bucket. Nothing in the core system depends on it.
   ⚠️ **Check LocalStack's current licence and free-tier terms before using it.** They have changed over time.
@@ -64,7 +64,7 @@ infra/
 | EKS managed Kubernetes (`module-aws-kubernetes`) | kind cluster (`modules/kind-cluster`) | Same Kubernetes API, zero cost. The control plane is a container, not a managed service. |
 | Argo CD via the Helm provider (`module-argo-cd`) | Argo CD via the Helm provider (`modules/argo-cd`) | Same approach; see ADR-0014. |
 | Terraform modules called from a sandbox environment | Terraform modules called from `infra/envs/local` | Same module pattern. Our modules are folders in the monorepo rather than one Git repository each. |
-| GitHub Actions infrastructure pipeline (Ch. 6) | GitHub Actions: fmt/validate on PRs, and a create–check–destroy test of `envs/local` in a runner | The laptop cluster can't be reached from GitHub, so the real apply runs locally with `make infra`. |
+| GitHub Actions infrastructure pipeline (Ch. 6) | GitHub Actions: fmt/validate on PRs, and a create–check–destroy test of `envs/local` in a runner | The laptop cluster can't be reached from GitHub, so the real apply runs locally with `make platform`. |
 | AWS IAM roles for the cluster and nodes | Kubernetes RBAC (e.g. the `sre-agent` Role) | Least privilege inside the cluster. |
 
 ## Alternatives considered

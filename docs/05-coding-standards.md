@@ -26,9 +26,12 @@ CircuitBreaker/
 ├── README.md, CLAUDE.md (local only), .editorconfig, .gitignore, redocly.yaml, Makefile, docker-compose.yml
 ├── docs/                    # design docs (source of truth) + ADRs
 ├── api/                     # OpenAPI specs + WebSocket/event docs
-├── contracts/events/        # JSON Schemas of integration events (from Phase 1)
+├── contracts/events/        # JSON Schemas of integration events (from Phase 2, with the first producers)
 ├── services/<service>/      # one folder per service (layout below)
 ├── web/                     # React frontend
+├── dev/                     # local-development support: Redpanda/Cassandra/Postgres init scripts for Compose
+├── scripts/                 # make doctor, wait-for-stack, git hooks
+├── tools/                   # stub generator, service scaffold, template-drift check
 ├── charts/circuitbreaker/   # Helm umbrella chart
 ├── deploy/                  # GitOps config Argo CD watches: envs/<env>/<service>.yaml (image tags), argocd/
 ├── infra/                   # Terraform: modules/ (kind-cluster, environment, argo-cd, optional localstack) + envs/local
@@ -50,7 +53,7 @@ We use the idea at two levels:
 
 | Level | Our umbrella | What it pulls together |
 |---|---|---|
-| **Local** | The repository root: `docker-compose.yml` + `Makefile` | Every service (built from `services/<name>/`), the data stores and observability, started with `make up` and seeded with `make seed`. |
+| **Local** | The repository root: `docker-compose.yml` + `Makefile` | Every service (built from `services/<name>/`), the data stores and observability, started with `make up`; the init jobs create the topics and keyspaces ([developer setup](08-developer-setup.md)). |
 | **Kubernetes** | The Helm umbrella chart `charts/circuitbreaker` | One sub-chart per service plus the data stores, with shared defaults. Argo CD deploys each service from it ([deployment §3](03-architecture/07-deployment-and-environments.md#3-kubernetes-with-kind--helm-umbrella-chart)). |
 
 A common alternative is a separate "workspace" repository that pulls in one repository per service (for example with
@@ -65,11 +68,14 @@ I/O, and everything that talks to the outside world at the edges.
 services/order-service/
 ├── README.md                 # responsibility, data, events, owner (kept up to date)
 ├── Dockerfile                # multi-stage, non-root, exposes 8000
+├── .env.example              # every environment variable, with local-development values
 ├── pyproject.toml            # dependencies + ruff/mypy/pytest config
 ├── uv.lock
 ├── src/order_service/
 │   ├── main.py               # create_app(): FastAPI app, routers, lifespan (start consumers)
 │   ├── config.py             # Settings (pydantic-settings) read from env vars
+│   ├── business_metrics.py   # the service's own Prometheus metrics (the ones named in the docs)
+│   ├── runtime/              # IDENTICAL in every service: JSON logging, Problem Details, middleware, metrics, health
 │   ├── api/                  # HTTP routers: thin — parse, call a use case, map errors to Problem Details
 │   ├── application/          # use cases (place_order, cancel_order, apply_matching_event)
 │   ├── domain/               # pure business logic and models (Order, OrderStatus, validation rules)
@@ -85,6 +91,27 @@ services/order-service/
 
 **Rules:** `domain/` imports nothing from `api/` or `adapters/`. `api/` never talks to a database directly. Adapters
 are chosen in `main.py` (dependency injection), so tests can swap them for fakes.
+
+### Duplication over coupling: why the services share no library
+
+Every service needs the same plumbing: JSON logging with a correlation ID, Problem Details errors, request metrics,
+health and readiness endpoints. The obvious move is a shared Python package. We deliberately do **not** do that.
+
+| | Shared library | Copy + drift check (our choice) |
+|---|---|---|
+| A fix or feature | Release the library, then every team upgrades | Change the template service and copy it; CI shows any service that differs |
+| Deploying one service | May need a new library version first, so releases get linked | Independent: a service contains everything it runs |
+| Who must agree on a change | Every team that uses it | Only the service that changes |
+| Cost | Coupling and lock-step upgrades: the coordination cost we are trying to remove | Some duplicated code, and a script that keeps the copies equal |
+
+**How it works.** The plumbing lives in `src/<package>/runtime/` (plus the `Dockerfile` and a few shared tests). The first
+service, `order-service`, is the template. `tools/scaffold.py` copies those files into a new service and renames the package;
+`tools/check_template_drift.py` (part of `make lint` and CI) compares every service's copy, after renaming, and fails if
+any differs. To change the plumbing: edit it in `order-service`, copy it to the others, and the check goes green.
+
+This follows the textbook's reason for microservices (minimise coordination between teams) and its warning that a
+shared kernel needs tight coordination ([bounded contexts](02-domain/02-bounded-contexts.md#context-map)). Real business
+rules are never copied: they live in each service's `domain/` and are owned by exactly one team.
 
 ## 4. Naming conventions
 
@@ -133,13 +160,19 @@ Coverage target: **≥ 80% lines** per service (100% branches for matching `doma
 
 ## 7. Standard operational endpoints
 
-Every service exposes these on port 8000 (not in the OpenAPI specs, not routed by the gateway):
+Every service exposes these on port 8000 (not in the OpenAPI specs, not routed by the gateway). The readiness body is
+`{"status": "ready" | "not_ready", "service": ..., "checks": {"redpanda": {"ok": ..., "latency_ms": ...}, ...}}`.
 
 | Endpoint | Purpose | Contract |
 |---|---|---|
 | `GET /healthz` | **Liveness**: process is alive | `200 {"status":"ok"}`; never checks dependencies (a DB outage must not cause restart loops) |
 | `GET /readyz` | **Readiness**: ready for traffic | `200` only if its own store and Redpanda are reachable and consumers are caught up; else `503` with details |
 | `GET /metrics` | Prometheus metrics | Standard metrics below + service-specific ones |
+
+The **api-gateway** has one more operational endpoint, `GET /v1/system/status`. It calls every service's `/readyz`
+and returns one combined report (`status`: `healthy` | `unhealthy`; `services`; `dependencies` grouped from the services'
+checks). The System Status page in `web` shows it. Like `/healthz` it is not derived from a job to be done, so it has no
+A/Q ID and is not in `api/api-gateway.yaml`. It is open in Phase 1 and becomes admin-only when auth arrives (Phase 2).
 
 **Standard metrics** (all services, labelled `service`, plus `route`, `method`, `status` where relevant):
 `http_requests_total`, `http_request_duration_seconds` (histogram), `http_requests_in_flight`,
@@ -207,18 +240,22 @@ supersedes it (never silently edit history).
 
 ## 13. Developer setup
 
-**Prerequisites:** Docker Desktop (or Colima) with ≥ 8 GB RAM for Docker, Python 3.12 + uv, Node.js LTS, kind,
-kubectl, Helm 3, Terraform, the Argo CD CLI (optional), and an OpenRouter API key (only for running the SRE agent
-live). LocalStack only if you enable the optional module.
+The full guide (prerequisites, first run, ports, measured resource use, adding a service, troubleshooting) is
+[08-developer-setup.md](08-developer-setup.md). In short, you need Docker Desktop (**10 GB** recommended; Phase 1
+measured about 1.8 GiB in use, see the guide), Python 3.12 + uv, Node.js 24 LTS (≥ 22.12), kind, kubectl, Helm 3,
+gitleaks and pre-commit. Terraform, the Argo CD CLI and an OpenRouter API key come later (Phases 5–7); LocalStack only
+if you enable the optional module. `make doctor` checks all of this.
 
 | Command | What it does |
 |---|---|
-| `make setup` | Install Python/Node dependencies, pre-commit hooks (ruff, eslint, redocly lint) |
-| `make up` / `make down` | Start/stop everything in Docker Compose |
-| `make seed` | Create topics, keyspaces, Postgres schema, bot and load accounts |
-| `make test s=order-service` | Unit + integration tests for one service |
-| `make lint` | ruff, mypy, eslint, redocly, helm lint |
-| `make infra` | Terraform plan + apply of `infra/envs/local`: kind cluster, namespaces, RBAC, Secrets, Argo CD |
+| `make doctor` | Check the prerequisites and print their versions |
+| `make setup` | Install Python/Node dependencies and the git hooks (ruff, gitleaks, redocly, prettier, block-private) |
+| `make infra` | Start only the infrastructure in Docker Compose: Redpanda, Cassandra, Postgres and their init jobs |
+| `make up` / `make down` / `make reset` | Start everything / stop it (data kept) / stop it and wipe the data volumes |
+| `make logs s=<service>`, `make ps`, `make status` | Follow logs / container status / combined system status |
+| `make test s=order-service` | Unit, smoke and contract tests for one service (all if `s` is omitted) |
+| `make lint` / `make fmt` | ruff, mypy, redocly, template drift, eslint and prettier / auto-format |
+| `make platform` | *(Phase 5)* Terraform plan + apply of `infra/envs/local`: kind cluster, namespaces, RBAC, Secrets, Argo CD |
 | `make sync env=staging` | Ask Argo CD to refresh and sync now (instead of waiting for its poll) |
 | `make promote s=<service>` | Open a PR copying the service's staging image tag to `deploy/envs/prod/` |
 
@@ -236,9 +273,11 @@ specs change in the same PR as the code.
 A: Anything an existing client could trip over: removing or renaming a field, changing a type or meaning, making
 something required, or changing status codes. Those need `/v2/`; adding optional things doesn't.
 
-**Q: Why Conventional Commits?**
-A: Consistent, searchable history; the scope shows which service changed (useful for independent deploys); and
-changelogs can be generated automatically.
+**Q: Why do the services copy the same runtime code instead of importing a shared library?**
+A: Duplication over coupling. A shared library is one more thing every service must upgrade together, so a change to it
+becomes a lock-step release across teams, which is exactly the coordination cost microservices exist to avoid. So each
+service owns its copy, and a CI check (`tools/check_template_drift.py`) fails if the copies drift apart. The price is
+that a fix is applied in 8 places, which the scaffold and the drift check make cheap and visible.
 
 **Q: Why does `/healthz` not check the database?**
 A: Liveness failure makes Kubernetes restart the pod. If the database is down, restarting every service won't help

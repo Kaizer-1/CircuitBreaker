@@ -85,7 +85,7 @@ One owner for the UI and the order flow avoids a frontend/backend hand-off for e
 |---|---|
 | Team type | Platform, interacting through **X-as-a-Service** |
 | Size | Textbook: 5–8 · Ours: **Mohammad Oweis** |
-| Responsibilities (textbook list, adapted) | Design and develop the network infrastructure (kind's Docker network, namespaces, NetworkPolicies); design and develop the application infrastructure (kind cluster, Helm umbrella chart with the shared service sub-chart, Prometheus/Grafana/Loki/Alloy, CI workflow templates); provide tools for building a new environment (Terraform `infra/`, `make infra`); update the infrastructure when required |
+| Responsibilities (textbook list, adapted) | Design and develop the network infrastructure (kind's Docker network, namespaces, NetworkPolicies); design and develop the application infrastructure (kind cluster, Helm umbrella chart with the shared service sub-chart, Prometheus/Grafana/Loki/Alloy, CI workflow templates); provide tools for building a new environment (Terraform `infra/`, `make platform`); update the infrastructure when required |
 | Offered as a service | Any team gets a working environment, deploy pipeline and dashboards without asking for a meeting |
 
 ### Step 4 — Enabling and complicated-subsystem teams
@@ -186,7 +186,7 @@ architecture.
 | Trading ↔ Market Insights | **Collaboration** on the event catalog and reservation API | **X-as-a-Service** | `matching.v1` events; `POST /internal/v1/reservations` |
 | Trading, Market Insights → API Team | **Collaboration** on the public `/v1` API shape | **X-as-a-Service** | Internal specs in `api/`; `POST /internal/v1/accounts` |
 | System Design → all teams | **Facilitating** (standards, ADRs, event-catalog rules) | **X-as-a-Service** ("patterns as a service": coding standards, templates) | [Coding standards](05-coding-standards.md), [ADRs](adr/README.md) |
-| Cloud Platform → all teams | **Facilitating** (Dockerfiles, probes, metrics) | **X-as-a-Service** (shared Helm sub-chart, CI templates, dashboards, `make infra`) | `charts/circuitbreaker/charts/service`, CI workflow templates, Grafana dashboards |
+| Cloud Platform → all teams | **Facilitating** (Dockerfiles, probes, metrics) | **X-as-a-Service** (shared Helm sub-chart, CI templates, dashboards, `make platform`) | `charts/circuitbreaker/charts/service`, CI workflow templates, Grafana dashboards |
 | Release & Reliability ↔ stream-aligned teams | **Collaboration** on release and chaos-rehearsal criteria | **Collaboration** for prod promotions only (staging is self-service) | Promotion PRs to `deploy/envs/prod/`; `/v1/chaos/...` |
 | SRE agent role ↔ Release & Reliability | **Collaboration** (alert rules, RBAC, rollout history) | **X-as-a-Service** (agent consumes alerts; humans consume the incident feed and review the agent's revert PRs) | Prometheus alert label `remediable=true`; `sre-agent` Role; `incidents.v1` |
 

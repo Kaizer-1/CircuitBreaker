@@ -73,7 +73,8 @@ starts its description with one of these IDs. IDs never change meaning; new item
 Every service also exposes three standard endpoints for the platform, defined once in
 [05-coding-standards.md](../05-coding-standards.md#7-standard-operational-endpoints) and not repeated in each spec:
 `GET /healthz` (liveness), `GET /readyz` (readiness), `GET /metrics` (Prometheus). They serve Kubernetes and
-Prometheus, not an actor's job, so they have no A/Q ID.
+Prometheus, not an actor's job, so they have no A/Q ID. The gateway adds one more, `GET /v1/system/status` (the combined
+readiness report shown on the System Status page), which is treated the same way.
 
 ## Coverage check
 

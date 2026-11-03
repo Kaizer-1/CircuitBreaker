@@ -54,7 +54,8 @@ store, which is replayable through matching-engine's API forever.
 - **Idempotent consumers.** Each consumer records processed `event_id`s (in the same transaction as its change,
   where the store allows) and skips duplicates.
 - **Unknown fields are ignored** (tolerant reader), so producers can add optional fields without breaking anyone.
-- **Poison messages** (fail 5 times) go to `<topic>.dlq` with the error attached, and an alert fires.
+- **Poison messages** (fail 5 times) go to `<topic>.dlq` with the error attached, and an alert fires. Dead-letter topics
+  have **1 partition and 7-day retention** (a Phase 1 choice; they only need to hold failures for inspection).
 
 ## Versioning rules
 
