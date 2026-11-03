@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/OrderPlaced.schema.json",
+  "title": "OrderPlaced",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "orders.v1",
+  "x-key": "ticker",
+  "x-producer": "order-service",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "OrderPlaced"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "order-service"
+    },
+    "data": {
+      "title": "OrderPlaced.data",
+      "type": "object",
+      "required": [
+        "order_id",
+        "trader_id",
+        "ticker",
+        "side",
+        "order_type",
+        "quantity",
+        "limit_price_paise",
+        "protection_price_paise",
+        "reservation_id",
+        "placed_at"
+      ],
+      "properties": {
+        "order_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "trader_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "ticker": {
+          "$ref": "defs.schema.json#/$defs/ticker"
+        },
+        "side": {
+          "$ref": "defs.schema.json#/$defs/side"
+        },
+        "order_type": {
+          "$ref": "defs.schema.json#/$defs/order_type"
+        },
+        "quantity": {
+          "$ref": "defs.schema.json#/$defs/quantity"
+        },
+        "limit_price_paise": {
+          "oneOf": [
+            {
+              "$ref": "defs.schema.json#/$defs/price_paise"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Required for LIMIT, null for MARKET"
+        },
+        "protection_price_paise": {
+          "oneOf": [
+            {
+              "$ref": "defs.schema.json#/$defs/price_paise"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Required for MARKET, null for LIMIT"
+        },
+        "reservation_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "placed_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "defs.schema.json#/$defs/limit_or_market_prices"
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

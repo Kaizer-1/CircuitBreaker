@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/OrderCancelRejected.schema.json",
+  "title": "OrderCancelRejected",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "matching.v1",
+  "x-key": "ticker",
+  "x-producer": "matching-engine",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "OrderCancelRejected"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "matching-engine"
+    },
+    "data": {
+      "title": "OrderCancelRejected.data",
+      "type": "object",
+      "required": [
+        "sequence",
+        "ticker",
+        "order_id",
+        "trader_id",
+        "reason",
+        "rejected_at"
+      ],
+      "properties": {
+        "sequence": {
+          "$ref": "defs.schema.json#/$defs/sequence"
+        },
+        "ticker": {
+          "$ref": "defs.schema.json#/$defs/ticker"
+        },
+        "order_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "trader_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "ALREADY_FILLED",
+            "ALREADY_CANCELLED",
+            "UNKNOWN_ORDER"
+          ]
+        },
+        "rejected_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

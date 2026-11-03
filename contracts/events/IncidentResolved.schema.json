@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/IncidentResolved.schema.json",
+  "title": "IncidentResolved",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "incidents.v1",
+  "x-key": "incident_id",
+  "x-producer": "sre-agent",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "IncidentResolved"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "sre-agent"
+    },
+    "data": {
+      "title": "IncidentResolved.data",
+      "type": "object",
+      "required": [
+        "incident_id",
+        "service",
+        "resolution",
+        "opened_at",
+        "resolved_at",
+        "time_to_recover_seconds",
+        "actions_taken"
+      ],
+      "properties": {
+        "incident_id": {
+          "type": "string",
+          "pattern": "^INC-[0-9]{4}$"
+        },
+        "service": {
+          "$ref": "defs.schema.json#/$defs/service"
+        },
+        "resolution": {
+          "type": "string",
+          "enum": [
+            "RECOVERED",
+            "AUTO_CLEARED",
+            "ESCALATED"
+          ],
+          "description": "RECOVERED = cleared after our action; AUTO_CLEARED = cleared with no action; ESCALATED = handed to a human"
+        },
+        "opened_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        },
+        "resolved_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        },
+        "time_to_recover_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actions_taken": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.schema.json#/$defs/agent_action"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

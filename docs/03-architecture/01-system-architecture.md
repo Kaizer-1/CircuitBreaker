@@ -77,6 +77,7 @@ flowchart TB
     GW -- HTTP --> OS & MD & PS & SA & CH
     GW -- "HTTP: open account" --> PS
     OS -- "HTTP: reserve" --> PS
+    PS -- "HTTP: request expiry<br/>(sweeper, ADR-0017)" --> OS
     MD -- "HTTP: events, snapshots" --> ME
     CH -- "HTTP: faults" --> MD
     CH -- "HTTP: load burst" --> GW

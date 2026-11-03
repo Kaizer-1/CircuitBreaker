@@ -196,7 +196,7 @@ flowchart LR
 | P-03 | Whenever 500 events have been appended for a ticker, take a snapshot | `matching-engine` |
 | P-04 | Whenever `OrderAccepted` / `TradeExecuted` / `OrderCancelled` / `OrderCancelRejected`, update the order's status | `order-service` |
 | P-05 | Whenever `TradeExecuted`, settle cash and shares for buyer and seller | `portfolio-service` |
-| P-06 | Whenever an order is finished (filled or `OrderCancelled`) — or its reservation has seen no `OrderAccepted` for 120 s — release the leftover reservation | `portfolio-service` |
+| P-06 | Whenever an order is finished (filled, `OrderCancelled` or `OrderExpired`), release the leftover reservation. Money is released **only** on these engine events ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)) | `portfolio-service` |
 | P-07 | Whenever `TradeExecuted`, update last price, candles, trades; whenever book events arrive, update depth | `market-data-service` |
 | P-08 | Whenever a candle interval (5s, 1m, 5m) ends, publish `CandleClosed` | `market-data-service` |
 | P-09 | Whenever `CandleClosed`, let each bot re-evaluate its strategy | `bot-traders` |
@@ -204,6 +204,8 @@ flowchart LR
 | P-11 | Whenever a remediation is proposed and approval mode is off, execute it | `sre-agent` |
 | P-12 | Whenever the alert stays resolved for 60 s after a remediation, resolve the incident | `sre-agent` |
 | P-13 | Whenever `IncidentResolved` arrives while an experiment is running, mark it `REMEDIATED` | `chaos-service` |
+| P-14 | Whenever `OrderExpiryRequested`, cancel the order if it is resting (`ORDER_EXPIRED`), or record an `OrderExpired` tombstone if the engine never saw it | `matching-engine` |
+| P-15 | Whenever a reservation has seen no `OrderAccepted` for 120 s, ask order-service to request an expiry (A-19) | `portfolio-service` |
 
 ## Phase 4 — Aggregates and bounded contexts
 
@@ -214,9 +216,9 @@ looking like a timeline and became clusters, and **the clusters are the bounded 
 
 | Aggregate | Invariants it protects (rules that must always hold) | Emits |
 |---|---|---|
-| **Account** | Available cash ≥ 0; available shares ≥ 0 per ticker; reserved + available = total | `AccountOpened`, `ReservationCreated`, `TradeSettled`, `ReservationReleased` |
-| **Order** | Status only moves forward (`PENDING → OPEN → PARTIALLY_FILLED → FILLED`, or `→ CANCELLED`); only the owner can cancel | `OrderPlaced`, `OrderRejected`, `OrderCancelRequested` |
-| **OrderBook** (one per ticker) | Bids sorted high→low, asks low→high, FIFO within a price; best bid < best ask after every command; sequence numbers strictly increase | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderCancelRejected`, `BookSnapshotTaken` |
+| **Account** | Available cash ≥ 0; available shares ≥ 0 per ticker; reserved + available = total; a reservation is released only on an engine event | `AccountOpened`, `ReservationCreated`, `TradeSettled`, `ReservationReleased` |
+| **Order** | Status only moves forward (`PENDING → OPEN → PARTIALLY_FILLED → FILLED`, or `→ CANCELLED`); only the owner can cancel | `OrderPlaced`, `OrderRejected`, `OrderCancelRequested`, `OrderExpiryRequested` |
+| **OrderBook** (one per ticker) | Bids sorted high→low, asks low→high, FIFO within a price; best bid < best ask after every command; sequence numbers strictly increase; a trader never trades with themselves; an expired order ID never enters the book | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderCancelRejected`, `OrderExpired`, `BookSnapshotTaken` |
 | **CandleSeries** (per ticker and interval) | One candle per time bucket; high ≥ open, close ≥ low | `CandleClosed` |
 | **Incident** | At most one open incident per alert; at most 3 executed remediations per incident; cooldown respected | `IncidentOpened`, `Remediation*`, `IncidentResolved` |
 | **ChaosExperiment** | Only one running experiment at a time; every fault is reversible | `ChaosExperimentStarted`, `FaultInjected`, `FaultCleared`, `ChaosExperimentEnded` |

@@ -28,8 +28,8 @@ starts its description with one of these IDs. IDs never change meaning; new item
 | A-05 | Place an order (LIMIT or MARKET) | Trader, Bot | J-03, J-04, J-12 | `order-service` | HTTP | `POST /v1/orders` | Yes |
 | A-06 | Reserve cash or shares for an order | order-service | J-30 | `portfolio-service` | HTTP | `POST /internal/v1/reservations` | Internal |
 | A-07 | Cancel an order | Trader, Bot | J-06, J-12 | `order-service` | HTTP | `DELETE /v1/orders/{order_id}` | Yes |
-| A-08 | Match an order / process a cancel request | matching-engine | J-31 | `matching-engine` | Event | consumes `OrderPlaced`, `OrderCancelRequested` | — |
-| A-09 | Settle a trade / release a reservation | portfolio-service | J-32 | `portfolio-service` | Event | consumes `OrderAccepted`, `TradeExecuted`, `OrderCancelled` | — |
+| A-08 | Match an order / process a cancel or expiry request | matching-engine | J-31, J-36 | `matching-engine` | Event | consumes `OrderPlaced`, `OrderCancelRequested`, `OrderExpiryRequested` | — |
+| A-09 | Settle a trade / release a reservation | portfolio-service | J-32 | `portfolio-service` | Event | consumes `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderExpired` | — |
 | A-10 | Start a chaos experiment | Admin | J-15 | `chaos-service` | HTTP | `POST /v1/chaos/experiments` | Yes (admin) |
 | A-11 | Stop a chaos experiment | Admin | J-16 | `chaos-service` | HTTP | `POST /v1/chaos/experiments/{experiment_id}/stop` | Yes (admin) |
 | A-12 | Inject a fault into a service | chaos-service | J-35 | `market-data-service` | HTTP | `POST /internal/v1/faults` | Internal |
@@ -39,6 +39,7 @@ starts its description with one of these IDs. IDs never change meaning; new item
 | A-16 | Open an incident | SRE Agent | J-21 | `sre-agent` | Event | Prometheus alert detected by the agent loop; emits `IncidentOpened` | — |
 | A-17 | Execute a remediation (`rollback_deployment`, `scale_deployment`, `restart_deployment`, `do_nothing`) | SRE Agent | J-22, J-23 | `sre-agent` | Tool | Kubernetes API calls; emits `RemediationExecuted` | — |
 | A-18 | Deploy a new version (staging, then prod) | Developer | J-26, J-27 | (platform) | CI | GitHub Actions builds and commits the image tag; Argo CD deploys (GitOps) | — |
+| A-19 | Request expiry of an unconfirmed order | portfolio-service | J-36 | `order-service` | HTTP | `POST /internal/v1/order-expiries` | Internal |
 
 ## Queries
 
@@ -89,7 +90,7 @@ flowchart LR
     end
     subgraph Actions
         A1["A-01..A-04 sessions"]
-        A5["A-05..A-09 orders, matching, settlement"]
+        A5["A-05..A-09, A-19 orders, matching,<br/>settlement, expiry"]
         A10["A-10..A-13 chaos"]
         A14["A-14, A-15 agent controls"]
         A16["A-16, A-17 incident handling"]
@@ -107,7 +108,7 @@ flowchart LR
     D --> A18 & Q14
 ```
 
-Totals: **18 actions** (13 HTTP, 3 event-driven, 1 agent tool, 1 CI) and **23 queries** (19 HTTP — of which 3 are
+Totals: **19 actions** (14 HTTP, 3 event-driven, 1 agent tool, 1 CI) and **23 queries** (19 HTTP — of which 3 are
 internal — and 4 WebSocket channels).
 
 ## Viva Notes

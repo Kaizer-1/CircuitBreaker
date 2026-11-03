@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/RemediationExecuted.schema.json",
+  "title": "RemediationExecuted",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "incidents.v1",
+  "x-key": "incident_id",
+  "x-producer": "sre-agent",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "RemediationExecuted"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "sre-agent"
+    },
+    "data": {
+      "title": "RemediationExecuted.data",
+      "type": "object",
+      "required": [
+        "incident_id",
+        "remediation_id",
+        "action",
+        "target_service",
+        "parameters",
+        "outcome",
+        "details",
+        "executed_at"
+      ],
+      "properties": {
+        "incident_id": {
+          "type": "string",
+          "pattern": "^INC-[0-9]{4}$"
+        },
+        "remediation_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "action": {
+          "$ref": "defs.schema.json#/$defs/agent_action"
+        },
+        "target_service": {
+          "oneOf": [
+            {
+              "$ref": "defs.schema.json#/$defs/service"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "SUCCEEDED",
+            "FAILED"
+          ]
+        },
+        "details": {
+          "type": "string"
+        },
+        "executed_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        },
+        "git_reconciliation": {
+          "description": "Only for rollback_deployment (ADR-0016); null for other actions. Optional field added within v1.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "status",
+                "reverted_commit",
+                "pull_request_url",
+                "reason"
+              ],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "PR_OPENED",
+                    "NOT_NEEDED",
+                    "FAILED"
+                  ]
+                },
+                "reverted_commit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "pull_request_url": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uri"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

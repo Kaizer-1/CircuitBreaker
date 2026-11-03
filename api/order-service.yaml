@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: order-service API
-  version: 1.0.0
+  version: 1.1.0
   summary: Accepts, validates and tracks orders.
   description: |
     Owned by the **Trading Team** (Kaizer Dewaswala). Reached from outside only through `api-gateway`,
@@ -20,6 +20,8 @@ security: []
 tags:
   - name: Orders
     description: Placing, cancelling and viewing orders.
+  - name: Internal
+    description: Service-to-service operations. Never routed by api-gateway.
 paths:
   /v1/orders:
     post:
@@ -263,6 +265,46 @@ paths:
                 code: ORDER_NOT_CANCELLABLE
                 detail: Order 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12 is already FILLED.
                 correlation_id: req-9a8b7c
+  /internal/v1/order-expiries:
+    post:
+      tags: [Internal]
+      operationId: requestOrderExpiry
+      summary: Request expiry of an unconfirmed order
+      x-seeds-id: A-19
+      description: |
+        **A-19** — Called by portfolio-service's sweeper when a reservation has had no `OrderAccepted` for 120 s
+        (ADR-0017, fail-closed). Writes an `OrderExpiryRequested` to the outbox; the relay publishes it to `orders.v1`
+        (key = ticker), after the order's `OrderPlaced` if that was ever published. Works even if order-service has no
+        record of the order (it may have crashed after reserving). Idempotent per `order_id`: a repeat returns **202**
+        with the original `requested_at`. The money is released later by portfolio-service, only when the matching
+        engine answers (`OrderCancelled` reason `ORDER_EXPIRED`, or `OrderExpired`).
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderExpiryRequest'
+            example:
+              order_id: 6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f
+              trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+              ticker: CHAIWALA
+      responses:
+        '202':
+          description: Expiry request stored in the outbox; it will be published to the engine.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderExpiry'
+              example:
+                order_id: 6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f
+                requested_at: '2026-11-20T10:46:12.405Z'
+                known_order: false
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
 components:
   parameters:
     OrderIdPath:
@@ -331,7 +373,7 @@ components:
         PENDING = accepted by order-service, not yet seen by the engine; OPEN = resting in the book;
         PARTIALLY_FILLED; FILLED; CANCELLED (by the owner, or the unfilled part of a MARKET order);
         REJECTED = failed validation or reservation, or could not be published within 60 s (PUBLISH_TIMEOUT);
-        a rejected order never reaches the engine.
+        a rejected order never trades (if a late copy reaches the engine it is refused, ADR-0017).
     Order:
       type: object
       required: [order_id, trader_id, ticker, side, order_type, quantity, status, filled_quantity,
@@ -372,7 +414,10 @@ components:
           type: boolean
         cancel_reason:
           type: [string, 'null']
-          enum: [USER_REQUESTED, UNFILLED_MARKET_ORDER, null]
+          enum: [USER_REQUESTED, UNFILLED_MARKET_ORDER, SELF_TRADE_PREVENTED, ORDER_EXPIRED, null]
+          description: |
+            Why a CANCELLED order was cancelled: by its owner; the unfilled part of a MARKET order; self-trade
+            prevention (its next match was the same trader's own resting order); or expired (ADR-0017).
         rejection_reason:
           type: [string, 'null']
           enum: [INSUFFICIENT_FUNDS, INSUFFICIENT_SHARES, INVALID_TICK_SIZE, UNKNOWN_TICKER, VALIDATION_FAILED, PUBLISH_TIMEOUT, null]
@@ -390,3 +435,25 @@ components:
             $ref: '#/components/schemas/Order'
         next_cursor:
           type: [string, 'null']
+    OrderExpiryRequest:
+      type: object
+      required: [order_id, trader_id, ticker]
+      properties:
+        order_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        trader_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        ticker:
+          $ref: './shared/common.yaml#/components/schemas/Ticker'
+      additionalProperties: false
+    OrderExpiry:
+      type: object
+      required: [order_id, requested_at, known_order]
+      properties:
+        order_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        requested_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        known_order:
+          type: boolean
+          description: Whether order-service has a record of this order (false if it crashed before storing it).

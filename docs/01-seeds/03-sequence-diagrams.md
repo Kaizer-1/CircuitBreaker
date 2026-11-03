@@ -96,6 +96,9 @@ sequenceDiagram
   See [ADR-0011](../adr/0011-synchronous-reservation-over-saga.md) for sync reservation vs. async saga.
 - **MARKET orders:** portfolio-service computes a *protection price* (last price ± 10%) and, for buys, reserves
   `quantity × protection price`. Unused money is released when the order finishes.
+- **If order-service crashes** between reserving and publishing, the relay never publishes an `OrderPlaced` older than
+  60 s (the order becomes `REJECTED`, `PUBLISH_TIMEOUT`), and the reservation is released only after the engine
+  confirms the order can never trade ([§7](#7-an-orphaned-reservation-expires-j-36--a-19)).
 
 ---
 
@@ -144,6 +147,9 @@ sequenceDiagram
 - **Price improvement:** the buyer was willing to pay ₹246.00 but paid ₹245.50. The extra reserved
   ₹0.50 × 20 = ₹10 is released when the order finishes (filled or cancelled).
 - Three services react to the **same** event independently — this is the main benefit of publish/subscribe.
+- **Self-trade prevention:** if the next resting order the incoming order would match belongs to the same trader, the
+  engine cancels the incoming order's remainder (`OrderCancelled`, reason `SELF_TRADE_PREVENTED`) instead of letting a
+  trader trade with themselves (a *wash trade*). Trades it made before that point stand.
 
 ---
 
@@ -312,6 +318,61 @@ sequenceDiagram
   from Git, the same tool's code then opens a `git revert` pull request so Git matches the cluster again
   ([ADR-0016](../adr/0016-rollback-reconciles-through-git.md)). In this chaos scenario Git never contained the bad
   version, so the `else` branch applies.
+
+---
+
+## 7. An orphaned reservation expires (J-36 → A-19)
+
+Fail-closed release ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)). Shown: order-service crashed after
+reserving cash for order `6c7d...` and before storing it, so no `OrderPlaced` was ever sent.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant PS as portfolio-service
+    participant PG as Postgres (portfolio)
+    participant OS as order-service
+    participant OC as Cassandra (order_service keyspace)
+    participant RP as Redpanda
+    participant ME as matching-engine
+    participant EC as Cassandra (matching_engine keyspace)
+
+    loop every 10 s (sweeper, policy P-15)
+        PS->>PG: ACTIVE reservations with no OrderAccepted for 120 s,<br/>on partitions this replica owns with no lag
+    end
+    PS->>OS: POST /internal/v1/order-expiries  order_id, trader_id, ticker  (A-19)
+    alt order-service is down
+        OS--xPS: timeout, so try again on the next cycle
+    else
+        OS->>OC: Append OrderExpiryRequested to the outbox (event_id = UUIDv5 of the order_id)
+        OS-->>PS: 202 Accepted
+        PS->>PG: set expiry_requested_at (money still reserved)
+        OS->>RP: OrderExpiryRequested to orders.v1 (key = CHAIWALA)
+    end
+    RP->>ME: OrderExpiryRequested, after any OrderPlaced already in that partition (policy P-14)
+    alt engine never saw the order
+        ME->>EC: Append OrderExpired (a tombstone), plus the command ID
+        ME->>RP: OrderExpired to matching.v1
+    else order is resting in the book
+        ME->>EC: Append OrderCancelled, reason ORDER_EXPIRED
+        ME->>RP: OrderCancelled to matching.v1
+    else order already finished
+        Note over ME: nothing to do: earlier events already settled or released the money
+    end
+    RP->>PS: the answer (after the order's earlier events, same partition)
+    PS->>PG: release the reservation in one transaction with processed_events
+    Note over RP,ME: Later, a delayed copy of the OrderPlaced arrives
+    RP->>ME: OrderPlaced 6c7d...
+    ME->>ME: Tombstone found, so refuse it: no OrderAccepted, no trades
+```
+
+**Design notes**
+- **Why not just release after 120 s?** A timer cannot know what the engine decided. If the engine was down, or
+  crashed after storing a trade but before publishing it, the money could be traded after it was handed back.
+- **Fail-closed:** if the engine is down, the money stays reserved until it answers. If order-service is down, the
+  sweeper asks again on its next cycle.
+- **Why through order-service?** The expiry must be in the same `orders.v1` partition as the order so it is handled
+  after any `OrderPlaced` already sent, and `orders.v1` has one producer, order-service, with an outbox.
 
 ## Viva Notes
 

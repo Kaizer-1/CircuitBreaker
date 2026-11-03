@@ -57,6 +57,7 @@ carries its ID in its description and in an `x-seeds-id` field.
 | A-16 | Open an incident | — | agent loop (Prometheus alert) | — |
 | A-17 | Execute a remediation | — | agent tool → Kubernetes API | — |
 | A-18 | Deploy a new version | — | GitHub Actions + Helm | — |
+| A-19 | Request expiry of an unconfirmed order | — | `POST /internal/v1/order-expiries` (`requestOrderExpiry`) | order-service |
 | Q-01 | Get my session | `GET /v1/session` (`getCurrentSession`) | — (gateway itself) | api-gateway |
 | Q-02 | List instruments | `GET /v1/instruments` | same (`listInstruments`) | market-data-service |
 | Q-03 | Get candles | `GET /v1/market/{ticker}/candles` | same (`getCandles`) | market-data-service |
@@ -117,7 +118,7 @@ carries its ID in its description and in an `x-seeds-id` field.
 |---|---|---|
 | server → client | `portfolio` | `Portfolio` (same schema as Q-09) — on connect and after every change |
 | server → client | `fill` | `{ order_id, trade_id, ticker, side, price_paise, quantity, order_remaining_quantity, executed_at }` |
-| server → client | `order_closed` | `{ order_id, status: FILLED \| CANCELLED, cancel_reason: USER_REQUESTED \| UNFILLED_MARKET_ORDER \| null }` |
+| server → client | `order_closed` | `{ order_id, status: FILLED \| CANCELLED, cancel_reason: USER_REQUESTED \| UNFILLED_MARKET_ORDER \| SELF_TRADE_PREVENTED \| ORDER_EXPIRED \| null }` |
 
 ```json
 {"type": "fill", "data": {"order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12", "trade_id": "a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d", "ticker": "CHAIWALA", "side": "BUY", "price_paise": 24550, "quantity": 20, "order_remaining_quantity": 30, "executed_at": "2026-11-20T10:42:01.263Z"}}
@@ -161,6 +162,8 @@ An API design is only "done" once its consumers have tried it. Our feedback loop
 
 Phase 0 feedback already applied: cancel became asynchronous (202) after the cancel/fill race was found in the
 sequence diagrams; reservations gained idempotency by `order_id` and the orphan rule (ADR-0011).
+Phase 2 feedback: the orphan rule became fail-closed, adding A-19 and the cancel reason `ORDER_EXPIRED` (ADR-0017), and
+self-trade prevention added the cancel reason `SELF_TRADE_PREVENTED` (order-service spec 1.1.0, gateway spec 1.1.0).
 
 ## Error code catalog
 

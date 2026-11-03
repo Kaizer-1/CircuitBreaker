@@ -51,11 +51,12 @@ logs: ## Follow logs: make logs s=<service> (default: all)
 build: ## Build the Docker images: make build [s=<service>]
 	$(COMPOSE) $(ALL) build $(s)
 
-lint: ## ruff, mypy, redocly, template-drift check, and web eslint/prettier
+lint: ## ruff, mypy, redocly, template-drift and event-contract checks, web eslint/prettier
 	@set -e; for s in $(SEL); do echo "== lint $$s"; \
 	  (cd services/$$s && uv run --frozen ruff check . && uv run --frozen ruff format --check . && uv run --frozen mypy); done
 	$(REDOCLY) lint
 	python3 tools/check_template_drift.py
+	uv run --quiet --locked tools/check_event_contracts.py
 	@if [ -d web/node_modules ] && [ -z "$(s)" ]; then echo "== lint web"; (cd web && npm run lint && npm run format:check); fi
 
 fmt: ## Auto-format Python (ruff) and web (prettier): make fmt [s=<service>]

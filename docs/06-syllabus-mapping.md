@@ -20,7 +20,7 @@ refer to the [roadmap](07-roadmap.md). Textbook: *Microservices: Up and Running*
 | SEED(S): actors | [01-actors](01-seeds/01-actors.md) | — | Syllabus |
 | SEED(S): jobs to be done | [02-jobs-to-be-done](01-seeds/02-jobs-to-be-done.md) | — | Syllabus |
 | SEED(S): sequence diagrams | [03-sequence-diagrams](01-seeds/03-sequence-diagrams.md) (6 diagrams) | Integration tests follow these flows (Phases 2–7) | Syllabus |
-| SEED(S): actions and queries | [04-actions-and-queries](01-seeds/04-actions-and-queries.md) (A-01…A-18, Q-01…Q-23) | — | Syllabus |
+| SEED(S): actions and queries | [04-actions-and-queries](01-seeds/04-actions-and-queries.md) (A-01…A-19, Q-01…Q-23) | — | Syllabus |
 | SEED(S): open-standard spec | [`api/`](../api/README.md) — 7 OpenAPI 3.1 specs, lint-clean; events as JSON Schemas in the [event catalog](03-architecture/03-event-catalog.md) | Contract tests against the specs (Phase 1 onwards) | Syllabus |
 | SEED(S): feedback | [`api/README.md` — Feedback](../api/README.md#feedback-seeds-step-6) | Mock server for web/bots before the backend exists (Phase 1) | Syllabus |
 | Microservices vs APIs | [system architecture §4](03-architecture/01-system-architecture.md#4-microservices-vs-apis) — the API at the system boundary (owned by the API Team) vs the microservices behind it | Public API (gateway) stays stable while services change behind it | Ch. 2 |

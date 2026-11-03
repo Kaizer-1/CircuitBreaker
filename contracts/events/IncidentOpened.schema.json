@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/IncidentOpened.schema.json",
+  "title": "IncidentOpened",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "incidents.v1",
+  "x-key": "incident_id",
+  "x-producer": "sre-agent",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "IncidentOpened"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "sre-agent"
+    },
+    "data": {
+      "title": "IncidentOpened.data",
+      "type": "object",
+      "required": [
+        "incident_id",
+        "alert_name",
+        "service",
+        "severity",
+        "summary",
+        "opened_at"
+      ],
+      "properties": {
+        "incident_id": {
+          "type": "string",
+          "pattern": "^INC-[0-9]{4}$"
+        },
+        "alert_name": {
+          "type": "string",
+          "description": "Prometheus alert that triggered it"
+        },
+        "service": {
+          "$ref": "defs.schema.json#/$defs/service"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "warning",
+            "critical"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "opened_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

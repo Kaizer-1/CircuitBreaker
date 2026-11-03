@@ -51,3 +51,13 @@ async def get_order(request: Request) -> JSONResponse:
 )
 async def cancel_order(request: Request) -> JSONResponse:
     return not_implemented(request, "A-07")
+
+
+@router.post(
+    "/internal/v1/order-expiries",
+    operation_id="requestOrderExpiry",
+    summary="Request expiry of an unconfirmed order",
+    openapi_extra={"x-seeds-id": "A-19"},
+)
+async def request_order_expiry(request: Request) -> JSONResponse:
+    return not_implemented(request, "A-19")

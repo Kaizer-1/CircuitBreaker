@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/OrderCancelled.schema.json",
+  "title": "OrderCancelled",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "matching.v1",
+  "x-key": "ticker",
+  "x-producer": "matching-engine",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "OrderCancelled"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "matching-engine"
+    },
+    "data": {
+      "title": "OrderCancelled.data",
+      "type": "object",
+      "required": [
+        "sequence",
+        "ticker",
+        "order_id",
+        "trader_id",
+        "side",
+        "cancelled_quantity",
+        "reason",
+        "cancelled_at"
+      ],
+      "properties": {
+        "sequence": {
+          "$ref": "defs.schema.json#/$defs/sequence"
+        },
+        "ticker": {
+          "$ref": "defs.schema.json#/$defs/ticker"
+        },
+        "order_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "trader_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "side": {
+          "$ref": "defs.schema.json#/$defs/side"
+        },
+        "cancelled_quantity": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Quantity that was still open and is now removed"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "USER_REQUESTED",
+            "UNFILLED_MARKET_ORDER",
+            "SELF_TRADE_PREVENTED",
+            "ORDER_EXPIRED"
+          ]
+        },
+        "cancelled_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

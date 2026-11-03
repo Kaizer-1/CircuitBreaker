@@ -54,15 +54,20 @@ jobs:
         run: uv run --frozen pytest
 
   contracts:
-    name: API specs, template drift, Compose file
+    name: API specs, event contracts, template drift, Compose file
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
       - name: redocly lint
         run: npx --yes @redocly/cli@${{ env.REDOCLY_VERSION }} lint
+      - name: event schemas equal the event catalog; catalog examples are valid
+        run: uv run --quiet --locked tools/check_event_contracts.py
       - name: services still share identical runtime plumbing
         run: python3 tools/check_template_drift.py
       - name: docker-compose.yml is valid
