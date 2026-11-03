@@ -217,6 +217,7 @@ services:
       POSTGRES_DB: portfolio
       POSTGRES_USER: portfolio_service
       POSTGRES_PASSWORD: cb_dev_portfolio
+      ORDER_SERVICE_URL: http://order-service:8000 # A-19, the fail-closed orphan sweeper (ADR-0017)
     depends_on:
       redpanda-init:
         condition: service_completed_successfully

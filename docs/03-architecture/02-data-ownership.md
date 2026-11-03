@@ -112,10 +112,11 @@ and is only ever needed "now".
 |---|---|---|
 | `accounts` | `trader_id` (PK), `nickname` (UNIQUE) | `kind` (`HUMAN`, `BOT`, `LOAD`), `cash_paise`, `reserved_cash_paise`, `CHECK (cash_paise >= reserved_cash_paise AND reserved_cash_paise >= 0)` |
 | `holdings` | `(trader_id, ticker)` | `quantity`, `reserved_quantity`, `avg_cost_paise`, `CHECK (quantity >= reserved_quantity AND reserved_quantity >= 0)` |
-| `reservations` | `reservation_id`; UNIQUE `order_id` | `side`, `ticker`, `reserved_cash_paise` or `reserved_quantity`, remaining amounts, `status` (`ACTIVE`, `RELEASED`, `CONSUMED`) |
+| `reservations` | `reservation_id`; UNIQUE `order_id` | `side`, `ticker`, `reserved_cash_paise` or `reserved_quantity`, remaining amounts, `status` (`ACTIVE`, `RELEASED`, `CONSUMED`), `confirmed` (`OrderAccepted` seen), `expiry_requested_at` (the fail-closed sweeper asked for an expiry, [ADR-0017](../adr/0017-fail-closed-orphan-release.md)) |
 | `settlements` | `(trade_id, trader_id)` | One row per side of each trade, for the trader's history |
 | `last_prices` | `ticker` | Copy of last traded price, used for valuation and market-order protection price |
 | `processed_events` | `event_id` | Idempotency: inserted in the same transaction as the change it caused |
+| `schema_migrations` | `version` | Which migration files have been applied (start-up applies the rest) |
 
 ## 5. Duplicated data (on purpose)
 

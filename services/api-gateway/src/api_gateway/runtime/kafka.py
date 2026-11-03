@@ -225,3 +225,9 @@ class EventConsumer:
     def lag(self) -> dict[tuple[str, int], int]:
         """Messages behind, per assigned (topic, partition) whose end offset is known."""
         return dict(self._lag)
+
+    def partitions_for(self, topic: str) -> set[int]:
+        """Every partition of `topic` (from cluster metadata), whether assigned to us or not."""
+        if self._consumer is None:
+            return set()
+        return set(self._consumer.partitions_for_topic(topic) or ())

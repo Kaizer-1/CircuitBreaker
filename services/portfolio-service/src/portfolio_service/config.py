@@ -15,3 +15,10 @@ class Settings(BaseServiceSettings):
     postgres_db: str = "portfolio"
     postgres_user: str = "portfolio_service"
     postgres_password: SecretStr  # no default: a secret never lives in code
+    postgres_pool_size: int = 10
+
+    # A-19: the sweeper asks order-service for expiries (ADR-0017). Inside Compose: http://order-service:8000
+    order_service_url: str = "http://localhost:8001"
+    orphan_after_seconds: float = 120
+    sweep_interval_seconds: float = 10
+    start_consumers: bool = True  # False in unit tests: no Postgres or Kafka at start-up

@@ -1,9 +1,8 @@
 # portfolio-service
 
-> **Status:** Phase 1 — runnable skeleton. Follows the layout in
-> [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service)
-> (Python package `portfolio_service`). Every operation in its API spec answers `501 Not Implemented` until its phase;
-> `/healthz`, `/readyz` and `/metrics` work.
+> **Status:** Phase 2 — accounts, reservations, settlement and the fail-closed orphan sweeper are built. The leaderboard
+> (Q-11) answers `501` until Phase 4, the portfolio WebSocket (Q-10) arrives in Phase 3. Layout:
+> [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service) (package `portfolio_service`).
 
 | | |
 |---|---|
@@ -14,30 +13,78 @@
 
 ## Responsibility
 
-Owns every account's cash and holdings. Opens accounts (humans get ₹1,00,000; bots and load accounts are seeded from config, bots with shares), reserves cash or shares for new orders (enforcing no margin and no short selling), settles trades in one SQL transaction, releases leftover or orphaned reservations, values portfolios at last prices and ranks the leaderboard. A CQRS read model of trades plus the `Account` aggregate.
+Owns every account's cash and holdings. Opens accounts (humans get ₹1,00,000; bots and load accounts are seeded at
+start-up, bots with shares), reserves cash or shares for new orders (enforcing no margin and no short selling), settles
+trades in one SQL transaction, releases leftover reservations, and values portfolios at last prices. Orphaned
+reservations are released **fail-closed** ([ADR-0017](../../docs/adr/0017-fail-closed-orphan-release.md)): only after the
+matching engine confirms the order can never trade. A CQRS read model of trades plus the `Account` aggregate.
+
+## How it works
+
+| Code | Role |
+|---|---|
+| `domain/rules.py` | Pure money rules: `reserve`, `settle_buy`, `settle_sell`, `release`, `protection_price`, `portfolio_view` |
+| `application/portfolio.py` | Use cases A-02, A-06, A-09, Q-09; each runs in one transaction |
+| `application/sweeper.py` | Policy P-15: every 10 s, reservations with no `OrderAccepted` for 120 s → A-19 on order-service |
+| `adapters/postgres.py` | The store: row locks (`FOR UPDATE`, accounts first, in trader-ID order), `CHECK` constraints, migrations |
+| `adapters/order_service_http.py` | A-19 `POST /internal/v1/order-expiries` |
+| `adapters/partitions.py` | Which `matching.v1` partition holds a ticker (the producers' murmur2 hash) |
+
+**Rules, in paise:**
+
+| Rule | Value |
+|---|---|
+| BUY LIMIT reserves | `quantity × limit price` |
+| BUY MARKET reserves | `quantity × protection price`; protection = last price + 10%, rounded **up** to the 5-paise tick (8820 → 9705) |
+| SELL reserves | `quantity` shares; a MARKET sell's protection = last price − 10%, rounded **down** |
+| Last price | From `TradeExecuted`; before any trade, the reference price ([overview §3](../../docs/00-overview.md#3-the-instruments-stocks)) |
+| A trade | Buyer: reserved cash → shares at the trade price, average cost rounded half-up; seller: reserved shares → cash |
+| An order finishes | Remaining 0 in a `TradeExecuted`: leftover cash (price improvement) is released, status `CONSUMED` |
+| `OrderCancelled` (any reason) or `OrderExpired` | What is left is released, status `RELEASED` |
+| Seed accounts | `bot-01`…`bot-20`: ₹5,00,000 + 1,000 shares of each ticker, trader_id `b0b0b0b0-00NN-4000-8000-0000000000NN`; `load-01`…`load-10`: ₹1,00,000, `10ad10ad-00NN-…`. Created at start-up if missing. |
+
+**Idempotency.** Each `matching.v1` event's `event_id` goes into `processed_events` in the same transaction as its
+change; a duplicate inserts nothing and changes nothing. A reservation repeat for the same `order_id` returns the
+existing one (`200`).
+
+**Fail-closed sweeper.** It never releases money. It asks order-service for an expiry; the money is released when the
+engine's `OrderCancelled` (`ORDER_EXPIRED`) or `OrderExpired` arrives. It only sweeps tickers whose `matching.v1`
+partition this replica owns and has fully read, so an unread `OrderAccepted` never looks like an orphan. If
+order-service does not answer, it tries again next cycle.
 
 ## Owned data
 
-Postgres database `portfolio`: `accounts`, `holdings`, `reservations`, `settlements`, `last_prices`, `processed_events`.
+Postgres database `portfolio` (schema: [`src/portfolio_service/migrations/`](src/portfolio_service/migrations/), applied
+at start-up, recorded in `schema_migrations`): `accounts`, `holdings`, `reservations` (with `confirmed` and
+`expiry_requested_at`), `settlements`, `last_prices`, `processed_events`.
 
 ## Events
 
 | | |
 |---|---|
-| **Produces** | — on the bus. Local: `AccountOpened`, `ReservationCreated`, `TradeSettled`, `ReservationReleased`. |
-| **Consumes** | `OrderAccepted`, `TradeExecuted`, `OrderCancelled` ← `matching.v1`. |
+| **Produces** | — on the bus. Local: `AccountOpened`, `ReservationCreated`, `TradeSettled`, `ReservationReleased`, `ExpiryRequested`. |
+| **Consumes** | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderExpired` ← `matching.v1` (group `portfolio-service.matching.v1`). |
 
-Schemas: [event catalog](../../docs/03-architecture/03-event-catalog.md).
+Schemas: [event catalog](../../docs/03-architecture/03-event-catalog.md). `tests/contract/test_events.py` applies the
+catalog's own examples. A `SettlementError` (a trade the reservations do not cover; never expected) is retried 5 times,
+then the event goes to `matching.v1.dlq`.
 
 ## API
 
-Q-09 `GET /v1/portfolio`, Q-11 `GET /v1/leaderboard`, WebSocket Q-10 `/v1/ws/portfolio`; internal A-02 `POST /internal/v1/accounts`, A-06 `POST /internal/v1/reservations`. Spec: [`api/portfolio-service.yaml`](../../api/portfolio-service.yaml). Settlement (A-09) is event-driven.
+Q-09 `GET /v1/portfolio` (`X-Trader-Id` from the gateway), internal A-02 `POST /internal/v1/accounts`, A-06
+`POST /internal/v1/reservations`. Q-11 `GET /v1/leaderboard` is a `501` stub until Phase 4; the WebSocket Q-10
+`/v1/ws/portfolio` arrives in Phase 3. Spec: [`api/portfolio-service.yaml`](../../api/portfolio-service.yaml). Settlement
+(A-09) is event-driven.
 
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
+**Business metrics:** `reservations_total{side,result}` (`created`, `repeat`, `refused`), `trades_settled_total`,
+`orphan_expiry_requests_total`.
+
 ## Synchronous dependencies
 
-None.
+order-service `POST /internal/v1/order-expiries` (A-19), from the background sweeper only (2 s timeout; retried next
+cycle). Never on a request path.
 
 ## Scaling and operations
 
@@ -49,7 +96,9 @@ Default 2 replicas, agent may scale 1–5. Concurrent settlements on the same ac
 cd services/portfolio-service
 cp .env.example .env                 # local settings (git-ignored)
 uv sync                              # create the virtual environment from uv.lock
-uv run pytest                        # unit, smoke and contract tests (contract test reads ../../api/)
+uv run pytest                        # unit, property and contract tests
+uv run pytest -m integration         # the Postgres store on a real Postgres 16 (Docker, testcontainers)
+HYPOTHESIS_PROFILE=deep uv run pytest tests/property
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 
 make infra                           # from the repo root: Redpanda, Cassandra, Postgres and their init jobs
@@ -68,7 +117,14 @@ curl localhost:8004/readyz         # or `make up` from the repo root to run its 
 A: Settlement changes several rows that must succeed or fail together, and CHECK constraints guarantee cash never goes negative.
 
 **Q: How is a duplicate TradeExecuted handled?**
-A: Its event_id is inserted into processed_events in the same transaction; a duplicate violates the primary key and is skipped.
+A: Its event_id is inserted into processed_events in the same transaction; a duplicate inserts nothing, so the
+transaction changes nothing. A property test redelivers random events and checks every balance stays the same.
 
-**Q: What is an orphaned reservation?**
-A: Money reserved for an order that never reached the engine (e.g. order-service crashed). It is released if no OrderAccepted arrives within 120 s.
+**Q: What is an orphaned reservation, and when is its money released?**
+A: Money reserved for an order the engine never confirmed (e.g. order-service crashed). After 120 s the sweeper asks
+for an expiry through order-service; the money is released only when the engine answers, so it can never be traded
+after it was handed back (ADR-0017).
+
+**Q: How do two simultaneous orders not spend the same rupees?**
+A: Each reservation locks the account row (`SELECT … FOR UPDATE`) first, so they run one after the other; the second
+sees the first's reserved cash. An integration test races 10 reservations on a real Postgres and exactly 8 fit.

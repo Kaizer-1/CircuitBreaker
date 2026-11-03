@@ -61,6 +61,7 @@ jobs:
       matrix:
         service:
           - matching-engine
+          - portfolio-service
     defaults:
       run:
         working-directory: services/${{ matrix.service }}
