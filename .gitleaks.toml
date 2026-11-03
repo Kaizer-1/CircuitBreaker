@@ -1,0 +1,7 @@
+# gitleaks configuration (used by the pre-commit hook and by CI). Everything else stays on the default rules.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Placeholder JWTs in the API spec's response examples: their signature segment is base64('signature')"
+regexes = ['''\.c2lnbmF0dXJl$''']
