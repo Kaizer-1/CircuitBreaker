@@ -148,7 +148,7 @@ Each file has one of three origins:
 
 | Origin | Files | How it stays right |
 |---|---|---|
-| **Copied from the template**, identical in every service | `src/<package>/runtime/` (settings, JSON logging, Problem Details, middleware, metrics, health and readiness checks), `Dockerfile`, `.dockerignore`, `.python-version`, the shared tests | `tools/check_template_drift.py` (in `make lint` and CI) fails if any copy differs. See [duplication over coupling](05-coding-standards.md#duplication-over-coupling-why-the-services-share-no-library). |
+| **Copied from the template**, identical in every service | `src/<package>/runtime/` (settings, JSON logging, Problem Details, middleware, metrics, health and readiness checks, and since Phase 2 the event envelope and the Kafka publisher/consumer with the dead-letter rule), `Dockerfile`, `.dockerignore`, `.python-version`, the shared tests | `tools/check_template_drift.py` (in `make lint` and CI) fails if any copy differs; `--sync` copies the template's files to every service. See [duplication over coupling](05-coding-standards.md#duplication-over-coupling-why-the-services-share-no-library). |
 | **Generated from the OpenAPI spec**, then owned by the service | `src/<package>/api/stubs.py`: one `501` stub per operation | `tests/contract/` compares the app with `api/<service>.yaml`, both ways |
 | **Written per service** | `config.py`, `main.py`, `business_metrics.py`, `pyproject.toml`, `tests/conftest.py`, `.env.example` | Rendered by `tools/scaffold.py` from the service table; reviewed like any code |
 
@@ -212,7 +212,7 @@ stores in kind, which will need much more; we will re-measure then. The limits a
 | A service stays `starting` or `not_ready` | A dependency is down, or the init jobs failed | `curl localhost:8080/v1/system/status`: the `checks` show which one. `make logs s=redpanda-init` or `s=cassandra-init` for the init jobs. |
 | After changing a Cassandra role or password, services cannot log in | The Cassandra data volume still holds the old roles | `make reset` (wipes data) and `make up` |
 | `make doctor` says Node is too old although you installed a newer one | An older Homebrew Node formula is still linked | `brew unlink node@20 && brew link --overwrite --force node@24`, then open a new terminal |
-| `make lint` fails with `DRIFT` | A file that must be identical in every service was changed in one | Change `services/order-service` (the template) and copy it to the others, or revert; see [§6](#6-how-the-services-are-built) |
+| `make lint` fails with `DRIFT` | A file that must be identical in every service was changed in one | Change `services/order-service` (the template) and run `python3 tools/check_template_drift.py --sync`, or revert; see [§6](#6-how-the-services-are-built) |
 | The pre-commit hook rejects a commit | Lint error, a secret was detected, or `private/` / `CLAUDE.md` was staged | Read the message; `git restore --staged <file>` for the last case |
 
 ## Viva Notes

@@ -75,7 +75,7 @@ services/order-service/
 │   ├── main.py               # create_app(): FastAPI app, routers, lifespan (start consumers)
 │   ├── config.py             # Settings (pydantic-settings) read from env vars
 │   ├── business_metrics.py   # the service's own Prometheus metrics (the ones named in the docs)
-│   ├── runtime/              # IDENTICAL in every service: JSON logging, Problem Details, middleware, metrics, health
+│   ├── runtime/              # IDENTICAL in every service: logging, Problem Details, middleware, metrics, health, events, Kafka
 │   ├── api/                  # HTTP routers: thin — parse, call a use case, map errors to Problem Details
 │   ├── application/          # use cases (place_order, cancel_order, apply_matching_event)
 │   ├── domain/               # pure business logic and models (Order, OrderStatus, validation rules)
@@ -107,7 +107,8 @@ health and readiness endpoints. The obvious move is a shared Python package. We 
 **How it works.** The plumbing lives in `src/<package>/runtime/` (plus the `Dockerfile` and a few shared tests). The first
 service, `order-service`, is the template. `tools/scaffold.py` copies those files into a new service and renames the package;
 `tools/check_template_drift.py` (part of `make lint` and CI) compares every service's copy, after renaming, and fails if
-any differs. To change the plumbing: edit it in `order-service`, copy it to the others, and the check goes green.
+any differs. To change the plumbing: edit it in `order-service`, run `python3 tools/check_template_drift.py --sync` to copy
+it to the others, and the check goes green.
 
 This follows the textbook's reason for microservices (minimise coordination between teams) and its warning that a
 shared kernel needs tight coordination ([bounded contexts](02-domain/02-bounded-contexts.md#context-map)). Real business
