@@ -1,0 +1,130 @@
+# The local "umbrella project" (docs/05-coding-standards.md section 2): one file that runs the whole system.
+# Profiles:  infra = Redpanda, Cassandra, Postgres + init jobs      app = the 8 services + web
+# Use the Makefile (make infra / make up / make down); the app profile's depends_on needs the infra profile active.
+name: circuitbreaker
+
+services:
+  # --------------------------------------------------------------------------- infrastructure
+  redpanda:
+    image: redpandadata/redpanda:v26.2.6
+    profiles: [infra]
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092" # Kafka API for tools on the host
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    mem_limit: 896m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -qE 'Healthy:\\s+true'"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  redpanda-init:
+    image: redpandadata/redpanda:v26.2.6
+    profiles: [infra]
+    entrypoint: ["/bin/bash", "/init/create-topics.sh"]
+    environment:
+      REDPANDA_BROKERS: redpanda:9092
+    volumes:
+      - ./dev/redpanda:/init:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    mem_limit: 128m
+    restart: "no"
+
+  redpanda-console:
+    image: redpandadata/console:v3.13.1
+    profiles: [infra]
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "8088:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    mem_limit: 256m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/admin/health >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+
+  cassandra:
+    image: cassandra:5.0.9
+    profiles: [infra]
+    entrypoint: ["/bin/bash", "/opt/cb/entrypoint.sh"]
+    command: ["cassandra", "-f"]
+    environment:
+      CASSANDRA_CLUSTER_NAME: circuitbreaker-dev
+      # Laptop tuning: a 512 MB heap instead of the default (up to 1/4 of RAM), a small young generation,
+      # and a short ring delay so a single node does not wait 30 s for peers that do not exist.
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+      JVM_EXTRA_OPTS: "-Dcassandra.ring_delay_ms=1000 -Dcassandra.skip_wait_for_gossip_to_settle=0"
+    ports:
+      - "9042:9042"
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+      - ./dev/cassandra/entrypoint.sh:/opt/cb/entrypoint.sh:ro
+    mem_limit: 1536m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -u cassandra -p cassandra -e 'SELECT release_version FROM system.local' >/dev/null"]
+      interval: 15s
+      timeout: 20s
+      retries: 20
+      start_period: 60s
+
+  cassandra-init:
+    image: cassandra:5.0.9
+    profiles: [infra]
+    entrypoint: ["/bin/bash", "/init/init-keyspaces.sh"]
+    environment:
+      CASSANDRA_HOST: cassandra
+    volumes:
+      - ./dev/cassandra/init-keyspaces.sh:/init/init-keyspaces.sh:ro
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    mem_limit: 256m
+    restart: "no"
+
+  postgres:
+    image: postgres:16.15
+    profiles: [infra]
+    environment:
+      POSTGRES_PASSWORD: postgres # admin password, local development only
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./dev/postgres/01-portfolio.sql:/docker-entrypoint-initdb.d/01-portfolio.sql:ro
+    mem_limit: 256m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  redpanda-data:
+  cassandra-data:
+  postgres-data:
