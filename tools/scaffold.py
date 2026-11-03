@@ -353,7 +353,8 @@ def render_env_example(name: str, info: dict) -> str:
         db = info["postgres"]
         lines += [
             "POSTGRES_HOST=localhost",
-            "POSTGRES_PORT=5432",
+            "# Host port of the Compose Postgres (5433, so it never clashes with a Postgres you installed yourself)",
+            "POSTGRES_PORT=5433",
             f"POSTGRES_DB={db}",
             f"POSTGRES_USER={db}_service",
             "# Local-development placeholder created by dev/postgres/01-portfolio.sql",
