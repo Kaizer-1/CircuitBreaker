@@ -273,6 +273,18 @@ services:
     mem_limit: 192m
     restart: unless-stopped
 
+  web:
+    build: ./web
+    image: circuitbreaker/web:dev
+    profiles: [app]
+    ports:
+      - "5173:8080" # nginx-unprivileged listens on 8080 inside the container
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    mem_limit: 64m
+    restart: unless-stopped
+
 volumes:
   redpanda-data:
   cassandra-data:

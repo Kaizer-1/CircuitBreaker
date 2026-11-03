@@ -2,25 +2,25 @@
 
 > **Status:** Phase 0 — design only, no code yet.
 
-| | |
-|---|---|
-| **Owning team** | Trading Team |
-| **Owner** | **Kaizer Dewaswala** |
-| **Type** | Client of the public API (not a bounded context) |
+|                 |                                                  |
+| --------------- | ------------------------------------------------ |
+| **Owning team** | Trading Team                                     |
+| **Owner**       | **Kaizer Dewaswala**                             |
+| **Type**        | Client of the public API (not a bounded context) |
 
 ## Responsibility
 
 React + Vite + TypeScript single-page app with TradingView Lightweight Charts. Views:
 
-| View | Who | Uses |
-|---|---|---|
-| **Join** (`/join`, opened from the QR code) | Trader | A-01 |
-| **Trade**: instrument list, candlestick chart, order book, order ticket, my orders, portfolio | Trader | Q-02–Q-10, A-05, A-07 |
-| **Leaderboard** | Everyone | Q-11 |
-| **Time travel**: pick a moment or replay a window | Trader, Admin | Q-12, Q-13 |
-| **Presenter**: QR code, big charts, leaderboard, live incident feed | Admin | Q-02, Q-06, Q-11, Q-19 |
-| **Chaos Panel**: scenarios, start/stop, experiment results | Admin | Q-21–Q-23, A-10, A-11 |
-| **Agent controls**: approval toggle, pause, approve/decline | Admin | Q-20, A-14, A-15 |
+| View                                                                                          | Who           | Uses                   |
+| --------------------------------------------------------------------------------------------- | ------------- | ---------------------- |
+| **Join** (`/join`, opened from the QR code)                                                   | Trader        | A-01                   |
+| **Trade**: instrument list, candlestick chart, order book, order ticket, my orders, portfolio | Trader        | Q-02–Q-10, A-05, A-07  |
+| **Leaderboard**                                                                               | Everyone      | Q-11                   |
+| **Time travel**: pick a moment or replay a window                                             | Trader, Admin | Q-12, Q-13             |
+| **Presenter**: QR code, big charts, leaderboard, live incident feed                           | Admin         | Q-02, Q-06, Q-11, Q-19 |
+| **Chaos Panel**: scenarios, start/stop, experiment results                                    | Admin         | Q-21–Q-23, A-10, A-11  |
+| **Agent controls**: approval toggle, pause, approve/decline                                   | Admin         | Q-20, A-14, A-15       |
 
 Mobile-first (phones on classroom Wi-Fi): small bundle, reconnecting WebSockets, prices formatted from paise in Indian
 digit grouping (₹1,00,000.00).
