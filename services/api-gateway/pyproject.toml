@@ -9,6 +9,7 @@ dependencies = [
   "pydantic-settings>=2.16,<3",
   "prometheus-client>=0.26,<1",
   "httpx>=0.28,<1",
+  "pyjwt>=2.15,<3",
 ]
 
 [dependency-groups]
@@ -42,7 +43,7 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "B", "UP", "SIM", "N", "ASYNC", "S"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]  # pytest uses plain assert
+"tests/*" = ["S101", "S105", "S106"]  # plain assert; test-only placeholder secrets
 
 [tool.mypy]
 python_version = "3.12"

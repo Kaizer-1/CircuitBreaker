@@ -12,6 +12,8 @@ COMPOSE  := docker compose
 ALL      := --profile infra --profile app
 REDOCLY  := npx --yes @redocly/cli@1.34.3
 GATEWAY  := http://localhost:8080
+# The dev admin passcode from docker-compose.yml (a local placeholder, never a real secret).
+ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
 .PHONY: help doctor setup infra up down reset ps logs build lint fmt test test-integration test-deep status
@@ -79,5 +81,7 @@ test-deep: ## Property tests at 25,000 examples each (slow): make test-deep [s=<
 	@set -e; for s in $(if $(s),$(s),$(PROPERTY)); do echo "== deep properties $$s"; \
 	  (cd services/$$s && HYPOTHESIS_PROFILE=deep uv run --frozen pytest --no-cov tests/property); done
 
-status: ## Ask the gateway for the combined system status
-	@curl -sS --max-time 10 $(GATEWAY)/v1/system/status | python3 -m json.tool
+status: ## Ask the gateway for the combined system status (signs in as admin first)
+	@token=$$(curl -sS --max-time 10 -X POST $(GATEWAY)/v1/admin/sessions -H 'Content-Type: application/json' \
+	  -d '{"nickname":"presenter","passcode":"$(ADMIN_PASSCODE)"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])') && \
+	  curl -sS --max-time 10 -H "Authorization: Bearer $$token" $(GATEWAY)/v1/system/status | python3 -m json.tool

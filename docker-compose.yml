@@ -141,6 +141,10 @@ services:
       - "8080:8000"
     environment:
       <<: *python-env
+      # Local-development placeholders only; real environments get Kubernetes Secrets (ADR-0015).
+      JWT_SECRET: cb-dev-jwt-secret-for-local-compose-only
+      BOT_SECRET: cb-dev-bot-secret
+      ADMIN_PASSCODE: cb-dev-admin-passcode
       SERVICE_UPSTREAMS: '{"order-service":"http://order-service:8000","matching-engine":"http://matching-engine:8000","market-data-service":"http://market-data-service:8000","portfolio-service":"http://portfolio-service:8000","bot-traders":"http://bot-traders:8000","sre-agent":"http://sre-agent:8000","chaos-service":"http://chaos-service:8000"}'
     mem_limit: 192m
     restart: unless-stopped

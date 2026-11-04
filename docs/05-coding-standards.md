@@ -173,7 +173,8 @@ Every service exposes these on port 8000 (not in the OpenAPI specs, not routed b
 The **api-gateway** has one more operational endpoint, `GET /v1/system/status`. It calls every service's `/readyz`
 and returns one combined report (`status`: `healthy` | `unhealthy`; `services`; `dependencies` grouped from the services'
 checks). The System Status page in `web` shows it. Like `/healthz` it is not derived from a job to be done, so it has no
-A/Q ID and is not in `api/api-gateway.yaml`. It is open in Phase 1 and becomes admin-only when auth arrives (Phase 2).
+A/Q ID and is not in `api/api-gateway.yaml`. It is **admin-only** (since Phase 2): the System Status page asks for the
+presenter passcode (A-04), and `make status` signs in with the local placeholder passcode first.
 
 **Standard metrics** (all services, labelled `service`, plus `route`, `method`, `status` where relevant):
 `http_requests_total`, `http_request_duration_seconds` (histogram), `http_requests_in_flight`,
