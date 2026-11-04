@@ -9,8 +9,10 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from api_gateway.api import internal_block, proxied, sessions, system_status
+from api_gateway import log_redaction
+from api_gateway.api import internal_block, proxied, sessions, system_status, ws_proxy
 from api_gateway.api.auth import install_problem_handler
+from api_gateway.business_metrics import register_business_metrics
 from api_gateway.config import Settings
 from api_gateway.domain.rate_limit import RateLimiter
 from api_gateway.domain.sessions import Sessions
@@ -28,6 +30,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()
     configure_logging(settings.service_name, settings.log_level)
+    log_redaction.install()  # uvicorn logs WebSocket URLs, which carry ?access_token=
     metrics = Metrics(settings.service_name)
     # The gateway has no database or broker of its own, so "ready" means "configured and running".
     checks = list(readiness_checks) if readiness_checks is not None else []
@@ -49,6 +52,7 @@ def create_app(
     )
     app.state.settings = settings
     app.state.metrics = metrics
+    app.state.business_metrics = register_business_metrics(metrics.registry)
     app.state.sessions = Sessions(
         settings.jwt_secret.get_secret_value(), hours=settings.session_hours
     )
@@ -69,4 +73,5 @@ def create_app(
     app.include_router(internal_block.router)
     app.include_router(sessions.router)
     app.include_router(proxied.router)
+    app.include_router(ws_proxy.router)
     return app

@@ -1,7 +1,7 @@
 # api-gateway
 
-> **Status:** Phase 2 — sessions (JWT), role checks, identity headers, rate limits and proxying are built; the
-> WebSocket proxy arrives in Phase 3. Layout:
+> **Status:** Phase 3 — sessions (JWT), role checks, identity headers, rate limits, HTTP proxying and the WebSocket
+> proxy are built. Layout:
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service) (package `api_gateway`).
 
 | | |
@@ -24,6 +24,8 @@ The single public entry point. Issues and verifies JWT sessions (trader, bot, ad
 | `api/sessions.py` | A-01 join (calls portfolio A-02, kind `HUMAN`), A-03 bot session (`X-Bot-Secret`; kind `BOT` or `LOAD`), A-04 admin (passcode), Q-01 |
 | `api/auth.py` | Per route: verify the bearer token, check the role, apply the rate limit |
 | `api/proxied.py` | Every other public route, proxied with `X-Trader-Id` / `X-Role` / `X-Nickname` from the token |
+| `api/ws_proxy.py` | The WebSocket channels Q-06, Q-10, Q-13, Q-19: verify `?access_token=`, check the role, open the same channel upstream with identity headers from the token, relay both ways |
+| `log_redaction.py` | Rewrites `access_token=…` to `access_token=[redacted]` in every log line (uvicorn logs each WebSocket URL) |
 
 **Roles per route** (from [`api/api-gateway.yaml`](../../api/api-gateway.yaml)): orders and portfolio: `trader`, `bot`;
 market data, time travel, leaderboard, incident list and detail: any signed-in role; agent settings, decisions and
@@ -35,6 +37,15 @@ token yet); then `429 RATE_LIMITED` with `Retry-After`. A token bucket in memory
 caller can reach twice the limit, which is enough to stop a runaway client.
 
 **`GET /v1/system/status`** (the System Status page and `make status`) is **admin-only** since Phase 2.
+
+**WebSockets** ([api/README.md](../../api/README.md#websocket-channels)). Browsers cannot set headers on a WebSocket,
+so the token comes as `?access_token=`. Q-06 market, Q-13 replay and Q-19 incidents: any signed-in role; Q-10 portfolio:
+`trader` or `bot` (an admin gets `4403`). A missing, expired or forged token closes with `4401`; an unreachable upstream
+with `1011`. The upstream gets `X-Trader-Id` / `X-Role` / `X-Nickname` built from the token (a client's own copies are
+never forwarded, so a trader can only open their own portfolio stream) and every query parameter except the token. From
+then on the gateway is a pipe: messages go both ways unchanged and the upstream's close code (e.g. `4404`) reaches the
+client. The token is never logged: the access log has the path only, and uvicorn's own line for each WebSocket is
+redacted. Connections are not rate-limited (they are long-lived; the services' heartbeat closes dead ones).
 
 ## Owned data
 
@@ -55,6 +66,8 @@ Schemas: [event catalog](../../docs/03-architecture/03-event-catalog.md).
 A-01 `POST /v1/sessions`, A-03 `POST /v1/bot-sessions`, A-04 `POST /v1/admin/sessions`, Q-01 `GET /v1/session`; proxies every other public route and the WebSockets `/v1/ws/*`. Spec: [`api/api-gateway.yaml`](../../api/api-gateway.yaml).
 
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
+
+**Business metrics:** `gateway_ws_connections{channel}` (WebSocket connections proxied right now).
 
 ## Synchronous dependencies
 
