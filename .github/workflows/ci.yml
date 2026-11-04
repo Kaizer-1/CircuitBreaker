@@ -75,6 +75,22 @@ jobs:
       - name: pytest -m integration (testcontainers)
         run: uv run --frozen pytest -m integration --no-cov
 
+  e2e:
+    name: end to end in Compose (demo trade, kill -9 the engine, orphan rule)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and start every container, wait until all are healthy
+        run: make up
+      - name: make demo-trade
+        run: make demo-trade
+      - name: make test-e2e
+        run: make test-e2e
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker compose --profile infra --profile app logs --tail=300
+
   contracts:
     name: API specs, event contracts, template drift, Compose file
     runs-on: ubuntu-latest

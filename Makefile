@@ -16,11 +16,11 @@ GATEWAY  := http://localhost:8080
 ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
-.PHONY: help doctor setup infra up down reset ps logs build lint fmt test test-integration test-deep status
+.PHONY: help doctor setup infra up down reset ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-17s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  \033[36m%-17s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 doctor: ## Check prerequisites and print their versions
 	@bash scripts/doctor.sh
@@ -80,6 +80,12 @@ test-integration: ## Integration tests against real stores in Docker: make test-
 test-deep: ## Property tests at 25,000 examples each (slow): make test-deep [s=<service>]
 	@set -e; for s in $(if $(s),$(s),$(PROPERTY)); do echo "== deep properties $$s"; \
 	  (cd services/$$s && HYPOTHESIS_PROFILE=deep uv run --frozen pytest --no-cov tests/property); done
+
+demo-trade: ## Two traders and a bot trade through the gateway; prints trades, portfolios, orders (needs make up)
+	@python3 scripts/demo_trade.py
+
+test-e2e: ## End-to-end checks on the running stack: trade, kill -9 the engine, orphan rule (~3 min; needs make up)
+	@python3 scripts/e2e_test.py
 
 status: ## Ask the gateway for the combined system status (signs in as admin first)
 	@token=$$(curl -sS --max-time 10 -X POST $(GATEWAY)/v1/admin/sessions -H 'Content-Type: application/json' \

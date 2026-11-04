@@ -11,9 +11,10 @@ scale, restart, do nothing), explaining itself in plain English on a live incide
 University Microservices Architecture course project. Textbook: *Microservices: Up and Running* (Mitra &
 Nadareishvili).
 
-> **Status: Phase 1 — runnable skeletons.** The design is frozen (Phase 0). Every service, the infrastructure and a
-> System Status page run locally and report healthy; the business logic arrives from Phase 2. See the
-> [roadmap](docs/07-roadmap.md).
+> **Status: Phase 2 — core trading works.** Traders join, place orders through the gateway, and trade; the matching
+> engine is event sourced and rebuilds its books after a crash with an identical hash; cash and shares settle exactly;
+> orphaned reservations are released fail-closed ([ADR-0017](docs/adr/0017-fail-closed-orphan-release.md)). Market
+> data, the trading UI and bots come in Phase 3. See the [roadmap](docs/07-roadmap.md).
 
 ## Quick start
 
@@ -21,10 +22,12 @@ Nadareishvili).
 git clone <repository-url> CircuitBreaker && cd CircuitBreaker
 make doctor     # check Docker (10 GB recommended), Python 3.12 + uv, Node 24, kind, kubectl, helm, ...
 make up         # build and start Redpanda, Cassandra, Postgres, the 8 services and the web app (about a minute)
+make demo-trade # two traders and a bot trade through the gateway; prints the trades and portfolios
 ```
 
-Then open **<http://localhost:5173>**: the System Status page shows every service and dependency. `make help` lists the
-other commands (`make down`, `make reset`, `make logs s=<service>`, `make lint`, `make test`, `make status`).
+Then open **<http://localhost:5173>**: the System Status page (sign in with the local passcode `cb-dev-admin-passcode`)
+shows every service and dependency. `make help` lists the other commands (`make down`, `make reset`,
+`make logs s=<service>`, `make lint`, `make test`, `make test-e2e`, `make status`).
 Full guide with ports, measured memory use and troubleshooting: [developer setup](docs/08-developer-setup.md).
 
 ## Architecture at a glance
