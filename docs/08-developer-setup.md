@@ -109,8 +109,10 @@ exist, so "healthy" means "can do its job", not just "the process started".
 | `make test` | `pytest` per service (unit, property, smoke and contract tests; matching-engine also enforces 100% branch coverage of `domain/`) and `vitest` for the web app |
 | `make test-integration` | Integration tests against real Cassandra/Postgres/Redpanda started by testcontainers (needs Docker); `s=<service>` for one |
 | `make test-deep` | Property tests (Hypothesis) at 25,000 examples each instead of 1,000; slow |
+| `make bots` | With `make up` running: the 20 bots start trading (they are off by default). `make bots seed=42` repeats a rehearsal's bot choices; `activity=1.5` makes them busier. `make up` turns them off again (the default) |
+| `make bots-stop` | The bots stop trading; their container keeps running, idle |
 | `make demo-trade` | With `make up` running: two traders join, a bot sells to one, who sells to the other, all through the gateway; prints the trades, the three portfolios and the order statuses |
-| `make test-e2e` | With `make up` running (~3 min): join → trade → settle with exact balances; `kill -9` of the matching engine mid-workload, then the same book hash after a rebuild; the orphan rule with Redpanda stopped (`REJECTED` after 60 s, the hung send never delivered, money held until the engine answers) |
+| `make test-e2e` | With `make up` running (~7 min): join → trade → settle with exact balances; `kill -9` of the matching engine mid-workload, then the same book hash after a rebuild; the orphan rule with Redpanda stopped (`REJECTED` after 60 s, the hung send never delivered, money held until the engine answers); the 20 bots for 60 s (`scripts/bots_check.py`: candles with trades for all 5 tickers, the book never crossed in the engine or in market-data, no refused bot order, no 5xx) |
 | `make status` | Signs in as admin (`ADMIN_PASSCODE`, default the local placeholder) and prints the gateway's `/v1/system/status` |
 
 > **Not the same as the Terraform target.** `make infra` means *the Compose infrastructure*. The Terraform platform from

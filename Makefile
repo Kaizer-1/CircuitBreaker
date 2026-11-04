@@ -16,7 +16,7 @@ GATEWAY  := http://localhost:8080
 ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
-.PHONY: help doctor setup infra up down reset demo-reset ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status
+.PHONY: help doctor setup infra up down reset demo-reset bots bots-stop ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -54,6 +54,16 @@ demo-reset: ## Rehearsal start: wipe ALL data, start everything, check the clean
 	$(COMPOSE) $(ALL) up -d --build
 	@python3 scripts/wait-stack.py infra app
 	@python3 scripts/demo_reset_check.py
+
+bots: ## Start the 20 bots trading (needs make up): make bots [seed=42] [activity=1.0]
+	BOTS_ENABLED=true BOT_RANDOM_SEED=$(seed) BOT_ACTIVITY=$(if $(activity),$(activity),1.0) \
+	  $(COMPOSE) $(ALL) up -d --no-deps bot-traders
+	@python3 scripts/wait-stack.py infra app
+	@echo "20 bots trading (seed: $(if $(seed),$(seed),random), activity: $(if $(activity),$(activity),1.0)). Stop: make bots-stop"
+
+bots-stop: ## Stop the bots trading (the container keeps running, idle)
+	BOTS_ENABLED=false $(COMPOSE) $(ALL) up -d --no-deps bot-traders
+	@python3 scripts/wait-stack.py infra app
 
 ps: ## Show container status
 	$(COMPOSE) $(ALL) ps -a

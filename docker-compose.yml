@@ -240,6 +240,12 @@ services:
       - "8005:8000"
     environment:
       <<: [*python-env, *kafka-env]
+      GATEWAY_URL: http://api-gateway:8000 # bots use the public API, like everyone else
+      BOT_SECRET: cb-dev-bot-secret
+      # Off unless `make bots` (BOTS_ENABLED=true); `make bots seed=42 activity=1.5` for a rehearsal.
+      BOTS_ENABLED: ${BOTS_ENABLED:-false}
+      BOT_RANDOM_SEED: ${BOT_RANDOM_SEED:-}
+      BOT_ACTIVITY: ${BOT_ACTIVITY:-1.0}
     depends_on:
       redpanda-init:
         condition: service_completed_successfully
