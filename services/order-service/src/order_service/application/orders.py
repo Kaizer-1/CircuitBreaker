@@ -7,6 +7,7 @@ publish fails the outbox relay retries it; once the API has answered 202 the ord
 engine (or be REJECTED with PUBLISH_TIMEOUT after 60 s, never later).
 """
 
+import asyncio
 import base64
 import logging
 from collections.abc import Callable
@@ -34,6 +35,9 @@ from order_service.runtime.events import EventEnvelope, format_timestamp
 logger = logging.getLogger("orders")
 
 OPEN_STATUSES = {OrderStatus.PENDING, OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED}
+# The request path tries to publish once, briefly; if Redpanda is slow or down the relay takes over,
+# so a trader never waits on the broker (the gateway would time out first).
+PUBLISH_ATTEMPT_SECONDS = 1.0
 
 
 class OrderNotFoundError(Exception):
@@ -97,7 +101,9 @@ class Orders:
         new_id: Callable[[], str] = lambda: str(uuid4()),
         on_placed: Callable[[Order], None] = lambda order: None,
         on_rejected: Callable[[RejectionReason], None] = lambda reason: None,
+        publish_attempt_seconds: float = PUBLISH_ATTEMPT_SECONDS,
     ) -> None:
+        self._publish_attempt = publish_attempt_seconds
         self._store = store
         self._portfolio = portfolio
         self._publisher = publisher
@@ -179,7 +185,9 @@ class Orders:
         if must_wait(entry, order):
             return  # its order's OrderPlaced has not gone out yet: the relay keeps the order
         try:
-            await self._publisher.publish(TOPIC, entry.ticker, entry.event)
+            await asyncio.wait_for(
+                self._publisher.publish(TOPIC, entry.ticker, entry.event), self._publish_attempt
+            )
             await self._store.mark_published(entry)
             if order is not None and entry.event_type == "OrderPlaced":
                 order.published = True

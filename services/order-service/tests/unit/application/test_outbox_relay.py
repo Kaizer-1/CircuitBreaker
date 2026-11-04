@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 
+from order_service.application.outbox_relay import OutboxRelay
 from order_service.domain.order import OrderStatus, RejectionReason
 from tests.unit.application.test_orders import RAJU, World
 
@@ -36,6 +37,19 @@ async def test_an_order_stored_but_never_published_is_rejected_after_60_seconds(
     assert late.publisher.sent == [] and late.store.outbox == []  # never published, ever
     late.clock.now += timedelta(minutes=10)
     assert await late.relay.run_once() == 0 and late.publisher.sent == []
+
+
+async def test_a_hung_broker_never_delays_the_60_second_rejection(w: World) -> None:
+    w.relay = OutboxRelay(w.store, w.publisher, clock=w.clock, attempt_seconds=0.05)
+    w.publisher.down = True
+    early, late = await w.place(), None
+    w.clock.now += timedelta(seconds=30)
+    late = await w.place()
+    w.publisher.down, w.publisher.hang = False, True  # Redpanda stops answering at all
+    w.clock.now += timedelta(seconds=31)  # the first order is now 61 s old
+    assert await w.relay.run_once() == 0
+    assert w.store.orders[early.order_id].status is OrderStatus.REJECTED
+    assert w.store.orders[late.order_id].status is OrderStatus.PENDING
 
 
 async def test_a_pending_cancel_of_an_order_rejected_for_timeout_is_dropped(w: World) -> None:

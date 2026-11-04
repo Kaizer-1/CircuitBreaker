@@ -166,6 +166,21 @@ async def test_if_publishing_fails_the_order_is_still_accepted_and_the_relay_sen
     assert w.publisher.types() == ["OrderPlaced"] and w.store.orders[order.order_id].published
 
 
+async def test_a_broker_that_hangs_never_holds_up_the_trader(w: World) -> None:
+    # Redpanda stopped answering: the order is accepted within the 1 s attempt, the relay retries.
+    w.orders = Orders(
+        w.store,
+        w.portfolio,
+        w.publisher,
+        environment="dev",
+        clock=w.clock,
+        publish_attempt_seconds=0.05,
+    )
+    w.publisher.hang = True
+    order = await w.place()
+    assert order.status is OrderStatus.PENDING and len(w.store.outbox) == 1
+
+
 async def test_the_same_idempotency_key_returns_the_same_order(w: World) -> None:
     request = OrderRequest("CHAIWALA", Side.BUY, OrderType.LIMIT, 5, 24600)
     first = await w.orders.place(RAJU, request, correlation_id="a", idempotency_key="phone-retry-1")

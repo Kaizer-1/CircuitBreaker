@@ -1,6 +1,7 @@
 """In-memory fakes for order-service's ports, with the same column rules as the Cassandra store:
 save_status never writes cancel_requested unless asked, and set_cancel_requested writes only it."""
 
+import asyncio
 from dataclasses import replace
 
 from order_service.domain.order import Order, OrderRequest, OrderType, RejectionReason, Side
@@ -125,8 +126,11 @@ class RecordingPublisher:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str, EventEnvelope]] = []
         self.down = False
+        self.hang = False  # a broker that does not answer at all
 
     async def publish(self, topic: str, key: str, event: EventEnvelope) -> None:
+        if self.hang:
+            await asyncio.sleep(3600)
         if self.down:
             raise ConnectionError("redpanda is down")
         self.sent.append((topic, key, event))

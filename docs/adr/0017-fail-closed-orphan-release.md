@@ -96,6 +96,7 @@ So no timing assumption is left: crashes and delays of any length can only make 
 | The engine crashed between storing and publishing | On restart it publishes the stored events, then answers the expiry, in order. |
 | portfolio-service is behind on `matching.v1` | Its sweeper skips that partition until it has caught up (see below), so it does not expire an order whose `OrderAccepted` is merely unread. |
 | order-service is down at 120 s | A-19 fails; the sweeper retries on its next cycle. |
+| A publish that hung (Redpanda down) is delivered later by the Kafka client | order-service gives up waiting after a short attempt, but the client keeps the message and may deliver it after Redpanda returns, even past 60 s. If it lands before the expiry request the engine accepts it while the money is still reserved, then cancels it (`ORDER_EXPIRED`); if after, the tombstone refuses it. `make test-e2e` reproduced the first case (Phase 2). This is why the 60 s rule alone could never protect the money. |
 
 **Sweeper scope.** Each portfolio-service replica only sweeps tickers whose `matching.v1` partition it currently
 consumes, and only while that partition has no lag. This is not needed for safety (the engine's answer is), but it

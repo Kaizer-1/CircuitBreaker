@@ -132,6 +132,7 @@ curl localhost:8001/readyz         # or `make up` from the repo root to run its 
 
 - Redpanda, and the topic(s) `orders.v1`, `matching.v1` must exist (the init job creates them)
 - Cassandra: logs in with its own role `order_service_role` and uses keyspace `order_service` only
+- `consumer`: group `order-service.matching.v1` has joined and read to the end of its partitions at least once
 
 ## Viva Notes
 

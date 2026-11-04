@@ -39,7 +39,9 @@ class OutboxRelay:
         publish_timeout_seconds: float = PUBLISH_TIMEOUT_SECONDS,
         retry_after_seconds: float = RETRY_AFTER_SECONDS,
         on_rejected: Callable[[RejectionReason], None] = lambda reason: None,
+        attempt_seconds: float = 2.0,
     ) -> None:
+        self._attempt = attempt_seconds
         self._store = store
         self._publisher = publisher
         self._clock = clock
@@ -48,12 +50,16 @@ class OutboxRelay:
         self._on_rejected = on_rejected
 
     async def run_once(self) -> int:
-        """One pass over the outbox. Returns how many rows were published."""
+        """One pass over the outbox. Returns how many rows were published.
+
+        First every rule that needs no broker (reject what is too old, drop what must never go out),
+        so a hung Redpanda cannot delay a PUBLISH_TIMEOUT; then one bounded attempt per row.
+        """
         now = self._clock()
-        published = 0
-        for entry in await self._store.pending_outbox(format_timestamp(now - LOOK_BACK)):
+        entries = await self._store.pending_outbox(format_timestamp(now - LOOK_BACK))
+        to_publish = []
+        for entry in entries:
             order = await self._store.get(entry.order_id)
-            written = parse_timestamp(entry.event.occurred_at)
             if entry.event_type == "OrderPlaced":
                 if order is None or order.status is not OrderStatus.PENDING:
                     await self._store.drop_outbox(entry)  # rejected meanwhile: never publish
@@ -65,20 +71,31 @@ class OutboxRelay:
                     )
                     await self._store.drop_outbox(entry)
                     self._on_rejected(RejectionReason.PUBLISH_TIMEOUT)
-                    logger.warning("OrderPlaced not published within 60 s: order rejected",
-                                   extra={"order_id": order.order_id})  # fmt: skip
+                    logger.warning(
+                        "OrderPlaced not published within 60 s: order rejected",
+                        extra={"order_id": order.order_id},
+                    )
                     continue
             elif order is not None and entry.event_type == "OrderCancelRequested":
                 if order.status is OrderStatus.REJECTED:
                     await self._store.drop_outbox(entry)  # nothing left to cancel
                     continue
+            to_publish.append((entry, order))
+
+        published = 0
+        for entry, order in to_publish:
+            if order is not None:
+                order = await self._store.get(entry.order_id)  # an earlier row may have changed it
+            written = parse_timestamp(entry.event.occurred_at)
             if must_wait(entry, order) or now - written < self._retry_after:
                 continue
             try:
-                await self._publisher.publish(TOPIC, entry.ticker, entry.event)
+                await asyncio.wait_for(
+                    self._publisher.publish(TOPIC, entry.ticker, entry.event), self._attempt
+                )
             except Exception as exc:
                 logger.warning("relay publish failed", extra={"error": repr(exc)})
-                return published  # the broker is down: try again on the next pass
+                return published  # the broker is down or slow: try again on the next pass
             await self._store.mark_published(entry)
             published += 1
         return published
