@@ -58,6 +58,7 @@
   --chart-text: #4a3f37;
   --chart-grid: #e2c4ac;
   --chart-volume: rgba(27, 22, 17, 0.18);
+  --chart-tag: #1b1611; /* the last-price tag in ink: a hollow candle's paper body would hide it */
   --qr-dark: #1b1611;
   --qr-light: #f7e1cf;
 }

@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { CandleChart } from '../components/CandleChart'
 import { Flash } from '../components/Flash'
+import { Nickname } from '../components/Nickname'
 import { OrderTicket } from '../components/OrderTicket'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { arrow, direction, inr, percent, quantity, rupees, signedRupees } from '../lib/format'
@@ -112,7 +113,9 @@ function Phone({ session }: { session: TraderSession }) {
         </h2>
         <div className="account">
           <div>
-            <div className="label">{session.nickname} · net worth</div>
+            <div className="label">
+              <Nickname nickname={session.nickname} suffix={session.suffix} /> · net worth
+            </div>
             <div className="worth num">{portfolio ? inr(portfolio.net_worth_paise) : '—'}</div>
           </div>
           {portfolio && (
@@ -232,9 +235,7 @@ function Phone({ session }: { session: TraderSession }) {
           <table>
             <thead>
               <tr>
-                <th>Stock</th>
-                <th>Qty</th>
-                <th>Avg ₹</th>
+                <th>Stock · qty @ avg ₹</th>
                 <th>Value ₹</th>
                 <th>P&amp;L ₹</th>
               </tr>
@@ -242,9 +243,13 @@ function Phone({ session }: { session: TraderSession }) {
             <tbody>
               {portfolio.holdings.map((h) => (
                 <tr key={h.ticker}>
-                  <td>{h.ticker}</td>
-                  <td className="num">{quantity(h.quantity)}</td>
-                  <td className="num">{rupees(h.avg_cost_paise)}</td>
+                  {/* The average cost sits under the stock: five columns do not fit 390 px. */}
+                  <td className="stock">
+                    {h.ticker}
+                    <small>
+                      {quantity(h.quantity)} @ {rupees(h.avg_cost_paise)}
+                    </small>
+                  </td>
                   <td className="num">{rupees(h.market_value_paise)}</td>
                   <td className={`num ${direction(h.unrealised_pnl_paise)}`}>
                     {arrow(h.unrealised_pnl_paise)} {signedRupees(h.unrealised_pnl_paise)}

@@ -6,6 +6,8 @@ export interface TraderSession {
   token: string
   traderId: string
   nickname: string
+  /** The suffix the join page added because the typed name was taken (lib/nickname.ts). */
+  suffix?: string
   expiresAt: string
 }
 

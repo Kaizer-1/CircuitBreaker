@@ -1,8 +1,9 @@
-import { type ReactNode, useState } from 'react'
+import { type AnimationEvent, type ReactNode, useState } from 'react'
 
 /**
  * A number that flashes when it changes: green when it rose, red when it fell, in the theme's way
- * (paper: fresh ink that dries; terminal: the cell lights). The motion means "this just changed".
+ * (paper: fresh ink that dries; terminal: the cell lights). The motion means "this just changed",
+ * so when the animation ends the flash class goes and the number is back in its normal colour.
  */
 export function Flash({
   value,
@@ -21,8 +22,15 @@ export function Flash({
     if (value !== null && prev !== null)
       setFlash((f) => ({ dir: value > prev ? 'up' : 'down', n: f.n + 1 }))
   }
+  const settle = (e: AnimationEvent) => {
+    if (e.target === e.currentTarget) setFlash((f) => ({ dir: null, n: f.n }))
+  }
   return (
-    <span key={flash.n} className={`${className} ${flash.dir ? `flash-${flash.dir}` : ''}`.trim()}>
+    <span
+      key={flash.n}
+      className={`${className} ${flash.dir ? `flash-${flash.dir}` : ''}`.trim()}
+      onAnimationEnd={settle}
+    >
       {children}
     </span>
   )

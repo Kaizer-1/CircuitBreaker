@@ -482,11 +482,22 @@ td:first-child {
   color: var(--text-2);
   font-size: 0.95em;
 }
+/* The QR code encodes an address phones cannot reach: say so where the presenter looks. */
+.join .qr-warning {
+  margin: 0.45em 0;
+  padding: 0.35em 0.5em;
+  border: 2px solid var(--danger);
+  color: var(--danger);
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: 0.95em;
+  line-height: 1.25;
+}
 .join .url {
   font-family: var(--font-num);
   font-weight: 600;
   font-size: 0.75em;
-  overflow-wrap: anywhere;
+  overflow-wrap: anywhere; /* a very long host name still never pushes the box wider */
 }
 .statusbar {
   display: flex;
@@ -514,6 +525,7 @@ td:first-child {
 
 /* ================================================================ the phone */
 .phone {
+  --tabs-h: 59px; /* the terminal skin's fixed F-key tabs: 58 px keys + the 1 px rule */
   font-size: 16px;
   overflow-x: hidden; /* never a horizontal scroll on the phone */
   max-width: 34rem;
@@ -526,8 +538,10 @@ td:first-child {
 :root[data-theme='paper'] .phone {
   padding-bottom: 32px;
 }
+/* Room under the last item for the fixed tabs and, on iPhones, the home-indicator strip
+   (viewport-fit=cover in index.html makes env() report it). scripts/screenshots.mjs checks it. */
 :root[data-theme='terminal'] .phone {
-  padding: 0 6px calc(70px + env(safe-area-inset-bottom));
+  padding: 0 6px calc(var(--tabs-h) + 16px + env(safe-area-inset-bottom, 0px));
 }
 .phone-head {
   display: flex;
@@ -843,7 +857,7 @@ td:first-child {
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: calc(84px + env(safe-area-inset-bottom));
+  bottom: calc(var(--tabs-h) + 24px + env(safe-area-inset-bottom, 0px));
   max-width: 32rem;
   margin: 0 auto;
   padding: 12px 14px;
@@ -864,7 +878,7 @@ td:first-child {
   grid-template-columns: repeat(4, 1fr);
   background: var(--bg);
   border-top: var(--frame);
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   z-index: 10;
 }
 .tabs a {
@@ -963,4 +977,30 @@ td:first-child {
 .phone table td {
   padding-left: 0.35em;
   padding-right: 0.35em;
+}
+.phone td.stock {
+  font-family: var(--font-label);
+  font-weight: 700;
+}
+.phone td.stock small {
+  display: block;
+  font-family: var(--font-num);
+  font-size: 0.78em;
+  font-weight: 500;
+  color: var(--text-2);
+}
+.phone td.num {
+  white-space: nowrap;
+}
+
+/* A nickname as typed (no capitals forced by the label it sits in); an added suffix is quieter. */
+.nick {
+  text-transform: none;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  font-weight: 700;
+}
+.nick .suffix {
+  color: var(--text-3);
+  font-weight: 400;
 }

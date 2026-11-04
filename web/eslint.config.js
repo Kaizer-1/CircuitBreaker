@@ -18,8 +18,13 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
   },
   {
-    files: ['mock/**/*.mjs', 'scripts/**/*.mjs'],
+    files: ['mock/**/*.mjs'],
     languageOptions: { globals: globals.node },
+  },
+  {
+    // Node scripts that drive a browser: the page.evaluate() callbacks run in the page.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
   },
   prettier,
 )

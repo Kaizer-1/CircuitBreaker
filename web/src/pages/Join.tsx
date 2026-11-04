@@ -1,11 +1,9 @@
 // J-01 → A-01: scan the QR code, pick a nickname, start with ₹1,00,000. No password.
 import { type FormEvent, useEffect, useState } from 'react'
 import { ThemeToggle } from '../components/ThemeToggle'
-import { ApiError, api } from '../lib/market'
+import { joinAs, NICKNAME, nicknameTaken } from '../lib/nickname'
 import { navigate } from '../lib/router'
 import { loadTrader, saveTrader } from '../lib/session'
-
-const NICKNAME = /^[A-Za-z0-9_-]{3,20}$/
 
 export function Join() {
   const [nickname, setNickname] = useState('')
@@ -18,23 +16,24 @@ export function Join() {
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!NICKNAME.test(nickname)) {
-      setError('3 to 20 letters, digits, - or _.')
+      setError('3 to 20 letters, digits or _.')
       return
     }
     setBusy(true)
     setError(null)
     try {
-      const s = await api.join(nickname)
+      const { session: s, suffix } = await joinAs(nickname)
       saveTrader({
         token: s.access_token,
         traderId: s.trader_id,
         nickname: s.nickname,
+        suffix: suffix || undefined,
         expiresAt: s.expires_at,
       })
       navigate('/trade')
     } catch (e) {
       setError(
-        e instanceof ApiError && e.code === 'NICKNAME_TAKEN'
+        nicknameTaken(e)
           ? `Someone is already trading as ${nickname}. Pick another nickname.`
           : e instanceof Error
             ? e.message

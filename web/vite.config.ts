@@ -21,8 +21,9 @@ export default defineConfig(({ mode }) => {
       environment: 'jsdom',
       globals: true,
       setupFiles: ['./test/setup.ts'],
-      // The tests load the real design tokens (test/themes.ts), so this one CSS file is not stubbed.
-      css: { include: [/tokens\.css/] },
+      // The tests read the real design tokens (test/themes.ts) and the flash animations
+      // (Flash.test.tsx), so these two CSS files are not stubbed.
+      css: { include: [/tokens\.css/, /app\.css/] },
     },
   }
 })

@@ -1,14 +1,14 @@
 // The presenter's projector view (web/README.md "Presenter"; admin only): every ticker live, the
 // selected one big, its depth and trades, and the QR code to join. One layout for both skins; the
 // masthead and dateline (paper) and the command line and F-keys (terminal) are theme-only details.
-import { useCallback, useEffect, useState } from 'react'
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 import { fetchSystemStatus, NotAuthorizedError } from '../api'
 import { AdminLogin } from '../components/AdminLogin'
 import { CandleChart } from '../components/CandleChart'
 import { Flash } from '../components/Flash'
 import { QrCode } from '../components/QrCode'
 import { ThemeToggle } from '../components/ThemeToggle'
-import { joinUrl } from '../lib/config'
+import { joinUrl, joinUrlWarning } from '../lib/config'
 import {
   arrow,
   clock,
@@ -24,7 +24,7 @@ import { loadAdminToken, saveAdminToken } from '../lib/session'
 import { useInstruments, useMarkets } from '../market/hooks'
 
 const DEPTH_ROWS = 6
-const TAPE_ROWS = 9
+const TAPE_ROWS = 12 // at most; the tape shows the whole rows that fit (useRowsThatFit)
 
 function useNow(everyMs = 1000): Date {
   const [now, setNow] = useState(() => new Date())
@@ -33,6 +33,28 @@ function useNow(everyMs = 1000): Date {
     return () => window.clearInterval(id)
   }, [everyMs])
   return now
+}
+
+/** How many whole table rows fit in a panel (the tape takes the height the depth leaves, and the
+ * skins' rows differ in height): a half-cut row at the bottom would look like a bug. */
+function useRowsThatFit(panel: RefObject<HTMLElement | null>, max: number, hasRows: boolean) {
+  const [rows, setRows] = useState(max)
+  useEffect(() => {
+    const box = panel.current
+    if (!box || !hasRows) return
+    const measure = () => {
+      const body = box.querySelector('tbody')
+      const row = body?.querySelector('tr')?.getBoundingClientRect().height
+      if (!body || !row) return
+      const room = box.getBoundingClientRect().bottom - body.getBoundingClientRect().top - 2
+      setRows(Math.max(1, Math.min(max, Math.floor(room / row))))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(box)
+    return () => observer.disconnect()
+  }, [panel, max, hasRows])
+  return rows
 }
 
 function useHealth(token: string, onExpired: () => void): string {
@@ -92,6 +114,7 @@ function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
   >
   const now = useNow()
   const health = useHealth(token, onExpired)
+  const tape = useRef<HTMLElement>(null)
 
   // Keys 1 to 5 pick the ticker shown big (the presenter's remote clicker can send them).
   useEffect(() => {
@@ -110,6 +133,7 @@ function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
   const live = TICKERS.filter((t) => markets[t][1] === 'live').length
   const volume = instruments.reduce((s, i) => s + i.day_volume, 0)
   const book = view.book
+  const tapeRows = useRowsThatFit(tape, TAPE_ROWS, view.trades.length > 0)
   const maxQty = Math.max(
     1,
     ...(book ? [...book.bids, ...book.asks].slice(0, 99).map((l) => l.quantity) : [1]),
@@ -291,14 +315,14 @@ function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
             </div>
           </section>
 
-          <section className="panel tape" aria-label="Trades">
+          <section className="panel tape" aria-label="Trades" ref={tape}>
             <h2>
               <span>Trades</span>
               <small>Newest first</small>
             </h2>
             <table>
               <tbody>
-                {view.trades.slice(0, TAPE_ROWS).map((t, n) => (
+                {view.trades.slice(0, tapeRows).map((t, n) => (
                   <tr key={t.trade_id} className={n === 0 ? 'enter' : ''}>
                     <td className="num">{clock(t.executed_at)}</td>
                     <td className={`side ${t.aggressor_side === 'BUY' ? 'up' : 'down'}`}>
@@ -337,11 +361,29 @@ function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
   )
 }
 
-/** J-01: the QR code that phones scan to join (it encodes PUBLIC_BASE_URL/join). */
-function JoinBox() {
+/** The join address as people type it (no http://), breaking only before the path. */
+function shownUrl(url: string) {
+  const bare = url.replace(/^https?:\/\//, '')
+  const slash = bare.indexOf('/')
+  return slash < 0 ? (
+    bare
+  ) : (
+    <>
+      {bare.slice(0, slash)}
+      <wbr />
+      {bare.slice(slash)}
+    </>
+  )
+}
+
+/** J-01: the QR code that phones scan to join (it encodes PUBLIC_BASE_URL/join). If that address
+ * only works on this laptop (localhost, or PUBLIC_BASE_URL unset), the presenter is told so. */
+export function JoinBox() {
+  const url = joinUrl()
+  const warning = joinUrlWarning()
   return (
     <aside className="join" aria-label="Join">
-      <QrCode text={joinUrl()} size={196} />
+      <QrCode text={url} size={196} />
       <div>
         <div className="head">
           <span className="terminal-only">
@@ -351,12 +393,18 @@ function JoinBox() {
           <br />
           <span className="paper-only">₹1,00,000 to start.</span>
         </div>
-        <p>
-          A nickname, ₹1,00,000 of play money.
-          <br />
-          No password.
-        </p>
-        <div className="url">{joinUrl()}</div>
+        {warning ? (
+          <p className="qr-warning" role="alert">
+            {warning}
+          </p>
+        ) : (
+          <p>
+            A nickname, ₹1,00,000 of play money.
+            <br />
+            No password.
+          </p>
+        )}
+        <div className="url">{shownUrl(url)}</div>
       </div>
     </aside>
   )
