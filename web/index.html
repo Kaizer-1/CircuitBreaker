@@ -1,9 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-IN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CircuitBreaker · System Status</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>CircuitBreaker Markets</title>
+    <script>
+      // The theme before the first paint (same rules as src/theme/theme.ts resolveTheme): the URL's
+      // ?theme= wins, then the choice remembered on this device, then the device's light/dark setting.
+      ;(function () {
+        var asked = new URLSearchParams(location.search).get('theme')
+        var stored = null
+        try {
+          stored = localStorage.getItem('circuitbreaker.theme')
+        } catch (e) {}
+        var ok = function (t) {
+          return t === 'paper' || t === 'terminal'
+        }
+        var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        document.documentElement.dataset.theme = ok(asked)
+          ? asked
+          : ok(stored)
+            ? stored
+            : dark
+              ? 'terminal'
+              : 'paper'
+      })()
+    </script>
+    <!-- PUBLIC_BASE_URL for the join QR code, written by the web container at start (web/docker/config.sh). -->
+    <script src="/config.js"></script>
   </head>
   <body>
     <div id="root"></div>

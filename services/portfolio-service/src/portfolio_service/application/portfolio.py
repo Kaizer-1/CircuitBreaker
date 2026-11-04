@@ -4,6 +4,8 @@ and read a portfolio (Q-09). Each runs in one database transaction.
 Settlement is idempotent: the event's event_id is recorded in processed_events in the same
 transaction as the balance change, so a redelivered event changes nothing. Money is released only
 on the engine's events (ADR-0017): a finished order's TradeExecuted, OrderCancelled or OrderExpired.
+
+Every change to a portfolio also notifies the replicas in the same transaction (Q-10, live.py).
 """
 
 import logging
@@ -12,6 +14,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from portfolio_service.application.live import Change, fill_message, order_closed_message
 from portfolio_service.domain.model import (
     BOT_STARTING_CASH,
     BOT_STARTING_SHARES,
@@ -140,6 +143,7 @@ class PortfolioService:
             await tx.save_account(account)
             await tx.save_holding(holding)
             await tx.insert_reservation(reservation)
+            await tx.notify(Change(request.trader_id).to_json())  # reserved cash or shares moved
             logger.info(
                 "reservation created",  # local event ReservationCreated
                 extra={"order_id": request.order_id, "trader_id": request.trader_id},
@@ -223,6 +227,14 @@ class PortfolioService:
                 **common,
             )
         await tx.set_last_price(ticker, d["price_paise"], d["executed_at"])
+        for trader_id, side, remaining, order_id in (
+            (buyer_id, "BUY", d["buy_order_remaining_quantity"], d["buy_order_id"]),
+            (seller_id, "SELL", d["sell_order_remaining_quantity"], d["sell_order_id"]),
+        ):
+            messages = [fill_message(d, side)]
+            if remaining == 0:
+                messages.append(order_closed_message(order_id, "FILLED", None))
+            await tx.notify(Change(trader_id, ticker, tuple(messages)).to_json())
 
     async def _finished(self, tx: Tx, d: dict[str, Any]) -> None:
         """OrderCancelled (any reason) or OrderExpired: release what the reservation still holds."""
@@ -239,6 +251,14 @@ class PortfolioService:
         await tx.save_account(account)
         await tx.save_holding(holding)
         await tx.save_reservation(reservation)
+        # OrderExpired is the answer for an order the engine never saw: there is no order to close
+        # on the phone (order-service shows it REJECTED), only money to give back.
+        messages = (
+            (order_closed_message(d["order_id"], "CANCELLED", d["reason"]),)
+            if "reason" in d
+            else ()
+        )
+        await tx.notify(Change(reservation.trader_id, None, messages).to_json())
         logger.info(
             "reservation released",  # local event ReservationReleased
             extra={"order_id": reservation.order_id, "released": released},

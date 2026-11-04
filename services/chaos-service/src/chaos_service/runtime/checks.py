@@ -53,7 +53,7 @@ def cassandra_check(
                     auth_provider=PlainTextAuthProvider(username, password),
                     connection_class=AsyncioConnection,
                     connect_timeout=3,
-                    protocol_version=5,
+                    protocol_version=4,  # as the adapters: v5 framing failed under load
                 )
                 try:
                     state["session"] = cluster.connect(

@@ -49,8 +49,13 @@ Then open:
 | URL | What you should see |
 |---|---|
 | <http://localhost:5173> | **System Status** (sign in with the local passcode `cb-dev-admin-passcode`): "All systems healthy", 8 service cards and 3 dependencies, all green |
+| <http://localhost:5173/dashboard> | **Presenter dashboard** for the projector (same passcode): five live tickers, the chart, the order book, the trades and the join QR code. Run `make bots` first, or nothing moves |
+| <http://localhost:5173/join> | **Join** (no passcode, a nickname), then **Trade** at `/trade`: the phone page. On a laptop, make the window narrow or use the browser's device mode |
 | <http://localhost:8088> | Redpanda Console: the 4 topics and their dead-letter topics |
 | `make status` | The same report as JSON (it signs in as admin first; the endpoint is admin-only) |
+
+Add `?theme=paper` or `?theme=terminal` to any page to pick its skin, the light Pink Paper or the dark Terminal. Without
+it the page uses the header toggle's choice, then the device's light/dark setting ([web README](../web/README.md#themes-one-layout-two-skins)).
 
 The first run also downloads the base images (Redpanda, Cassandra, Postgres, Python, Node, nginx), so it takes several
 minutes depending on your connection. Later runs reuse Docker's cache; from an empty data state on a warm cache,
@@ -100,6 +105,7 @@ exist, so "healthy" means "can do its job", not just "the process started".
 | `make up` | Builds and starts everything (both profiles) and waits until every container is healthy |
 | `make down` | Stops everything; data volumes are kept |
 | `make reset` | Stops everything and **deletes all data volumes**; asks you to type `yes` first |
+| `make demo-reset` | **Rehearsal start.** Like `make reset` (asks for `yes`; `CONFIRM=yes make demo-reset` skips the question), then builds and starts everything and checks the starting state: five empty books with no history, only the seeded accounts (`bot-01`…`bot-20` with ₹5,00,000 and 1,000 shares of each ticker, `load-01`…`load-10`), no human accounts. Every rehearsal starts from the same state |
 | `make ps` | Shows the container status |
 | `make logs s=<service>` | Follows logs (all services if `s` is omitted) |
 | `make build` | Builds the Docker images (`s=<service>` for one) |
@@ -108,8 +114,11 @@ exist, so "healthy" means "can do its job", not just "the process started".
 | `make test` | `pytest` per service (unit, property, smoke and contract tests; matching-engine also enforces 100% branch coverage of `domain/`) and `vitest` for the web app |
 | `make test-integration` | Integration tests against real Cassandra/Postgres/Redpanda started by testcontainers (needs Docker); `s=<service>` for one |
 | `make test-deep` | Property tests (Hypothesis) at 25,000 examples each instead of 1,000; slow |
+| `make bots` | With `make up` running: the 20 bots start trading (they are off by default). `make bots seed=42` repeats a rehearsal's bot choices; `activity=1.5` makes them busier. `make up` turns them off again (the default) |
+| `make bots-stop` | The bots stop trading; their container keeps running, idle |
+| `make mock` | The public API mocked from the specs, for web work without the backend: Prism (5.16.0) on :4010 serves `api/api-gateway.yaml` with the owning services' examples (`tools/mock_spec.py` copies them in), and `web/mock/ws-mock.mjs` on :4011 streams the Q-06 and Q-10 WebSocket messages (Prism cannot mock WebSockets). Then `cd web && npm run dev:mock` |
 | `make demo-trade` | With `make up` running: two traders join, a bot sells to one, who sells to the other, all through the gateway; prints the trades, the three portfolios and the order statuses |
-| `make test-e2e` | With `make up` running (~3 min): join → trade → settle with exact balances; `kill -9` of the matching engine mid-workload, then the same book hash after a rebuild; the orphan rule with Redpanda stopped (`REJECTED` after 60 s, money held until the engine answers) |
+| `make test-e2e` | With `make up` running (~7 min): join → trade → settle with exact balances; `kill -9` of the matching engine mid-workload, then the same book hash after a rebuild; the orphan rule with Redpanda stopped (`REJECTED` after 60 s, the hung send never delivered, money held until the engine answers); the 20 bots for 60 s (`scripts/bots_check.py`: candles with trades for all 5 tickers, the book never crossed in the engine or in market-data, no refused bot order, no 5xx) |
 | `make status` | Signs in as admin (`ADMIN_PASSCODE`, default the local placeholder) and prints the gateway's `/v1/system/status` |
 
 > **Not the same as the Terraform target.** `make infra` means *the Compose infrastructure*. The Terraform platform from
@@ -219,6 +228,52 @@ stores in kind, which will need much more; we will re-measure then. The limits a
 | `make doctor` says Node is too old although you installed a newer one | An older Homebrew Node formula is still linked | `brew unlink node@20 && brew link --overwrite --force node@24`, then open a new terminal |
 | `make lint` fails with `DRIFT` | A file that must be identical in every service was changed in one | Change `services/order-service` (the template) and run `python3 tools/check_template_drift.py --sync`, or revert; see [§6](#6-how-the-services-are-built) |
 | The pre-commit hook rejects a commit | Lint error, a secret was detected, or `private/` / `CLAUDE.md` was staged | Read the message; `git restore --staged <file>` for the last case |
+| The presenter dashboard says "QR points to localhost. Phones can't join." | `PUBLIC_BASE_URL` is not set, or is `localhost` (the Compose default) | [§10](#10-phones-on-a-hotspot-demo-day): set it to the laptop's LAN address and restart `web` |
+| A phone cannot open the join address | Not on the same network, the network isolates its clients, or the laptop's firewall blocks Docker | [§10](#10-phones-on-a-hotspot-demo-day), "If a phone cannot connect" |
+
+## 10. Phones on a hotspot (demo day)
+
+Phones join by scanning the QR code on the presenter dashboard. The code encodes `PUBLIC_BASE_URL/join`, so
+`PUBLIC_BASE_URL` must be an address **a phone** can reach. `localhost` on the laptop is not one: a phone that opens
+`localhost` reaches itself. The containers cannot find the laptop's LAN address for you, so you set it.
+
+**Terms.** A **LAN address** (local area network) is the laptop's address on the network it shares with the phones, for
+example `192.168.43.12`. A **hotspot** is a phone sharing its mobile connection over Wi-Fi. **Client isolation** is a
+Wi-Fi setting, common on campus and guest networks, that stops devices on the network from reaching each other.
+
+1. **Put the laptop and the phones on one network.** A phone hotspot is the most reliable choice: turn it on and join
+   it from the laptop and from the other phones. Classroom Wi-Fi works only if it does not isolate its clients.
+2. **Find the laptop's LAN address** on that network:
+
+   | System | Command | Typical hotspot address |
+   |---|---|---|
+   | macOS | `ipconfig getifaddr en0` (Wi-Fi) | Android hotspot `192.168.43.x`; iPhone hotspot `172.20.10.x` |
+   | Linux | `hostname -I` | |
+   | Windows | `ipconfig` ("IPv4 Address" of the Wi-Fi adapter) | |
+
+3. **Start the stack with it** (the web container writes it into `/config.js` at start, so there is no rebuild):
+
+   ```bash
+   PUBLIC_BASE_URL=http://192.168.43.12:5173 make up
+   # stack already running? restart only the web container:
+   PUBLIC_BASE_URL=http://192.168.43.12:5173 docker compose up -d web
+   ```
+
+   To keep it, put `PUBLIC_BASE_URL=http://192.168.43.12:5173` in a `.env` file at the repository root. Compose reads
+   it, and Git ignores it.
+4. **Check on the laptop first.**
+   - Open `http://192.168.43.12:5173/dashboard`, using the LAN address, not localhost.
+   - The join box shows `192.168.43.12:5173/join` and no warning. If it says **"QR points to localhost. Phones can't
+     join. Set PUBLIC_BASE_URL."**, step 3 did not take effect: the variable is unset, or it is `localhost`/`127.x`.
+   - Then scan the QR code with a phone.
+5. **If a phone cannot connect:**
+   - Check that the phone is on the same network, not on its mobile data.
+   - Open the LAN address in the laptop's own browser. If that fails too, the address is wrong; repeat step 2.
+   - On macOS, open System Settings → Network → Firewall. Allow incoming connections for Docker, or turn "Block all
+     incoming connections" off.
+   - The address can change each time the laptop rejoins the hotspot. Find it again and restart `web` (step 3).
+
+Only port 5173 needs to be reachable. The page calls the API on the same address, and nginx forwards it to the gateway.
 
 ## Viva Notes
 

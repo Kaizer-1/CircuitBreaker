@@ -1,7 +1,9 @@
 """Publishing and consuming events on Redpanda (Kafka API) with the event catalog's delivery rules.
 
 - Producers wait for every replica to acknowledge (`acks=all`) and use the idempotent producer, so
-  a retried send is not written twice and messages to one partition stay in order.
+  a retried send is not written twice and messages to one partition stay in order. A producer
+  with a delivery deadline (sre-agent, the 60 s rule) is not idempotent instead; see
+  `EventPublisher`.
 - Consumers commit an offset only after the handler has finished (at-least-once delivery), so
   handlers must be idempotent: the catalog's rule is to record each processed `event_id`.
 - A message whose handler fails 5 times (or that is not a valid envelope) goes to `<topic>.dlq`
@@ -33,23 +35,45 @@ TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (OSError, TimeoutError)
 
 
 class EventPublisher:
-    """Publishes events (and dead letters) to Redpanda."""
+    """Publishes events (and dead letters) to Redpanda.
 
-    def __init__(self, bootstrap_servers: str, service: str, metrics: Metrics) -> None:
+    With `delivery_timeout_seconds`, the Kafka client gives up on a message that long after it was
+    handed over, even if the caller stopped waiting earlier: it is then never sent. An idempotent
+    aiokafka producer never gives up (it retries until the broker answers, to keep its sequence
+    numbers), so a bounded producer is not idempotent. A retried send may then be written twice;
+    consumers drop the copy by `event_id`. Order still holds: aiokafka keeps one request in flight
+    per partition. aiokafka checks a message's time-to-live (`request_timeout_ms`) only after a
+    failed send, so the last send can start just before it runs out and then wait for a reply and
+    a metadata refresh: three request timeouts in all, hence a third of the deadline each.
+    """
+
+    def __init__(
+        self,
+        bootstrap_servers: str,
+        service: str,
+        metrics: Metrics,
+        *,
+        delivery_timeout_seconds: float | None = None,
+    ) -> None:
         self._bootstrap = bootstrap_servers
         self._service = service
         self._metrics = metrics
+        self._delivery_timeout = delivery_timeout_seconds
         self._producer: Any = None
 
     async def start(self) -> None:
         from aiokafka import AIOKafkaProducer
 
+        if self._delivery_timeout is None:
+            options: dict[str, Any] = {"enable_idempotence": True, "request_timeout_ms": 10_000}
+        else:
+            third_ms = int(self._delivery_timeout * 1000 / 3)
+            options = {"enable_idempotence": False, "request_timeout_ms": third_ms}
         self._producer = AIOKafkaProducer(
             bootstrap_servers=self._bootstrap,
             client_id=self._service,
             acks="all",
-            enable_idempotence=True,
-            request_timeout_ms=10_000,
+            **options,
         )
         await self._producer.start()
 

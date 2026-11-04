@@ -9,13 +9,16 @@
    be published is REJECTED within 60 s; its money, and the money of a reservation whose order was
    never stored, stays reserved while the engine cannot answer, and is released only after it
    does; a late copy of an expired order is refused.
+4. Phase 3: the 20 bots trade for 60 s (make bots): candles for all 5 tickers, the book never
+   crossed, no refused bot order, no 5xx.
 
-Takes about 5 minutes (the orphan rule waits for real 60 s and 120 s timers).
+Takes about 7 minutes (the orphan rule waits for real 60 s and 120 s timers; the bots run 60 s).
 """
 
 from __future__ import annotations
 
 import random
+import subprocess
 import sys
 import threading
 import time
@@ -23,6 +26,7 @@ import traceback
 import uuid
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from stack import (
@@ -240,10 +244,10 @@ def test_orphan_rule_is_fail_closed() -> None:
         for e in events
         if e["data"].get("order_id") == stuck["order_id"]
     ]
-    # Either the engine never saw it (tombstone), or the Kafka client delivered its hung send
-    # after Redpanda came back: then it was accepted while its money was still reserved, and
-    # cancelled by the expiry. Both are safe; the money is released only after the answer.
-    assert late and late[-1] in (("OrderExpired", None), ("OrderCancelled", "ORDER_EXPIRED")), late
+    # The Kafka client gave up on the hung send 10 s after it was handed over, so it never
+    # reached the engine: only the tombstone. (Before the Phase 3 fix the client kept it and
+    # delivered it when Redpanda returned: OrderAccepted, then OrderCancelled ORDER_EXPIRED.)
+    assert late == [("OrderExpired", None)], late
     print(f"     the engine answered the unpublished order with: {', '.join(k for k, _ in late)}")
 
     # A late copy of the lost order (a relay that hung): the tombstone refuses it.
@@ -283,10 +287,26 @@ def test_orphan_rule_is_fail_closed() -> None:
     assert c.portfolio()["cash_paise"] == 10_000_000
 
 
+def test_bots_keep_a_sound_market() -> None:
+    """Phase 3: with the 20 bots trading for 60 s, every ticker has 5s candles with trades, the
+    book is never crossed (engine and market-data), no bot order is refused, no 5xx answers."""
+    root = Path(__file__).resolve().parents[1]
+    subprocess.run(["make", "-s", "bots", "seed=42"], cwd=root, check=True)  # noqa: S603, S607
+    try:
+        time.sleep(10)  # the market makers' first quotes, the first candles
+        check = subprocess.run(  # noqa: S603
+            [sys.executable, str(root / "scripts" / "bots_check.py"), "60"], cwd=root, check=False
+        )
+        assert check.returncode == 0, "the market was not sound with the bots running"
+    finally:
+        subprocess.run(["make", "-s", "bots-stop"], cwd=root, check=True)  # noqa: S603, S607
+
+
 TESTS: list[Callable[[], None]] = [
     test_join_trade_settle,
     test_crash_recovery_by_hash,
     test_orphan_rule_is_fail_closed,
+    test_bots_keep_a_sound_market,
 ]
 
 

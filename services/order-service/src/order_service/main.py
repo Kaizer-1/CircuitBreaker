@@ -44,6 +44,9 @@ TOPICS = ("orders.v1", "matching.v1")
 CONSUMER_GROUP = "order-service.matching.v1"
 
 logger = logging.getLogger("startup")
+# Idle connections are dropped after 2 s, before uvicorn closes them (after 5 s): otherwise a
+# request can be sent on a connection the server is closing (httpx.ReadError, a 503 to the caller).
+KEEP_ALIVE = httpx.Limits(keepalive_expiry=2.0)
 
 
 def default_checks(settings: Settings) -> list[ReadinessCheck]:
@@ -69,7 +72,12 @@ def transient_errors() -> tuple[type[BaseException], ...]:
 
 
 async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> None:
-    publisher = EventPublisher(settings.kafka_bootstrap_servers, settings.service_name, metrics)
+    publisher = EventPublisher(
+        settings.kafka_bootstrap_servers,
+        settings.service_name,
+        metrics,
+        delivery_timeout_seconds=settings.publish_delivery_timeout_seconds,
+    )
     business = app.state.business_metrics
     while True:
         try:
@@ -105,6 +113,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
         store,
         publisher,
         publish_timeout_seconds=settings.publish_timeout_seconds,
+        delivery_timeout_seconds=settings.publish_delivery_timeout_seconds,
         on_rejected=rejected,
     )
     app.state.orders = orders
@@ -159,7 +168,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(limits=KEEP_ALIVE) as client:
             app.state.portfolio = HttpPortfolio(
                 settings.portfolio_url,
                 client,

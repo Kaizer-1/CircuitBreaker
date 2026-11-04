@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en-IN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dalal Street Board · Phone</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Doto:wght@700;800;900&family=Barlow+Condensed:wght@500;600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 390px; min-height: 844px; background: var(--board); color: var(--text); font-family: var(--font-ui); font-size: 16px; }
+  .top { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px 10px; }
+  .top b { font-family: var(--font-sign); font-weight: 800; font-size: 22px; letter-spacing: 3px; }
+  .top b span { color: var(--led); }
+  .top .who { font-family: var(--font-sign); font-size: 16px; letter-spacing: 2px; color: var(--text-2); text-transform: uppercase; }
+  .strip { display: flex; overflow: hidden; background: #000; border-top: 2px solid var(--line); border-bottom: 2px solid var(--line); }
+  .strip button { all: unset; cursor: pointer; flex: 0 0 auto; padding: 8px 14px 8px; border-right: 2px solid var(--line); min-height: 48px; }
+  .strip button[aria-pressed='true'] { box-shadow: inset 0 -3px 0 var(--led); }
+  .strip .t { font-family: var(--font-sign); font-size: 13px; letter-spacing: 2px; color: var(--text-2); font-weight: 700; display: block; }
+  .strip .led { font-size: 24px; display: block; line-height: 1.1; }
+  .strip .c { font-family: var(--font-sign); font-size: 14px; font-weight: 600; }
+  .pad { padding: 0 16px; }
+  .worth { display: flex; justify-content: space-between; align-items: end; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .lbl { font-family: var(--font-sign); font-size: 13px; letter-spacing: 3px; color: var(--text-3); text-transform: uppercase; font-weight: 600; }
+  .worth .v { font-size: 28px; font-weight: 700; text-align: left; }
+  .worth .pnl { font-family: var(--font-sign); font-size: 22px; font-weight: 700; text-align: right; }
+  .worth .pnl small { display: block; font-size: 14px; color: var(--text-3); letter-spacing: 1px; font-weight: 600; }
+  .quote { padding: 12px 0 2px; }
+  .quote h1 { font-family: var(--font-sign); font-size: 34px; font-weight: 800; letter-spacing: 4px; line-height: 1; }
+  .quote .row2 { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+  .quote .led { font-size: 56px; line-height: 1; }
+  .quote .c { font-family: var(--font-sign); font-size: 22px; font-weight: 700; text-align: right; line-height: 1.1; }
+  .quote .c small { display: block; font-size: 15px; color: var(--text-2); }
+  svg.mini { display: block; width: 100%; height: 110px; margin-top: 6px; }
+  .ticket { margin: 10px 16px 0; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+  .seg button { all: unset; cursor: pointer; text-align: center; min-height: 52px; line-height: 52px; font-family: var(--font-sign); font-weight: 800; font-size: 22px; letter-spacing: 3px; border: 2px solid var(--line); border-radius: var(--radius); color: var(--text-2); }
+  .seg .buy[aria-pressed='true'] { background: var(--up); border-color: var(--up); color: #000; }
+  .seg .sell[aria-pressed='true'] { background: var(--down); border-color: var(--down); color: #000; }
+  .seg .on[aria-pressed='true'] { border-color: var(--led); color: var(--led); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .step { display: grid; grid-template-columns: 44px 1fr 44px; border: 2px solid var(--line); border-radius: var(--radius); margin-top: 4px; }
+  .step button { all: unset; cursor: pointer; text-align: center; font-size: 26px; line-height: 50px; color: var(--text-2); }
+  .step output { font-size: 22px; font-weight: 700; text-align: center; line-height: 50px; }
+  .est { display: flex; justify-content: space-between; font-size: 15px; color: var(--text-2); margin-top: 10px; }
+  .est b { color: var(--text); }
+  .place { all: unset; cursor: pointer; display: block; text-align: center; width: 100%; min-height: 58px; line-height: 58px; margin-top: 12px; background: var(--up); color: #000; font-family: var(--font-sign); font-size: 24px; font-weight: 800; letter-spacing: 2px; border-radius: var(--radius); }
+  h2 { font-family: var(--font-sign); font-size: 20px; font-weight: 700; letter-spacing: 4px; text-transform: uppercase; padding: 18px 0 6px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
+  h2 small { font-size: 13px; color: var(--text-3); letter-spacing: 2px; }
+  .order { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 9px 0; border-bottom: 1px solid #1c1c1c; }
+  .order .what { font-size: 16px; } .order b { font-family: var(--font-sign); font-size: 18px; letter-spacing: 1px; }
+  .order .st { font-family: var(--font-sign); font-size: 14px; letter-spacing: 2px; color: var(--text-3); text-transform: uppercase; }
+  .cancel { all: unset; cursor: pointer; min-height: 44px; line-height: 44px; padding: 0 16px; border: 2px solid var(--text-3); border-radius: var(--radius); font-family: var(--font-sign); font-weight: 700; letter-spacing: 2px; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { padding: 8px 4px; border-bottom: 1px solid #1c1c1c; font-size: 16px; }
+  th { font-family: var(--font-sign); font-size: 13px; letter-spacing: 2px; color: var(--text-3); text-align: right; font-weight: 600; text-transform: uppercase; }
+  th:first-child, td:first-child { text-align: left; font-family: var(--font-sign); font-weight: 700; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+  <header class="top"><b>CIRCUIT<span>BREAKER</span></b><span class="who" id="nick"></span></header>
+  <nav class="strip" id="strip"></nav>
+  <div class="pad">
+    <section class="worth"><div><div class="lbl">Net worth</div><div class="v num" id="worth"></div></div><div class="pnl up" id="pnl"></div></section>
+    <section class="quote">
+      <h1>CHAIWALA</h1>
+      <div class="row2"><span class="led" id="price"></span><div class="c up" id="chg"></div></div>
+      <svg class="mini" id="mini"></svg>
+    </section>
+  </div>
+  <section class="ticket">
+    <div class="seg"><button class="buy" aria-pressed="true">▲ BUY</button><button class="sell" aria-pressed="false">▼ SELL</button></div>
+    <div class="seg"><button class="on" aria-pressed="true">LIMIT</button><button class="on" aria-pressed="false">MARKET</button></div>
+    <div class="row">
+      <div><div class="lbl">Quantity</div><div class="step"><button aria-label="Less">−</button><output class="num" style="text-align:center">10</output><button aria-label="More">+</button></div></div>
+      <div><div class="lbl">Limit ₹</div><div class="step"><button aria-label="Lower">−</button><output class="num" style="text-align:center">247.80</output><button aria-label="Higher">+</button></div></div>
+    </div>
+    <div class="est"><span>Reserves</span><b class="num" id="cost"></b></div>
+    <div class="est"><span>Available cash</span><b class="num" id="avail"></b></div>
+    <button class="place">BUY 10 · ₹247.80</button>
+  </section>
+  <div class="pad">
+    <h2>Open orders <small>Tap to cancel</small></h2>
+    <div id="orders"></div>
+    <h2>Holdings <small>At last price</small></h2>
+    <table><thead><tr><th>Stock</th><th>Qty</th><th>Avg ₹</th><th>P&amp;L ₹</th></tr></thead><tbody id="hold"></tbody></table>
+  </div>
+<script src="../shared/market.js"></script>
+<script>
+  const M = MOCK, P = M.portfolio, h = M.hero
+  const css = getComputedStyle(document.documentElement), v = (n) => css.getPropertyValue(n).trim()
+  const arrow = (x) => (x >= 0 ? '▲' : '▼')
+  const dp = (text) => text.replace('.', '<i class="dp"></i>')
+  const led = (text) => `<span class="ghost">${dp(text.replace(/[0-9]/g, '8'))}</span><span class="lit">${dp(text)}</span>`
+  document.getElementById('nick').textContent = P.nickname
+  document.getElementById('strip').innerHTML = M.tickers.map((t, i) => `<button aria-pressed="${i === 0}"><span class="t">${t.ticker}</span><span class="led">${led(M.rupees(t.last))}</span><span class="c ${t.change >= 0 ? 'up' : 'down'}">${arrow(t.change)} ${M.pct(t.changePct)}</span></button>`).join('')
+  document.getElementById('worth').textContent = '₹' + M.rupees(P.netWorth)
+  document.getElementById('pnl').innerHTML = `${arrow(P.pnl)} ${M.rupees(P.pnl, { sign: true })}<small>${M.pct(P.pnlPct)} SINCE JOINING</small>`
+  document.getElementById('price').innerHTML = `<span class="lit">${dp(M.rupees(h.last))}</span>`
+  document.getElementById('chg').innerHTML = `▲ ${M.rupees(h.change, { sign: true })}<small>${M.pct(h.changePct)}</small>`
+  M.drawCandles(document.getElementById('mini'), M.miniCandles, { up: v('--up'), down: v('--down'), bg: v('--board'), grid: v('--line') })
+  document.getElementById('cost').textContent = '₹' + M.rupees(10 * 24780)
+  document.getElementById('avail').textContent = '₹' + M.rupees(P.cash - P.reserved)
+  document.getElementById('orders').innerHTML = M.openOrders.map((o) => `<div class="order"><div><div class="what"><b class="${o.side === 'BUY' ? 'up' : 'down'}">${arrow(o.side === 'BUY' ? 1 : -1)} ${o.side}</b> ${o.qty} ${o.ticker} @ <span class="num">₹${M.rupees(o.price)}</span></div><div class="st">${o.status === 'OPEN' ? 'Open' : `Part filled · ${o.filled}/${o.qty}`}</div></div><button class="cancel">CANCEL</button></div>`).join('')
+  document.getElementById('hold').innerHTML = P.holdings.map((x) => `<tr><td>${x.ticker}</td><td class="num">${x.qty}</td><td class="num">${M.rupees(x.avg)}</td><td class="num ${x.pnl >= 0 ? 'up' : 'down'}">${arrow(x.pnl)} ${M.rupees(x.pnl, { sign: true })}</td></tr>`).join('')
+</script>
+</body>
+</html>

@@ -11,10 +11,13 @@ scale, restart, do nothing), explaining itself in plain English on a live incide
 University Microservices Architecture course project. Textbook: *Microservices: Up and Running* (Mitra &
 Nadareishvili).
 
-> **Status: Phase 2 — core trading works.** Traders join, place orders through the gateway, and trade; the matching
-> engine is event sourced and rebuilds its books after a crash with an identical hash; cash and shares settle exactly;
-> orphaned reservations are released fail-closed ([ADR-0017](docs/adr/0017-fail-closed-orphan-release.md)). Market
-> data, the trading UI and bots come in Phase 3. See the [roadmap](docs/07-roadmap.md).
+> **Status: Phase 3 — a live, watchable market.** Phones join from a QR code and trade on a one-handed page; the
+> projector shows five live tickers with 5-second candles, the order book and the trades; 20 bots keep the market
+> moving. Market data is a read model built from the matching engine's events and pushed over WebSockets (snapshot,
+> then updates in sequence). Underneath, from Phase 2: an event-sourced matching engine that rebuilds its books after a
+> crash with an identical hash, exact settlement, and fail-closed release of orphaned reservations
+> ([ADR-0017](docs/adr/0017-fail-closed-orphan-release.md)). Time travel and the leaderboard come in Phase 4. See the
+> [roadmap](docs/07-roadmap.md).
 
 ## Quick start
 
@@ -23,11 +26,21 @@ git clone <repository-url> CircuitBreaker && cd CircuitBreaker
 make doctor     # check Docker (10 GB recommended), Python 3.12 + uv, Node 24, kind, kubectl, helm, ...
 make up         # build and start Redpanda, Cassandra, Postgres, the 8 services and the web app (about a minute)
 make demo-trade # two traders and a bot trade through the gateway; prints the trades and portfolios
+make bots       # the 20 bots start trading (off by default; make bots-stop stops them)
 ```
 
-Then open **<http://localhost:5173>**: the System Status page (sign in with the local passcode `cb-dev-admin-passcode`)
-shows every service and dependency. `make help` lists the other commands (`make down`, `make reset`,
-`make logs s=<service>`, `make lint`, `make test`, `make test-e2e`, `make status`).
+Then open:
+
+| Page | URL | Sign-in |
+|---|---|---|
+| System Status | <http://localhost:5173> | Local passcode `cb-dev-admin-passcode` |
+| Presenter dashboard (projector) | <http://localhost:5173/dashboard> | Same passcode |
+| Join, then trade (phone) | <http://localhost:5173/join> | A nickname |
+
+Add `?theme=paper` (light) or `?theme=terminal` (dark) to any page. For real phones, set `PUBLIC_BASE_URL` to the
+laptop's LAN address ([developer setup §10](docs/08-developer-setup.md#10-phones-on-a-hotspot-demo-day)).
+`make help` lists the other commands (`make down`, `make reset`, `make demo-reset`, `make logs s=<service>`,
+`make lint`, `make test`, `make test-e2e`, `make mock`, `make status`).
 Full guide with ports, measured memory use and troubleshooting: [developer setup](docs/08-developer-setup.md).
 
 ## Architecture at a glance

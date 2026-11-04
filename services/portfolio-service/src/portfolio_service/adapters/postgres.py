@@ -94,6 +94,9 @@ def _reservation(row: dict[str, Any]) -> Reservation:
     )
 
 
+CHANGES_CHANNEL = "portfolio_changes"  # docs/03-architecture/08-read-side.md section 3
+
+
 class PgTx:
     def __init__(self, conn: AsyncConnection[dict[str, Any]]) -> None:
         self._conn = conn
@@ -265,6 +268,9 @@ class PgTx:
             (event_id, event_type),
         )
         return row is not None
+
+    async def notify(self, payload: str) -> None:
+        await self._conn.execute("SELECT pg_notify(%s, %s)", (CHANGES_CHANNEL, payload))
 
 
 class PostgresPortfolioStore:

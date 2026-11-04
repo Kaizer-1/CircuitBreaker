@@ -23,5 +23,8 @@ class Settings(BaseServiceSettings):
     breaker_open_seconds: float = 10.0
 
     publish_timeout_seconds: float = 60  # never publish an older OrderPlaced (ADR-0011)
+    # The Kafka client gives up on a message this long after it was handed over, so the relay
+    # starts no OrderPlaced send after 60 - 10 = 50 s and nothing lands after 60 s (ADR-0017).
+    publish_delivery_timeout_seconds: float = 10
     relay_interval_seconds: float = 2.0
     start_consumers: bool = True  # False in unit tests: no Cassandra or Kafka at start-up

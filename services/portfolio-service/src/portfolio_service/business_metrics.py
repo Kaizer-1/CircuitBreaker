@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from prometheus_client import CollectorRegistry, Counter
+from prometheus_client import CollectorRegistry, Counter, Gauge
 
 
 @dataclass(frozen=True)
@@ -10,6 +10,7 @@ class BusinessMetrics:
     reservations_total: Counter
     trades_settled_total: Counter
     orphan_expiry_requests_total: Counter
+    portfolio_ws_connections: Gauge
 
 
 def register_business_metrics(registry: CollectorRegistry) -> BusinessMetrics:
@@ -26,6 +27,11 @@ def register_business_metrics(registry: CollectorRegistry) -> BusinessMetrics:
         orphan_expiry_requests_total=Counter(
             "orphan_expiry_requests_total",
             "Expiry requests accepted by order-service for orphaned reservations (ADR-0017).",
+            registry=registry,
+        ),
+        portfolio_ws_connections=Gauge(
+            "portfolio_ws_connections",
+            "Open Q-10 WebSocket connections on this replica.",
             registry=registry,
         ),
     )

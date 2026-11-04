@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: matching-engine internal API
-  version: 1.1.0
+  version: 1.1.1
   summary: Read-only access to the market event store and order books.
   description: |
     Owned by the **Trading Team** (Kaizer Dewaswala); treated as a complicated subsystem.
@@ -213,7 +213,7 @@ components:
           $ref: './shared/common.yaml#/components/schemas/Uuid'
         event_type:
           type: string
-          enum: [OrderAccepted, TradeExecuted, OrderCancelled, OrderCancelRejected]
+          enum: [OrderAccepted, TradeExecuted, OrderCancelled, OrderCancelRejected, OrderExpired]
         event_version:
           type: integer
           minimum: 1

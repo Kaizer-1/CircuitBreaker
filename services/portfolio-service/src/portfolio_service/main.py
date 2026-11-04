@@ -19,7 +19,9 @@ from fastapi import FastAPI
 from portfolio_service.adapters.order_service_http import HttpOrderService
 from portfolio_service.adapters.partitions import partition_for
 from portfolio_service.adapters.postgres import PostgresPortfolioStore
+from portfolio_service.adapters.postgres_listener import PostgresListener
 from portfolio_service.api import portfolio, stubs
+from portfolio_service.application.live import PortfolioHub
 from portfolio_service.application.portfolio import PortfolioService
 from portfolio_service.application.sweeper import OrphanSweeper
 from portfolio_service.business_metrics import BusinessMetrics, register_business_metrics
@@ -44,6 +46,9 @@ TOPICS = ("matching.v1",)
 CONSUMER_GROUP = "portfolio-service.matching.v1"
 
 logger = logging.getLogger("startup")
+# Idle connections are dropped after 2 s, before uvicorn closes them (after 5 s): otherwise a
+# request can be sent on a connection the server is closing (httpx.ReadError, a 503 to the caller).
+KEEP_ALIVE = httpx.Limits(keepalive_expiry=2.0)
 
 
 def default_checks(settings: Settings) -> list[ReadinessCheck]:
@@ -109,6 +114,10 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
             await asyncio.sleep(3)
     app.state.service = service
     business: BusinessMetrics = app.state.business_metrics
+    hub = PortfolioHub(service.portfolio)
+    business.portfolio_ws_connections.set_function(hub.connections)
+    app.state.hub = hub
+    listener = PostgresListener(conninfo, hub.on_change, hub.refresh_all)
 
     async def handle(envelope: EventEnvelope, delivery: Delivery) -> None:
         applied = await service.apply_event(envelope)
@@ -127,7 +136,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
         transient_errors=transient_errors(),
     )
     app.state.consumer = consumer
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(limits=KEEP_ALIVE) as client:
         sweeper = OrphanSweeper(
             store,
             HttpOrderService(settings.order_service_url, client),
@@ -144,11 +153,16 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
                 logger.exception("Redpanda not reachable, retrying in 3 s")
                 await publisher.stop()
                 await asyncio.sleep(3)
-        sweep = asyncio.create_task(sweeper.run(settings.sweep_interval_seconds))
+        background = [
+            asyncio.create_task(sweeper.run(settings.sweep_interval_seconds)),
+            asyncio.create_task(listener.run()),  # Q-10: every replica hears every change
+            asyncio.create_task(hub.run()),  # Q-10: re-value on price moves, once a second
+        ]
         try:
             await consumer.run()
         finally:
-            sweep.cancel()
+            for task in background:
+                task.cancel()
             await consumer.stop()
             await publisher.stop()
             await store.close()
@@ -187,6 +201,7 @@ def create_app(
     app.state.metrics = metrics
     app.state.business_metrics = business_metrics
     app.state.service = service
+    app.state.hub = PortfolioHub(service.portfolio) if service is not None else None
     app.state.consumer = None
     if readiness_checks is None:
         checks.append(consumer_check(lambda: app.state.consumer))

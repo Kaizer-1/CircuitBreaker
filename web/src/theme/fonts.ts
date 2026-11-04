@@ -1,0 +1,16 @@
+// The two type pairings, self-hosted (Google Fonts' files via Fontsource) so phones on the demo hotspot
+// need no internet. Only the weights the screens use; every face is font-display: swap.
+import '@fontsource-variable/newsreader/opsz.css'
+import '@fontsource-variable/newsreader/opsz-italic.css'
+import '@fontsource/ibm-plex-mono/400.css'
+import '@fontsource/ibm-plex-mono/500.css'
+import '@fontsource/ibm-plex-mono/600.css'
+import '@fontsource/libre-franklin/500.css'
+import '@fontsource/libre-franklin/600.css'
+import '@fontsource/libre-franklin/700.css'
+import '@fontsource/jetbrains-mono/400.css'
+import '@fontsource/jetbrains-mono/500.css'
+import '@fontsource/jetbrains-mono/700.css'
+import '@fontsource/jetbrains-mono/800.css'
+import '@fontsource/ibm-plex-sans-condensed/500.css'
+import '@fontsource/ibm-plex-sans-condensed/600.css'

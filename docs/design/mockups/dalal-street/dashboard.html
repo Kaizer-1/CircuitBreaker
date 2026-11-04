@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en-IN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dalal Street Board · Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Doto:wght@700;800;900&family=Barlow+Condensed:wght@500;600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="tokens.css">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1920px; height: 1080px; overflow: hidden; background: var(--board); color: var(--text); font-family: var(--font-ui); }
+  .top { display: flex; justify-content: space-between; align-items: center; padding: 18px 40px 14px; }
+  .top .name { font-family: var(--font-sign); font-weight: 800; font-size: 40px; letter-spacing: 6px; text-transform: uppercase; }
+  .top .name span { color: var(--led); }
+  .top .meta { font-family: var(--font-sign); font-size: 22px; letter-spacing: 3px; color: var(--text-2); text-transform: uppercase; }
+  .top .meta b { color: var(--text); font-weight: 600; }
+  .strip { display: grid; grid-template-columns: repeat(5, 1fr); background: #000; border-top: 2px solid var(--line); border-bottom: 2px solid var(--line); }
+  .strip > div { padding: 12px 22px 14px; border-right: 2px solid var(--line); }
+  .strip > div:last-child { border-right: 0; }
+  .strip .t { font-family: var(--font-sign); font-size: 22px; font-weight: 700; letter-spacing: 4px; color: var(--text-2); }
+  .strip .led { font-size: 52px; line-height: 1.05; display: block; }
+  .strip .c { font-family: var(--font-sign); font-size: 24px; font-weight: 600; letter-spacing: 1px; }
+  main { display: grid; grid-template-columns: 1fr 620px; gap: 0; height: 862px; }
+  .left { padding: 22px 40px 20px; border-right: 2px solid var(--line); display: flex; flex-direction: column; }
+  .title { display: flex; align-items: baseline; gap: 20px; }
+  .title h1 { font-family: var(--font-sign); font-size: 76px; font-weight: 800; letter-spacing: 6px; line-height: 1; }
+  .title span { font-family: var(--font-sign); font-size: 26px; letter-spacing: 3px; color: var(--text-2); text-transform: uppercase; }
+  .heroRow { display: flex; align-items: center; gap: 40px; margin: 8px 0 4px; }
+  .hero { font-size: 176px; line-height: 0.95; }
+  .heroChg { font-family: var(--font-sign); }
+  .heroChg .a { font-size: 64px; font-weight: 700; line-height: 1; }
+  .heroChg .b { font-size: 30px; font-weight: 600; color: var(--text-2); letter-spacing: 1px; }
+  .facts { display: flex; gap: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 12px 0 10px; }
+  .facts div { padding: 8px 26px 8px 0; margin-right: 26px; border-right: 1px solid var(--line); font-family: var(--font-sign); font-size: 18px; letter-spacing: 2px; color: var(--text-3); text-transform: uppercase; }
+  .facts div:last-child { border-right: 0; }
+  .facts b { display: block; font-family: var(--font-ui); font-size: 26px; letter-spacing: 0; font-weight: 600; color: var(--text); text-transform: none; }
+  svg.chart { flex: 1; width: 100%; display: block; }
+  .right { display: grid; grid-template-rows: auto auto 1fr; }
+  .right section { padding: 16px 28px 12px; border-bottom: 2px solid var(--line); }
+  h2 { font-family: var(--font-sign); font-size: 26px; font-weight: 700; letter-spacing: 5px; text-transform: uppercase; display: flex; justify-content: space-between; margin-bottom: 6px; }
+  h2 small { font-size: 16px; letter-spacing: 3px; color: var(--text-3); font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { padding: 3px 6px; font-size: 22px; }
+  th { font-family: var(--font-sign); font-size: 15px; letter-spacing: 2px; font-weight: 600; color: var(--text-3); text-align: right; text-transform: uppercase; padding-bottom: 6px; }
+  .book { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .bar { position: relative; } .bar i { position: absolute; top: 4px; bottom: 4px; opacity: 0.22; }
+  .bids .bar i { right: 0; background: var(--up); } .asks .bar i { left: 0; background: var(--down); }
+  .bar span { position: relative; }
+  .spread { text-align: center; font-family: var(--font-sign); letter-spacing: 3px; color: var(--text-3); font-size: 17px; margin-top: 6px; text-transform: uppercase; }
+  .tape td { font-size: 21px; border-top: 1px solid #1b1b1b; }
+  .tape .time { text-align: left; color: var(--text-3); }
+  .tape .side { font-family: var(--font-sign); font-weight: 700; letter-spacing: 2px; font-size: 18px; text-align: left; }
+  .tape tr.new td { background: #1c1500; }
+  .join { display: grid; grid-template-columns: 210px 1fr; gap: 22px; align-items: center; padding: 16px 24px; border: 3px solid var(--frame); margin: 16px 28px 20px; border-radius: var(--radius); }
+  .join .head { font-family: var(--font-sign); font-size: 42px; font-weight: 800; letter-spacing: 3px; line-height: 1; text-transform: uppercase; }
+  .join .head span { color: var(--led); }
+  .join .sub { font-size: 19px; color: var(--text-2); margin: 10px 0 8px; }
+  .join .url { font-family: var(--font-ui); font-size: 20px; font-weight: 600; letter-spacing: 0.5px; }
+</style>
+</head>
+<body>
+  <header class="top">
+    <div class="name">Circuit<span>Breaker</span> Exchange</div>
+    <div class="meta">Market open · <b>15:42:31 IST</b> · 20 bots · 14 traders on the floor</div>
+  </header>
+  <section class="strip" id="strip"></section>
+  <main>
+    <div class="left">
+      <div class="title"><h1>CHAIWALA</h1><span>Chaiwala Beverages Ltd · 5-second candles</span></div>
+      <div class="heroRow"><div class="led hero" id="hero"></div><div class="heroChg up" id="heroChg"></div></div>
+      <div class="facts" id="facts"></div>
+      <svg class="chart" id="chart"></svg>
+    </div>
+    <div class="right">
+      <section>
+        <h2>Order book <small>Best 6</small></h2>
+        <div class="book">
+          <table class="bids"><thead><tr><th>Qty</th><th>Bid ₹</th></tr></thead><tbody id="bids"></tbody></table>
+          <table class="asks"><thead><tr><th>Ask ₹</th><th>Qty</th></tr></thead><tbody id="asks"></tbody></table>
+        </div>
+        <div class="spread" id="spread"></div>
+      </section>
+      <section>
+        <h2>Trades <small>Live</small></h2>
+        <table class="tape"><tbody id="tape"></tbody></table>
+      </section>
+      <div class="join">
+        <div id="qr"></div>
+        <div><div class="head">Scan.<br>Join. <span>Trade.</span></div><div class="sub">₹1,00,000 of play money. Just a nickname.</div><div class="url" id="url"></div></div>
+      </div>
+    </div>
+  </main>
+<script src="../shared/market.js"></script>
+<script>
+  const M = MOCK, h = M.hero
+  const css = getComputedStyle(document.documentElement), v = (n) => css.getPropertyValue(n).trim()
+  const arrow = (x) => (x >= 0 ? '▲' : '▼')
+  // An LED number: the lit digits over the unlit dots of the same width.
+  // Doto draws "." as a small cross, so the decimal point is one square LED dot of our own.
+  const dp = (text) => text.replace('.', '<i class="dp"></i>')
+  const led = (text) => `<span class="ghost">${dp(text.replace(/[0-9]/g, '8'))}</span><span class="lit">${dp(text)}</span>`
+  document.getElementById('strip').innerHTML = M.tickers.map((t, i) => `<div><div class="t">${t.ticker}</div><span class="led ${i === 2 ? 'flash-down' : ''}">${led(M.rupees(t.last))}</span><div class="c ${t.change >= 0 ? 'up' : 'down'}">${arrow(t.change)} ${M.rupees(t.change, { sign: true })} · ${M.pct(t.changePct)}</div></div>`).join('')
+  document.getElementById('hero').innerHTML = `<span class="lit">${dp(M.rupees(h.last))}</span>` // no ghost dots at hero size: legibility first
+  document.getElementById('heroChg').innerHTML = `<div class="a">▲ ${M.rupees(h.change, { sign: true })}</div><div class="b">${M.pct(h.changePct)} TODAY</div>`
+  document.getElementById('facts').innerHTML = [['Open', '₹' + M.rupees(h.ref)], ['High', '₹' + M.rupees(h.high)], ['Low', '₹' + M.rupees(h.low)], ['Volume', M.qty(h.volume)], ['Trades', M.qty(1284)]].map(([k, x]) => `<div>${k}<b class="num" style="text-align:left">${x}</b></div>`).join('')
+  M.drawCandles(document.getElementById('chart'), M.candles, { up: v('--up'), down: v('--down'), bg: v('--board'), hollowUp: false, grid: v('--line'), axis: v('--text-2'), axisFont: 'Barlow', axisSize: 18, volume: '#2a2a2a', lastLine: v('--led'), lastText: '#000' })
+  const maxQ = Math.max(...M.book.bids.map((b) => b.qty), ...M.book.asks.map((a) => a.qty))
+  document.getElementById('bids').innerHTML = M.book.bids.slice(0, 6).map((b) => `<tr><td class="num bar"><i style="width:${(b.qty / maxQ) * 100}%"></i><span>${M.qty(b.qty)}</span></td><td class="num up">${M.rupees(b.price)}</td></tr>`).join('')
+  document.getElementById('asks').innerHTML = M.book.asks.slice(0, 6).map((a) => `<tr><td class="num down">${M.rupees(a.price)}</td><td class="num bar"><i style="width:${(a.qty / maxQ) * 100}%"></i><span>${M.qty(a.qty)}</span></td></tr>`).join('')
+  document.getElementById('spread').textContent = `Spread ₹${M.rupees(M.book.asks[0].price - M.book.bids[0].price)}`
+  document.getElementById('tape').innerHTML = M.trades.slice(0, 5).map((t, i) => `<tr class="${i === 0 ? 'new' : ''}"><td class="num time">${M.hhmmss(t.time)}</td><td class="side ${t.side === 'BUY' ? 'up' : 'down'}">${arrow(t.side === 'BUY' ? 1 : -1)} ${t.side}</td><td class="num">${M.qty(t.qty)}</td><td class="num">₹${M.rupees(t.price)}</td></tr>`).join('')
+  M.drawQR(document.getElementById('qr'), '#000', v('--text'), 210)
+  document.getElementById('url').textContent = M.joinUrl
+</script>
+</body>
+</html>

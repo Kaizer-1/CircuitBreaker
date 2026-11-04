@@ -6,8 +6,8 @@ SERVICES := api-gateway order-service matching-engine market-data-service portfo
 # s=<service> restricts per-service targets (test, lint, fmt, build, logs) to one service.
 SEL      := $(if $(s),$(s),$(SERVICES))
 # Services with integration tests (real Cassandra/Postgres/Redpanda via testcontainers) and property tests.
-INTEGRATION := matching-engine portfolio-service order-service
-PROPERTY    := matching-engine portfolio-service
+INTEGRATION := matching-engine portfolio-service order-service market-data-service
+PROPERTY    := matching-engine portfolio-service market-data-service
 COMPOSE  := docker compose
 ALL      := --profile infra --profile app
 REDOCLY  := npx --yes @redocly/cli@1.34.3
@@ -16,7 +16,7 @@ GATEWAY  := http://localhost:8080
 ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
-.PHONY: help doctor setup infra up down reset ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status
+.PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -46,6 +46,30 @@ reset: ## Stop everything and WIPE all data volumes (asks for confirmation)
 	@read -r -p "This deletes ALL local data (Cassandra, Postgres, Redpanda). Type 'yes' to continue: " a; \
 	  [ "$$a" = "yes" ] || { echo "Aborted."; exit 1; }
 	$(COMPOSE) $(ALL) down -v --remove-orphans
+
+demo-reset: ## Rehearsal start: wipe ALL data, start everything, check the clean state (asks; CONFIRM=yes skips)
+	@[ "$(CONFIRM)" = "yes" ] || { read -r -p "This deletes ALL local data and restarts the stack. Type 'yes' to continue: " a; \
+	  [ "$$a" = "yes" ] || { echo "Aborted."; exit 1; }; }
+	$(COMPOSE) $(ALL) down -v --remove-orphans
+	$(COMPOSE) $(ALL) up -d --build
+	@python3 scripts/wait-stack.py infra app
+	@python3 scripts/demo_reset_check.py
+
+bots: ## Start the 20 bots trading (needs make up): make bots [seed=42] [activity=1.0]
+	BOTS_ENABLED=true BOT_RANDOM_SEED=$(seed) BOT_ACTIVITY=$(if $(activity),$(activity),1.0) \
+	  $(COMPOSE) $(ALL) up -d --no-deps bot-traders
+	@python3 scripts/wait-stack.py infra app
+	@echo "20 bots trading (seed: $(if $(seed),$(seed),random), activity: $(if $(activity),$(activity),1.0)). Stop: make bots-stop"
+
+bots-stop: ## Stop the bots trading (the container keeps running, idle)
+	BOTS_ENABLED=false $(COMPOSE) $(ALL) up -d --no-deps bot-traders
+	@python3 scripts/wait-stack.py infra app
+
+mock: ## The public API mocked from the specs, for web work without the backend (Prism :4010, WebSockets :4011)
+	@uv run --quiet --locked tools/mock_spec.py
+	@trap 'kill 0' EXIT; \
+	  npx --yes @stoplight/prism-cli@5.16.0 mock web/mock/build/api/api-gateway.yaml --port 4010 & \
+	  node web/mock/ws-mock.mjs
 
 ps: ## Show container status
 	$(COMPOSE) $(ALL) ps -a

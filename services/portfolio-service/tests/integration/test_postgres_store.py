@@ -5,6 +5,7 @@ Run with `uv run pytest -m integration` (Docker needed). Not part of the default
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
+from typing import Any
 
 import psycopg
 import pytest
@@ -104,3 +105,44 @@ async def test_orphan_candidates_and_the_human_nickname_rule(store: PostgresPort
         assert await tx.unconfirmed_reservations("2000-01-01T00:00:00.000Z") == []
     with pytest.raises(NicknameTakenError):
         await service.open_account("RajuTrader", AccountKind.HUMAN)
+
+
+async def test_every_replica_hears_a_change_only_after_it_commits(
+    store: PostgresPortfolioStore, conninfo: str
+) -> None:
+    from portfolio_service.adapters.postgres_listener import PostgresListener
+    from portfolio_service.application.live import Change
+
+    heard: list[list[Change]] = [[], []]
+
+    def recorder(n: int) -> Any:
+        async def on_change(raw: str) -> None:
+            heard[n].append(Change.from_json(raw))
+
+        return on_change
+
+    async def nothing() -> None:
+        return None
+
+    listeners = [PostgresListener(conninfo, recorder(n), nothing) for n in (0, 1)]
+    tasks = [asyncio.create_task(listener.run()) for listener in listeners]
+    try:
+        for _ in range(100):  # until both replicas are listening
+            if all(listener.listening for listener in listeners):
+                break
+            await asyncio.sleep(0.05)
+        service = PortfolioService(store)
+        raju = (await service.open_account("RajuTrader", AccountKind.HUMAN))[0].trader_id
+        with pytest.raises(RuntimeError):
+            async with store.transaction() as tx:
+                await tx.notify(Change(raju).to_json())
+                raise RuntimeError("rolled back")
+        await service.create_reservation(buy(1, raju, 10, 24600))
+        for _ in range(100):
+            if all(heard):
+                break
+            await asyncio.sleep(0.05)
+        assert heard[0] == heard[1] == [Change(raju)]  # one NOTIFY: the committed one
+    finally:
+        for task in tasks:
+            task.cancel()

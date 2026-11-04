@@ -34,7 +34,7 @@ def session() -> Iterator[Any]:
     from cassandra.cluster import Cluster
 
     with CassandraContainer("cassandra:5.0.9") as container:
-        cluster = Cluster(container.get_contact_points(), protocol_version=5)
+        cluster = Cluster(container.get_contact_points(), protocol_version=4)
         admin = cluster.connect()
         admin.execute(
             "CREATE KEYSPACE order_service_it WITH replication = "

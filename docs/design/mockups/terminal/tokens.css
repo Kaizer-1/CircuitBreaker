@@ -1,0 +1,28 @@
+/* Terminal: one token set for the projector dashboard and the phone (docs/design/visual-direction.md). */
+:root {
+  --bg: #0a0b0c;
+  --panel: #111315;
+  --panel-head: #1a1d20;
+  --grid: #2a2e32;
+  --text: #e8e3d6; /* data */
+  --text-2: #a39d90; /* labels (6.9:1 on a panel) */
+  --text-3: #8c867a; /* dim (5.2:1 on a panel, 4.7:1 on a title bar) */
+  --amber: #ffa028; /* primary: commands, keys, selection */
+  --amber-ink: #0a0b0c; /* text on amber */
+  --up: #45d07a;
+  --down: #ff5c5c;
+  --flash-up: #0f3a22; /* a tick lights its cell for 600 ms */
+  --flash-down: #48161a;
+
+  --font-data: 'JetBrains Mono', ui-monospace, monospace;
+  --font-label: 'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif;
+
+  --radius: 0;
+  --flash-ms: 600ms;
+}
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+.flash-up { background: var(--flash-up); }
+.flash-down { background: var(--flash-down); }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

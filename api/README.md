@@ -102,7 +102,7 @@ carries its ID in its description and in an `x-seeds-id` field.
 
 | Direction | `type` | `data` |
 |---|---|---|
-| server → client | `snapshot` | On connect: `{ order_book: OrderBookDepth, last_price_paise, candles: Candle[] (last 60 of 5s) }` |
+| server → client | `snapshot` | On connect: `{ order_book: OrderBookDepth, last_price_paise, candles: Candle[] (last 60 of 5s), recent_trades: Trade[] (last 50, newest first; optional field added in Phase 3) }`, all as of `order_book.as_of_sequence` |
 | server → client | `trade` | `Trade` (same schema as Q-05) — every trade |
 | server → client | `candle` | `{ interval, closed: boolean, candle: Candle }` — the forming candle every second, and once more with `closed: true` |
 | server → client | `book` | `OrderBookDepth` — throttled to at most 4 per second |
@@ -111,6 +111,14 @@ carries its ID in its description and in an `x-seeds-id` field.
 ```json
 {"type": "trade", "data": {"trade_id": "a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d", "sequence": 1042, "price_paise": 24550, "quantity": 20, "aggressor_side": "BUY", "executed_at": "2026-11-20T10:42:01.263Z"}}
 ```
+
+**Snapshot, then updates in sequence (resync with no gaps or duplicates).** The snapshot and every later message come
+from one projection that applies the ticker's `matching.v1` events strictly in `sequence` order. The client keeps the
+snapshot's `order_book.as_of_sequence`; it drops a `trade` whose `sequence` is at or below what it already has, replaces
+the book with a `book` whose `as_of_sequence` is newer, and replaces the candle with the same `bucket_start` and
+`interval`. After any disconnect it reconnects and starts again from a fresh snapshot, so nothing is missed and nothing
+counted twice. A client that falls 1,000 messages behind is closed with `1011` and does the same. Close codes: `4404`
+unknown ticker, `1011` while market-data is still rebuilding from the event store (retry) or after falling behind.
 
 ### Q-10 — `/v1/ws/portfolio` (portfolio-service, roles trader, bot)
 
@@ -123,6 +131,11 @@ carries its ID in its description and in an `x-seeds-id` field.
 ```json
 {"type": "fill", "data": {"order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12", "trade_id": "a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d", "ticker": "CHAIWALA", "side": "BUY", "price_paise": 24550, "quantity": 20, "order_remaining_quantity": 30, "executed_at": "2026-11-20T10:42:01.263Z"}}
 ```
+
+After a trade the phone receives `fill` (and `order_closed` if the order is done), then the new `portfolio`. Only the
+caller's own portfolio is ever streamed: the gateway takes the trader from the token. A price move re-values a portfolio
+that holds that ticker at most once a second. An `OrderExpired` (an order the engine never saw) sends only the new
+`portfolio`: there is no order to close. Close codes: `4401` no trader identity, `4404` no such account.
 
 ### Q-13 — `/v1/ws/replay/{ticker}?from=…&to=…&speed=…` (market-data-service, any role)
 
@@ -154,8 +167,11 @@ An API design is only "done" once its consumers have tried it. Our feedback loop
 
 1. **Review by consumers:** every spec change is a pull request reviewed by the *consuming* team (e.g. Market Insights
    reviews `matching-engine.yaml`; Trading reviews `portfolio-service.yaml` reservations).
-2. **Try before building:** the web app and bots are developed against a **mock server** generated from these specs
-   (e.g. `npx @stoplight/prism-cli mock api/api-gateway.yaml`), so UI feedback arrives before backend code exists.
+2. **Try before building:** the web app and bots are developed against a **mock server** generated from these specs,
+   so UI feedback arrives before backend code exists. `make mock` runs Prism 5.16.0 on the gateway spec, with each
+   proxied operation's examples copied from the owning service's spec (`tools/mock_spec.py`), plus a small WebSocket
+   mock (`web/mock/ws-mock.mjs`) for the channels below, which Prism cannot mock; `npm run dev:mock` points the web
+   app at both.
 3. **Record the outcome:** accepted changes update the spec, the actions/queries table and, if a decision changed, an
    ADR — in the same PR.
 4. **Automate the contract:** once code exists, contract tests fail the build if responses drift from the spec.

@@ -121,6 +121,12 @@ cancels the resting load orders.
 Each order-service pod handles at most 50 requests at once (a concurrency limit) and returns `503 OVERLOADED`
 beyond that — so more pods really do mean more capacity, even on one laptop.
 
+> **Planned for Phase 7 (owner's direction, recorded 2026-11-04): a panic sell.** The burst should also *look* like a
+> crash: bots dump shares at market (a panic-sell bot behaviour), so the audience sees prices fall on the dashboard
+> while order-service is flooded and the agent scales it. The bot strategy interface already allows it: a panic
+> behaviour is one more strategy ([bot-traders](../../services/bot-traders/README.md)). How chaos-service triggers it is
+> decided in Phase 7: bot-traders has no business API today, so a new trigger is an interface change and needs an ADR.
+
 **Signals:**
 ```promql
 # p95 latency above 500 ms for 1 minute

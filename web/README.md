@@ -1,9 +1,8 @@
 # web
 
-> **Status:** Phase 2 — one screen so far: **System Status** (polls the gateway's `/v1/system/status` every 3 s and shows every
-> service and dependency as healthy or not). The report is admin-only since Phase 2, so the page first asks for the
-> presenter passcode (A-04, local placeholder `cb-dev-admin-passcode`) and keeps the token for the browser tab
-> (`sessionStorage`). The trader, presenter and admin views below arrive in Phase 3.
+> **Status:** Phase 3. Four screens: **System Status**, the **presenter dashboard** for the projector, and the phone's
+> **Join** and **Trade** pages. Each has two skins, Pink Paper (light) and Terminal (dark), on one layout. The
+> leaderboard and time travel arrive in Phase 4. The chaos panel, agent controls and incident feed arrive in Phase 7.
 
 |                 |                                                  |
 | --------------- | ------------------------------------------------ |
@@ -13,24 +12,73 @@
 
 ## Responsibility
 
-React + Vite + TypeScript single-page app with TradingView Lightweight Charts. Views:
+React + Vite + TypeScript single-page app with TradingView Lightweight Charts. Every call goes through api-gateway.
 
-| View                                                                                          | Who           | Uses                   |
-| --------------------------------------------------------------------------------------------- | ------------- | ---------------------- |
-| **Join** (`/join`, opened from the QR code)                                                   | Trader        | A-01                   |
-| **Trade**: instrument list, candlestick chart, order book, order ticket, my orders, portfolio | Trader        | Q-02–Q-10, A-05, A-07  |
-| **Leaderboard**                                                                               | Everyone      | Q-11                   |
-| **Time travel**: pick a moment or replay a window                                             | Trader, Admin | Q-12, Q-13             |
-| **Presenter**: QR code, big charts, leaderboard, live incident feed                           | Admin         | Q-02, Q-06, Q-11, Q-19 |
-| **Chaos Panel**: scenarios, start/stop, experiment results                                    | Admin         | Q-21–Q-23, A-10, A-11  |
-| **Agent controls**: approval toggle, pause, approve/decline                                   | Admin         | Q-20, A-14, A-15       |
+| Page                     | URL                       | Who                   | Sign-in               | Uses                                     |
+| ------------------------ | ------------------------- | --------------------- | --------------------- | ---------------------------------------- |
+| **System Status**        | `/` (also `/status`)      | Presenter, developers | Admin passcode (A-04) | `GET /v1/system/status`                  |
+| **Presenter dashboard**  | `/dashboard`              | Presenter (projector) | Admin passcode (A-04) | Q-02, Q-06 (all five tickers), QR        |
+| **Join**                 | `/join` (the QR's target) | Trader (phone)        | None: a nickname      | A-01                                     |
+| **Trade**                | `/trade`                  | Trader (phone)        | The session from Join | Q-02, Q-06, Q-07, Q-09, Q-10, A-05, A-07 |
+| Leaderboard, time travel | (Phase 4)                 | Everyone              |                       | Q-11, Q-12, Q-13                         |
+| Chaos panel, agent       | (Phase 7)                 | Admin                 |                       | Q-19–Q-23, A-10, A-11, A-14, A-15        |
 
-Mobile-first (phones on classroom Wi-Fi): small bundle, reconnecting WebSockets, prices formatted from paise in Indian
-digit grouping (₹1,00,000.00).
+- **Presenter dashboard:** the five tickers in a watchlist, the selected one big (keys 1–5 choose it), 5-second candles,
+  the order book (best 6 levels), the trades tape, the join QR code, and a status bar (health, live streams, volume).
+- **Trade:** net worth and P&L (live over Q-10), one stock's price and chart, the order ticket (LIMIT or MARKET, BUY or
+  SELL; it applies the exchange's rules before sending: tick 5 paise, quantity 1–10,000, available cash or shares),
+  open orders with cancel, and holdings. Every touch target is at least 44 px, for one-handed use.
+
+### Themes: one layout, two skins
+
+The light skin is Pink Paper (newsprint) and the dark skin is Terminal. They share one layout and one set of
+components. Only the design tokens change (CSS variables in [`src/theme/tokens.css`](src/theme/tokens.css), under
+`[data-theme="paper"]` and `[data-theme="terminal"]`), plus a few details shown in one skin only (`.paper-only`,
+`.terminal-only`). The reasons and the token table are in [visual-direction.md](../docs/design/visual-direction.md).
+
+- **Which skin:** `?theme=paper` or `?theme=terminal` in the URL wins. Next comes the choice made with the header
+  toggle (remembered on the device), then the device's light/dark setting. An inline script in `index.html` sets the
+  skin before the first paint, so the page never flashes the wrong one.
+- **The chart** takes its colours in JavaScript, so it re-applies them when the skin changes (tested).
+- **Fonts** are self-hosted (Google Fonts' files via Fontsource, only the weights used), so phones on a hotspot with no
+  internet still get them.
+
+### Live data
+
+Each screen opens WebSockets through the gateway: Q-06 for each ticker it shows, and Q-10 for the trader's own
+portfolio. The token goes in the URL (`?access_token=`) because browsers cannot set headers on a WebSocket. nginx and
+the gateway never log it. On every connect the server sends a snapshot, then updates in sequence. The client
+(`src/market/marketState.ts`) drops anything at or below the sequence it has. After a disconnect it reconnects
+(`src/market/stream.ts`, waiting 1 s, then 2 s, doubling up to 30 s) and starts again from a fresh snapshot
+([read side §4](../docs/03-architecture/08-read-side.md#4-snapshot-then-updates-resyncing-a-client)).
+
+### The join QR code and `PUBLIC_BASE_URL`
+
+The QR code encodes `PUBLIC_BASE_URL/join`. The web container writes `PUBLIC_BASE_URL` into `/config.js` when it
+starts (`docker/config.sh`), so changing it needs no rebuild. It must be an address phones can reach: the laptop's LAN
+address on the phone hotspot ([developer setup §10](../docs/08-developer-setup.md#10-phones-on-a-hotspot-demo-day)).
+When it is localhost, `127.x`, or not set, the presenter dashboard shows **"QR points to localhost. Phones can't join.
+Set PUBLIC_BASE_URL."** in place of the join text.
+
+### Nicknames
+
+A nickname is shown exactly as typed: 3–20 letters, digits or `_` (the A-01 rule in `api/api-gateway.yaml`). If it is
+taken (409 `NICKNAME_TAKEN`), the join page tries again with a short random suffix, for example `RajuTrader_7k`. It
+makes up to three tries and then asks for another name. The suffix is shown in a quieter colour, so the trader sees
+which part they typed.
 
 ## Owned data
 
-None on the server. The access token is kept in the browser's local storage.
+None on the server. In the browser:
+
+| Key                          | Where            | What                                                                       |
+| ---------------------------- | ---------------- | -------------------------------------------------------------------------- |
+| `circuitbreaker.trader`      | `localStorage`   | The trader's session (A-01 token, 12 h), so a phone reload stays signed in |
+| `circuitbreaker.admin_token` | `sessionStorage` | The presenter's token (A-04), for this browser tab only                    |
+| `circuitbreaker.theme`       | `localStorage`   | The skin chosen with the toggle                                            |
+
+Every read and write is wrapped in `try`/`catch`: in a private window storage may be blocked, and then the session
+lasts until the page is closed.
 
 ## Run and test it alone
 
@@ -38,23 +86,50 @@ None on the server. The access token is kept in the browser's local storage.
 cd web
 npm ci                  # install from package-lock.json (Node >= 22.12, 24 LTS recommended)
 npm run dev             # http://localhost:5173, proxies /v1 to the gateway on :8080 (start it with `make up`)
-npm test                # vitest + Testing Library
+npm test                # vitest + Testing Library (the component tests run in both skins)
 npm run lint && npm run format:check && npm run typecheck
 npm run build           # type-check and build to dist/
 ```
 
-In Docker (`make up`) the built files are served by unprivileged nginx on host port 5173, which forwards `/v1/` to
-`api-gateway` so the browser sees a single origin (no CORS). Versions: React 19, Vite 8, TypeScript 6.0 (pinned below 6.1
-because typescript-eslint does not support TypeScript 7 yet), ESLint 10, Vitest 5.
+**Without the backend:** `make mock` (repo root) starts the API mocked from the specs: Prism on :4010 and the
+WebSocket mock on :4011 (`mock/ws-mock.mjs`, a moving market for Q-06 and a portfolio for Q-10). Then
+`npm run dev:mock` serves the app with `/v1` proxied to them.
+
+**Screenshots of the real screens:** with `make up` and `make bots` running,
+`node scripts/screenshots.mjs <output dir>` uses Playwright with the installed Chrome. It renders the dashboard
+(1920×1080, plus the localhost-warning case) and the phone (390×844) in both skins. A trader joins through the real
+join page first. The script fails instead of taking a shot when:
+
+- any element overflows its container or the screen;
+- the terminal skin's fixed tabs hide the last item;
+- the hero price does not return to its normal colour after a flash.
+
+In Docker (`make up`) unprivileged nginx serves the built files on host port 5173. It forwards `/v1/` (and the
+WebSocket upgrade on `/v1/ws/`) to `api-gateway`, so the browser sees a single origin (no CORS). Versions: React 19,
+Vite 8, TypeScript 6.0 (pinned below 6.1 because typescript-eslint does not support TypeScript 7 yet), ESLint 10,
+Vitest 5, Lightweight Charts 5.2.1, Playwright 1.64.1 (development only).
 
 ## Viva Notes
 
 **Q: Why is the frontend owned by the Trading team rather than a separate frontend team?**
-A: The main user journey (join → order → fill) is the trading stream; one owner avoids a hand-off between a frontend and
-a backend team for every feature.
+A: The main user journey (join → order → fill) is the trading stream. One owner avoids a hand-off between a frontend
+team and a backend team for every feature.
 
 **Q: How does the UI stay correct if a WebSocket message is missed?**
-A: On every (re)connect the server sends a fresh snapshot first, then incremental updates.
+A: On every (re)connect the server sends a fresh snapshot first, then updates that each carry a sequence. The client
+drops anything at or below the sequence it has, so a missed message is repaired by the next snapshot and never shows up
+twice.
 
 **Q: Why doesn't the browser call services directly?**
-A: Everything goes through api-gateway, which handles auth, rate limits and routing; services stay private.
+A: Everything goes through api-gateway, which handles auth, rate limits and routing, and the services stay private.
+
+**Q: The trader's token is in `localStorage`, which a script injected into the page could read. Why accept that?**
+A: A phone that reloads must stay signed in, and an `HttpOnly` cookie would need a cookie-based session in the gateway
+that the design does not have. The risk is small here: the money is play money, the token expires after 12 hours, the
+app renders no HTML from users (React escapes text), and every script it loads comes from its own origin. The admin
+token lives only for the tab.
+
+**Q: Why does the QR code need `PUBLIC_BASE_URL` at all? Can't the page use its own address?**
+A: The presenter's laptop usually opens the page at `localhost`, and a phone that scans `localhost` reaches itself. A
+container cannot see the laptop's LAN address either. So the address is configuration, and the dashboard warns loudly
+when it is still localhost.

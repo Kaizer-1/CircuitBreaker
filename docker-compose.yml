@@ -202,6 +202,7 @@ services:
       CASSANDRA_KEYSPACE: market_data
       CASSANDRA_USERNAME: market_data_role
       CASSANDRA_PASSWORD: cb_dev_market_data
+      MATCHING_ENGINE_URL: http://matching-engine:8000 # Q-14/Q-15: catch-up and gap filling
     depends_on:
       redpanda-init:
         condition: service_completed_successfully
@@ -239,6 +240,12 @@ services:
       - "8005:8000"
     environment:
       <<: [*python-env, *kafka-env]
+      GATEWAY_URL: http://api-gateway:8000 # bots use the public API, like everyone else
+      BOT_SECRET: cb-dev-bot-secret
+      # Off unless `make bots` (BOTS_ENABLED=true); `make bots seed=42 activity=1.5` for a rehearsal.
+      BOTS_ENABLED: ${BOTS_ENABLED:-false}
+      BOT_RANDOM_SEED: ${BOT_RANDOM_SEED:-}
+      BOT_ACTIVITY: ${BOT_ACTIVITY:-1.0}
     depends_on:
       redpanda-init:
         condition: service_completed_successfully
@@ -285,6 +292,10 @@ services:
     profiles: [app]
     ports:
       - "5173:8080" # nginx-unprivileged listens on 8080 inside the container
+    environment:
+      # Where phones reach the app: the join QR code encodes PUBLIC_BASE_URL/join. On demo day:
+      # PUBLIC_BASE_URL=http://<laptop LAN IP>:5173 make up (docs/08-developer-setup.md section 10).
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:5173}
     depends_on:
       api-gateway:
         condition: service_healthy

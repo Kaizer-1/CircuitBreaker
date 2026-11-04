@@ -4,7 +4,10 @@ Every second it re-publishes outbox rows that are still unpublished 5 s after th
 (the request path tries once at once). Two rules:
 
 - It never publishes an OrderPlaced older than 60 s: that order becomes REJECTED (PUBLISH_TIMEOUT)
-  and its row is dropped (ADR-0011). The trader learns quickly that it did not get through.
+  and its row is dropped (ADR-0011). The trader learns quickly that it did not get through. The
+  Kafka client may keep trying a send for up to its delivery timeout D (10 s) after the relay
+  stopped waiting, so the relay starts no OrderPlaced send once the order is older than 60 s - D:
+  nothing it hands over can reach the broker after 60 s (ADR-0017).
 - A cancel or expiry is never published before its order's OrderPlaced.
 
 Several replicas may run it at once: a row can be published twice, and the engine drops the copy
@@ -18,7 +21,12 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from order_service.application.orders import must_wait
-from order_service.domain.order import PUBLISH_TIMEOUT_SECONDS, OrderStatus, RejectionReason
+from order_service.domain.order import (
+    PUBLISH_TIMEOUT_SECONDS,
+    Order,
+    OrderStatus,
+    RejectionReason,
+)
 from order_service.ports.order_store import TOPIC, OrderStore
 from order_service.ports.publisher import OrderPublisher
 from order_service.runtime.events import format_timestamp, parse_timestamp
@@ -26,6 +34,7 @@ from order_service.runtime.events import format_timestamp, parse_timestamp
 logger = logging.getLogger("outbox")
 
 RETRY_AFTER_SECONDS = 5
+DELIVERY_TIMEOUT_SECONDS = 10  # the publisher's delivery_timeout_seconds (config.py)
 LOOK_BACK = timedelta(minutes=15)
 
 
@@ -37,6 +46,7 @@ class OutboxRelay:
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         publish_timeout_seconds: float = PUBLISH_TIMEOUT_SECONDS,
+        delivery_timeout_seconds: float = DELIVERY_TIMEOUT_SECONDS,
         retry_after_seconds: float = RETRY_AFTER_SECONDS,
         on_rejected: Callable[[RejectionReason], None] = lambda reason: None,
         attempt_seconds: float = 2.0,
@@ -46,6 +56,7 @@ class OutboxRelay:
         self._publisher = publisher
         self._clock = clock
         self._timeout = timedelta(seconds=publish_timeout_seconds)
+        self._last_send = timedelta(seconds=publish_timeout_seconds - delivery_timeout_seconds)
         self._retry_after = timedelta(seconds=retry_after_seconds)
         self._on_rejected = on_rejected
 
@@ -89,6 +100,8 @@ class OutboxRelay:
             written = parse_timestamp(entry.event.occurred_at)
             if must_wait(entry, order) or now - written < self._retry_after:
                 continue
+            if order is not None and entry.event_type == "OrderPlaced" and self._too_late(order):
+                continue  # a send now could land after 60 s: wait for the rejection instead
             try:
                 await asyncio.wait_for(
                     self._publisher.publish(TOPIC, entry.ticker, entry.event), self._attempt
@@ -99,6 +112,9 @@ class OutboxRelay:
             await self._store.mark_published(entry)
             published += 1
         return published
+
+    def _too_late(self, order: Order) -> bool:
+        return self._clock() - parse_timestamp(order.placed_at) > self._last_send
 
     async def run(self, every_seconds: float = 1.0) -> None:
         while True:
