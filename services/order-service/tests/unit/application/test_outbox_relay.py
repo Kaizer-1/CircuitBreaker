@@ -19,7 +19,7 @@ async def test_an_order_stored_but_never_published_is_rejected_after_60_seconds(
     w.publisher.down = True
     await w.place()
     w.publisher.down = False
-    w.clock.now += timedelta(seconds=59)
+    w.clock.now += timedelta(seconds=49)
     assert await w.relay.run_once() == 1  # still in time: published
     assert w.publisher.types() == ["OrderPlaced"]
 
@@ -37,6 +37,33 @@ async def test_an_order_stored_but_never_published_is_rejected_after_60_seconds(
     assert late.publisher.sent == [] and late.store.outbox == []  # never published, ever
     late.clock.now += timedelta(minutes=10)
     assert await late.relay.run_once() == 0 and late.publisher.sent == []
+
+
+async def test_no_send_starts_in_the_last_10_seconds_so_nothing_lands_after_60(w: World) -> None:
+    # The Kafka client may keep trying a send for up to 10 s after the relay stops waiting
+    # (ADR-0017), so a send started at 51 s could reach the broker after 60 s.
+    w.publisher.down = True
+    order = await w.place()
+    w.publisher.down = False
+    w.clock.now += timedelta(seconds=51)
+    assert await w.relay.run_once() == 0
+    assert w.publisher.sent == []
+    assert w.store.orders[order.order_id].status is OrderStatus.PENDING  # not rejected before 60 s
+    w.clock.now += timedelta(seconds=10)
+    assert await w.relay.run_once() == 0
+    assert w.store.orders[order.order_id].status is OrderStatus.REJECTED
+    assert w.publisher.sent == [] and w.store.outbox == []
+
+
+async def test_a_cancel_is_still_sent_after_its_order_went_out(w: World) -> None:
+    # The cut-off is only for OrderPlaced: a cancel or expiry has no age limit.
+    order = await w.place()
+    w.publisher.down = True
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+    w.publisher.down = False
+    w.clock.now += timedelta(seconds=58)
+    assert await w.relay.run_once() == 1
+    assert w.publisher.types() == ["OrderPlaced", "OrderCancelRequested"]
 
 
 async def test_a_hung_broker_never_delays_the_60_second_rejection(w: World) -> None:

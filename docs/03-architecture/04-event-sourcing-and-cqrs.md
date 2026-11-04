@@ -97,7 +97,9 @@ order-service has the same "save + publish" problem: it appends `OrderPlaced` to
 any rows still `false` after 5 seconds. Result: once the API returns `202`, the order *will* reach the engine,
 possibly twice — and the engine deduplicates via `processed_commands`. One limit: the relay never publishes an
 `OrderPlaced` older than **60 s**; it marks the order `REJECTED` (`PUBLISH_TIMEOUT`) instead, so the trader learns quickly
-that the order did not get through ([ADR-0011](../adr/0011-synchronous-reservation-over-saga.md)). The same outbox carries
+that the order did not get through ([ADR-0011](../adr/0011-synchronous-reservation-over-saga.md)). Its Kafka client drops a
+message it could not deliver within 10 s, and the relay starts no `OrderPlaced` send after 50 s, so nothing lands after
+60 s ([ADR-0017 note](../adr/0017-fail-closed-orphan-release.md#note-making-the-60-s-rule-true-phase-3)). The same outbox carries
 `OrderCancelRequested` and `OrderExpiryRequested`; a cancel or expiry for an order is never published before that order's
 `OrderPlaced`.
 

@@ -24,7 +24,7 @@ events.
 |---|---|
 | `domain/order.py` | Validation codes and the status rules (`accepted`, `traded`, `cancelled`, `cancel_rejected`, `expired`) |
 | `application/orders.py` | A-05, A-07, Q-07, Q-08, A-19 and the `matching.v1` updates |
-| `application/outbox_relay.py` | Re-publishes unpublished rows after 5 s; never an `OrderPlaced` older than 60 s |
+| `application/outbox_relay.py` | Re-publishes unpublished rows after 5 s; never an `OrderPlaced` older than 60 s (no send starts after 50 s) |
 | `application/circuit_breaker.py` | The breaker around A-06 |
 | `adapters/cassandra_store.py` | The keyspace; one logged batch per write that must be atomic |
 | `adapters/portfolio_http.py` | A-06 over HTTP, 500 ms timeout, through the breaker |
@@ -34,6 +34,14 @@ validate → reserve (A-06) → store the order **and** its `OrderPlaced` in the
 `202`. If the publish fails, the relay retries after 5 s; if 60 s pass without a publish, the order becomes `REJECTED`
 (`PUBLISH_TIMEOUT`) and is never sent ([ADR-0011](../../docs/adr/0011-synchronous-reservation-over-saga.md)). A cancel
 or expiry is never published before its order's `OrderPlaced`.
+
+**The Kafka producer has a 10 s delivery timeout and is not idempotent** (Phase 3,
+[ADR-0017 note](../../docs/adr/0017-fail-closed-orphan-release.md#note-making-the-60-s-rule-true-phase-3)): an idempotent
+aiokafka producer never gives up on a message, so a send that hung while Redpanda was down was delivered whenever it came
+back. Now the client drops a message it could not deliver within 10 s, and the relay starts no `OrderPlaced` send after
+50 s, so none reaches the broker after 60 s. The engine drops a duplicate send by `event_id`; aiokafka keeps one request
+in flight per partition, so order holds. `tests/integration/test_redpanda_publish_deadline.py` proves it on a real
+Redpanda that is stopped and started again (`PUBLISH_DELIVERY_TIMEOUT_SECONDS`).
 
 | Answer | When |
 |---|---|

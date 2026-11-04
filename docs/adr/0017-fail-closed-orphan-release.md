@@ -96,7 +96,22 @@ So no timing assumption is left: crashes and delays of any length can only make 
 | The engine crashed between storing and publishing | On restart it publishes the stored events, then answers the expiry, in order. |
 | portfolio-service is behind on `matching.v1` | Its sweeper skips that partition until it has caught up (see below), so it does not expire an order whose `OrderAccepted` is merely unread. |
 | order-service is down at 120 s | A-19 fails; the sweeper retries on its next cycle. |
-| A publish that hung (Redpanda down) is delivered later by the Kafka client | order-service gives up waiting after a short attempt, but the client keeps the message and may deliver it after Redpanda returns, even past 60 s. If it lands before the expiry request the engine accepts it while the money is still reserved, then cancels it (`ORDER_EXPIRED`); if after, the tombstone refuses it. `make test-e2e` reproduced the first case (Phase 2). This is why the 60 s rule alone could never protect the money. |
+| A publish that hung (Redpanda down) | order-service stops waiting after a short attempt. Since Phase 3 the Kafka client also gives up on the message **10 s** after it was handed over and never sends it, and the relay starts no `OrderPlaced` send once the order is older than 50 s, so nothing the client holds reaches the broker after 60 s (see the note below). The expiry then finds an order the engine never saw → `OrderExpired`. |
+| A request that was already on the wire when the broker froze (paused, or a network split, rather than stopped) | No client can take it back: the broker may still append it when it resumes, at any time. If it lands before the expiry request the engine accepts it while the money is still reserved, then cancels it (`ORDER_EXPIRED`); if after, the tombstone refuses it. This is why the 60 s rule alone can never protect the money, and why fail-closed stays. |
+
+**Note: making the 60 s rule true (Phase 3).** In Phase 2, `make test-e2e` showed a send that hung while Redpanda was
+stopped being delivered when Redpanda returned, more than 60 s after the order was placed (accepted, then cancelled
+`ORDER_EXPIRED`; the money was safe). The cause is the Kafka client library: an *idempotent* aiokafka producer never
+gives up on a message, because dropping one would leave a gap in the sequence numbers the broker uses to detect
+duplicates. order-service's producer is therefore **not idempotent**, with a **delivery timeout of 10 s** (aiokafka's
+request timeout is a third of it, because the client re-checks a message's age only after a failed send, and the last
+send can still wait for a reply and a metadata refresh). Two things make this safe: the engine drops a duplicate send by
+`event_id` (`processed_commands`), and aiokafka keeps one request in flight per partition, so `orders.v1` stays in order.
+The relay starts no `OrderPlaced` send after 60 s − 10 s = 50 s, and still rejects the order at 60 s. Integration tests on
+a real Redpanda (stopped, then started again) prove both halves: an idempotent producer delivers the abandoned message
+late, the bounded one never does, and a send fails within its 10 s while the broker is down. Fail-closed stays as
+**defense in depth**: it covers what no client-side timeout can, a request that is already in the network when the
+broker freezes.
 
 **Sweeper scope.** Each portfolio-service replica only sweeps tickers whose `matching.v1` partition it currently
 consumes, and only while that partition has no lag. This is not needed for safety (the engine's answer is), but it

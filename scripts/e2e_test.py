@@ -240,10 +240,10 @@ def test_orphan_rule_is_fail_closed() -> None:
         for e in events
         if e["data"].get("order_id") == stuck["order_id"]
     ]
-    # Either the engine never saw it (tombstone), or the Kafka client delivered its hung send
-    # after Redpanda came back: then it was accepted while its money was still reserved, and
-    # cancelled by the expiry. Both are safe; the money is released only after the answer.
-    assert late and late[-1] in (("OrderExpired", None), ("OrderCancelled", "ORDER_EXPIRED")), late
+    # The Kafka client gave up on the hung send 10 s after it was handed over, so it never
+    # reached the engine: only the tombstone. (Before the Phase 3 fix the client kept it and
+    # delivered it when Redpanda returned: OrderAccepted, then OrderCancelled ORDER_EXPIRED.)
+    assert late == [("OrderExpired", None)], late
     print(f"     the engine answered the unpublished order with: {', '.join(k for k, _ in late)}")
 
     # A late copy of the lost order (a relay that hung): the tombstone refuses it.

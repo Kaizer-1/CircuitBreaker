@@ -1,8 +1,11 @@
 """Smoke tests for the runtime plumbing that every service shares (same file in every service)."""
 
 import json
+import sys
+import types
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -20,7 +23,13 @@ from market_data_service.runtime.events import (
 )
 from market_data_service.runtime.health import ReadinessCheck, health_router
 from market_data_service.runtime.jsonlog import configure_logging
-from market_data_service.runtime.kafka import MAX_ATTEMPTS, Delivery, EventConsumer, consumer_check
+from market_data_service.runtime.kafka import (
+    MAX_ATTEMPTS,
+    Delivery,
+    EventConsumer,
+    EventPublisher,
+    consumer_check,
+)
 from market_data_service.runtime.metrics import Metrics, metrics_router
 from market_data_service.runtime.middleware import ObservabilityMiddleware
 from market_data_service.runtime.problem import install_exception_handlers
@@ -256,6 +265,40 @@ def _consumer(settings: Settings, handler: object, sink: _Sink) -> EventConsumer
 
 def _delivery(value: bytes) -> Delivery:
     return Delivery("things.v1", 0, 7, b"KEY", value)
+
+
+class _FakeProducer:
+    options: dict[str, Any] = {}
+
+    def __init__(self, **options: Any) -> None:
+        type(self).options = options
+
+    async def start(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("deadline", "idempotent", "request_timeout_ms"),
+    [(None, True, 10_000), (10.0, False, 3_333)],
+)
+async def test_a_publisher_with_a_deadline_is_not_idempotent_and_times_out_in_thirds(
+    monkeypatch: pytest.MonkeyPatch,
+    deadline: float | None,
+    idempotent: bool,
+    request_timeout_ms: int,
+) -> None:
+    # aiokafka never gives up on a message of an idempotent producer, so a delivery deadline
+    # needs idempotence off; the integration test in market-data-service proves it on a real broker.
+    monkeypatch.setitem(
+        sys.modules, "aiokafka", types.SimpleNamespace(AIOKafkaProducer=_FakeProducer)
+    )
+    publisher = EventPublisher(
+        "unused:9092", "svc", Metrics("svc"), delivery_timeout_seconds=deadline
+    )
+    await publisher.start()
+    assert _FakeProducer.options["enable_idempotence"] is idempotent
+    assert _FakeProducer.options["request_timeout_ms"] == request_timeout_ms
+    assert _FakeProducer.options["acks"] == "all"
 
 
 async def test_a_handled_message_is_not_dead_lettered(settings: Settings) -> None:

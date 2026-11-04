@@ -69,7 +69,12 @@ def transient_errors() -> tuple[type[BaseException], ...]:
 
 
 async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> None:
-    publisher = EventPublisher(settings.kafka_bootstrap_servers, settings.service_name, metrics)
+    publisher = EventPublisher(
+        settings.kafka_bootstrap_servers,
+        settings.service_name,
+        metrics,
+        delivery_timeout_seconds=settings.publish_delivery_timeout_seconds,
+    )
     business = app.state.business_metrics
     while True:
         try:
@@ -105,6 +110,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
         store,
         publisher,
         publish_timeout_seconds=settings.publish_timeout_seconds,
+        delivery_timeout_seconds=settings.publish_delivery_timeout_seconds,
         on_rejected=rejected,
     )
     app.state.orders = orders
