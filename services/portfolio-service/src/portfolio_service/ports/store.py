@@ -54,6 +54,10 @@ class Tx(Protocol):
     async def mark_processed(self, event_id: str, event_type: str) -> bool:
         """Record the event as processed. False if it already was (a duplicate)."""
 
+    async def notify(self, payload: str) -> None:
+        """Tell every replica about a change once this transaction commits (Postgres NOTIFY on
+        channel `portfolio_changes`; nothing is sent if it rolls back)."""
+
 
 class PortfolioStore(Protocol):
     def transaction(self) -> AbstractAsyncContextManager[Tx]:

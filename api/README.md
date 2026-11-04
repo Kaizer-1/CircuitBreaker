@@ -132,6 +132,11 @@ unknown ticker, `1011` while market-data is still rebuilding from the event stor
 {"type": "fill", "data": {"order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12", "trade_id": "a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d", "ticker": "CHAIWALA", "side": "BUY", "price_paise": 24550, "quantity": 20, "order_remaining_quantity": 30, "executed_at": "2026-11-20T10:42:01.263Z"}}
 ```
 
+After a trade the phone receives `fill` (and `order_closed` if the order is done), then the new `portfolio`. Only the
+caller's own portfolio is ever streamed: the gateway takes the trader from the token. A price move re-values a portfolio
+that holds that ticker at most once a second. An `OrderExpired` (an order the engine never saw) sends only the new
+`portfolio`: there is no order to close. Close codes: `4401` no trader identity, `4404` no such account.
+
 ### Q-13 — `/v1/ws/replay/{ticker}?from=…&to=…&speed=…` (market-data-service, any role)
 
 Query parameters: `from`, `to` (ISO-8601, window ≤ 30 minutes, `to` not in the future), `speed` ∈ {1, 2, 5, 10, 60}.

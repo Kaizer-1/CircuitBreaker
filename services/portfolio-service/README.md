@@ -1,7 +1,7 @@
 # portfolio-service
 
-> **Status:** Phase 2 — accounts, reservations, settlement and the fail-closed orphan sweeper are built. The leaderboard
-> (Q-11) answers `501` until Phase 4, the portfolio WebSocket (Q-10) arrives in Phase 3. Layout:
+> **Status:** Phase 3 — accounts, reservations, settlement, the fail-closed orphan sweeper and the live portfolio
+> WebSocket (Q-10) are built. The leaderboard (Q-11) answers `501` until Phase 4. Layout:
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service) (package `portfolio_service`).
 
 | | |
@@ -29,6 +29,8 @@ matching engine confirms the order can never trade. A CQRS read model of trades 
 | `adapters/postgres.py` | The store: row locks (`FOR UPDATE`, accounts first, in trader-ID order), `CHECK` constraints, migrations |
 | `adapters/order_service_http.py` | A-19 `POST /internal/v1/order-expiries` |
 | `adapters/partitions.py` | Which `matching.v1` partition holds a ticker (the producers' murmur2 hash) |
+| `application/live.py` | Q-10: the change each transaction sends, and the hub that pushes `portfolio` / `fill` / `order_closed` |
+| `adapters/postgres_listener.py` | `LISTEN portfolio_changes` on its own connection; reconnects and then refreshes every socket |
 
 **Rules, in paise:**
 
@@ -46,6 +48,14 @@ matching engine confirms the order can never trade. A CQRS read model of trades 
 **Idempotency.** Each `matching.v1` event's `event_id` goes into `processed_events` in the same transaction as its
 change; a duplicate inserts nothing and changes nothing. A reservation repeat for the same `order_id` returns the
 existing one (`200`).
+
+**Live portfolio (Q-10) across replicas.** A phone's socket is on one replica; the trade that changes its portfolio
+may be settled by another. Every use case that changes a portfolio (a reservation, a settlement, a release) sends a
+Postgres `NOTIFY` on `portfolio_changes` **in its own transaction**, so it is delivered only if it commits. Every replica
+`LISTEN`s, and the one holding the trader's socket sends the `fill` / `order_closed` it carries, then re-reads the
+portfolio and sends `portfolio`. A trade also moves a price: sockets whose portfolio holds that ticker are re-valued at
+most once a second. Identity comes only from `X-Trader-Id` (set by the gateway from the token), so a trader only ever
+gets their own stream. Details: [read side §3](../../docs/03-architecture/08-read-side.md#3-portfolio-service-from-trades-to-portfolios).
 
 **Fail-closed sweeper.** It never releases money. It asks order-service for an expiry; the money is released when the
 engine's `OrderCancelled` (`ORDER_EXPIRED`) or `OrderExpired` arrives. It only sweeps tickers whose `matching.v1`
@@ -71,15 +81,16 @@ then the event goes to `matching.v1.dlq`.
 
 ## API
 
-Q-09 `GET /v1/portfolio` (`X-Trader-Id` from the gateway), internal A-02 `POST /internal/v1/accounts`, A-06
-`POST /internal/v1/reservations`. Q-11 `GET /v1/leaderboard` is a `501` stub until Phase 4; the WebSocket Q-10
-`/v1/ws/portfolio` arrives in Phase 3. Spec: [`api/portfolio-service.yaml`](../../api/portfolio-service.yaml). Settlement
+Q-09 `GET /v1/portfolio` (`X-Trader-Id` from the gateway), WebSocket Q-10 `/v1/ws/portfolio` (messages in
+[api/README.md](../../api/README.md#q-10--v1wsportfolio-portfolio-service-roles-trader-bot); closed with `4401` without
+`X-Trader-Id`, `4404` for an unknown account), internal A-02 `POST /internal/v1/accounts`, A-06
+`POST /internal/v1/reservations`. Q-11 `GET /v1/leaderboard` is a `501` stub until Phase 4. Spec: [`api/portfolio-service.yaml`](../../api/portfolio-service.yaml). Settlement
 (A-09) is event-driven.
 
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
 **Business metrics:** `reservations_total{side,result}` (`created`, `repeat`, `refused`), `trades_settled_total`,
-`orphan_expiry_requests_total`.
+`orphan_expiry_requests_total`, `portfolio_ws_connections` (open Q-10 sockets on this replica).
 
 ## Synchronous dependencies
 
@@ -125,6 +136,10 @@ transaction changes nothing. A property test redelivers random events and checks
 A: Money reserved for an order the engine never confirmed (e.g. order-service crashed). After 120 s the sweeper asks
 for an expiry through order-service; the money is released only when the engine answers, so it can never be traded
 after it was handed back (ADR-0017).
+
+**Q: How does the right phone get a trade that another replica settled?**
+A: The settling transaction sends a Postgres NOTIFY naming the trader; it is delivered on commit to every replica, and
+the one holding that trader's socket re-reads the portfolio and pushes it.
 
 **Q: How do two simultaneous orders not spend the same rupees?**
 A: Each reservation locks the account row (`SELECT … FOR UPDATE`) first, so they run one after the other; the second

@@ -2,7 +2,7 @@
 exception inside it rolls back, as in Postgres. Uniqueness rules match the real schema."""
 
 import copy
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -30,6 +30,10 @@ class State:
 class InMemoryTx:
     def __init__(self, state: State) -> None:
         self.s = state
+        self.notifications: list[str] = []  # delivered on commit, like Postgres NOTIFY
+
+    async def notify(self, payload: str) -> None:
+        self.notifications.append(payload)
 
     async def account(self, trader_id: str, *, lock: bool = False) -> Account | None:
         a = self.s.accounts.get(trader_id)
@@ -105,13 +109,20 @@ class InMemoryPortfolioStore:
     def __init__(self) -> None:
         self.state = State()
         self.before_commit: Callable[[], None] = lambda: None  # raise here to fail a commit
+        self.notified: list[str] = []
+        self.listeners: list[Callable[[str], Awaitable[None]]] = []  # every replica's LISTEN
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[InMemoryTx]:
         work = copy.deepcopy(self.state)
-        yield InMemoryTx(work)
+        tx = InMemoryTx(work)
+        yield tx
         self.before_commit()
         self.state = work
+        self.notified += tx.notifications
+        for listener in self.listeners:
+            for payload in tx.notifications:
+                await listener(payload)
 
 
 class FakeOrderService:
