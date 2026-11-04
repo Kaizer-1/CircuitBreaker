@@ -81,8 +81,10 @@ finished or expired order ID (so cancel rejections and tombstones give the same 
 | Table | Partition key | Clustering key | Answers the query |
 |---|---|---|---|
 | `orders_by_id` | `order_id` | — | Q-08 Get one order |
-| `orders_by_trader` | `trader_id` | `placed_at DESC, order_id` | Q-07 List my orders, newest first |
+| `orders_by_trader` | `trader_id` | `placed_at DESC, order_id DESC` | Q-07 List my orders, newest first |
 | `order_events` | `order_id` | `occurred_at ASC` | Order history; outbox (column `published` boolean) |
+| `outbox` | `bucket` (minutes since 1970) | `occurred_at ASC, event_id` | "Which events are not yet published?" for the relay; a row is deleted once published. `order_events` alone cannot answer this: it is partitioned by order |
+| `orders_by_idempotency_key` | `(trader_id, idempotency_key)` | — | "Did this trader already send this `Idempotency-Key`?" (24 h TTL, claimed with a lightweight transaction) |
 | `processed_events` | `event_id` | — | Idempotent consumption of `matching.v1` |
 
 ### Keyspace `market_data` (owner: market-data-service)

@@ -91,6 +91,15 @@ def install_exception_handlers(app: FastAPI) -> None:
         errors = [
             FieldError(field=_field_name(tuple(e["loc"])), message=e["msg"]) for e in exc.errors()
         ]
+        if any(e["type"] == "json_invalid" for e in exc.errors()):
+            # Not JSON at all: 400 BAD_REQUEST; a well-formed body that breaks a rule is 422.
+            return problem_response(
+                400,
+                "BAD_REQUEST",
+                "Bad request",
+                detail="Request body is not valid JSON.",
+                instance=request.url.path,
+            )
         return problem_response(
             422,
             "VALIDATION_FAILED",

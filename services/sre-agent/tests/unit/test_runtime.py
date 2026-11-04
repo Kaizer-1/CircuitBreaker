@@ -148,6 +148,18 @@ def test_validation_errors_list_the_fields(plain_app: FastAPI) -> None:
     assert body["errors"][0]["field"] == "limit"
 
 
+def test_a_body_that_is_not_json_is_a_400_bad_request(plain_app: FastAPI) -> None:
+    async def takes_body(body: dict[str, int]) -> dict[str, int]:
+        return body
+
+    plain_app.add_api_route("/test-only/body", takes_body, methods=["POST"])
+    with TestClient(plain_app) as c:
+        response = c.post(
+            "/test-only/body", content=b"{not json", headers={"content-type": "application/json"}
+        )
+    assert (response.status_code, response.json()["code"]) == (400, "BAD_REQUEST")
+
+
 def test_an_unhandled_exception_becomes_a_problem_details_500(plain_app: FastAPI) -> None:
     async def boom() -> None:
         raise RuntimeError("secret internals must not leak")

@@ -1,1 +1,1 @@
-"""Pydantic models of produced and consumed events (match the event catalog). Built in Phase 2."""
+"""The catalog shape of the events this service produces (orders.v1)."""

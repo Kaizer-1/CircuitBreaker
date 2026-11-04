@@ -157,6 +157,7 @@ services:
       CASSANDRA_KEYSPACE: order_service
       CASSANDRA_USERNAME: order_service_role
       CASSANDRA_PASSWORD: cb_dev_order_service
+      PORTFOLIO_URL: http://portfolio-service:8000 # A-06, the synchronous reservation (ADR-0011)
     depends_on:
       redpanda-init:
         condition: service_completed_successfully

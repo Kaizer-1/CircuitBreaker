@@ -15,3 +15,13 @@ class Settings(BaseServiceSettings):
     cassandra_keyspace: str = "order_service"
     cassandra_username: str = "order_service_role"
     cassandra_password: SecretStr  # no default: a secret never lives in code
+
+    # A-06: the synchronous reservation (ADR-0011). Inside Compose: http://portfolio-service:8000
+    portfolio_url: str = "http://localhost:8004"
+    reservation_timeout_seconds: float = 0.5
+    breaker_failure_threshold: int = 5
+    breaker_open_seconds: float = 10.0
+
+    publish_timeout_seconds: float = 60  # never publish an older OrderPlaced (ADR-0011)
+    relay_interval_seconds: float = 2.0
+    start_consumers: bool = True  # False in unit tests: no Cassandra or Kafka at start-up

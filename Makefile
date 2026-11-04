@@ -6,7 +6,7 @@ SERVICES := api-gateway order-service matching-engine market-data-service portfo
 # s=<service> restricts per-service targets (test, lint, fmt, build, logs) to one service.
 SEL      := $(if $(s),$(s),$(SERVICES))
 # Services with integration tests (real Cassandra/Postgres/Redpanda via testcontainers) and property tests.
-INTEGRATION := matching-engine portfolio-service
+INTEGRATION := matching-engine portfolio-service order-service
 PROPERTY    := matching-engine portfolio-service
 COMPOSE  := docker compose
 ALL      := --profile infra --profile app

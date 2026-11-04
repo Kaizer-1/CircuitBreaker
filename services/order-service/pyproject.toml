@@ -8,8 +8,9 @@ dependencies = [
   "uvicorn>=0.54,<1",
   "pydantic-settings>=2.16,<3",
   "prometheus-client>=0.26,<1",
-  "aiokafka>=0.15,<1",
+  "aiokafka[lz4,snappy,zstd]>=0.15,<1",  # every codec rpk/Console may use
   "cassandra-driver>=3.30,<4",
+  "httpx>=0.28,<1",
 ]
 
 [dependency-groups]
@@ -21,6 +22,9 @@ dev = [
   "types-pyyaml>=6,<7",
   "ruff>=0.17,<1",
   "mypy>=2.4,<3",
+  "jsonschema[format-nongpl]>=4.26,<5",
+  "pytest-cov>=7.1,<8",
+  "testcontainers[cassandra]>=4.15,<5",
 ]
 
 [build-system]
@@ -54,4 +58,9 @@ files = ["src", "tests"]
 [[tool.mypy.overrides]]
 # Optional drivers: imported lazily in runtime/checks.py, and not every service installs every driver.
 module = ["aiokafka.*", "cassandra.*", "psycopg.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Test-only libraries without type information.
+module = ["jsonschema.*", "testcontainers.*"]
 ignore_missing_imports = true

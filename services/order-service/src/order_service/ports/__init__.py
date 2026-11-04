@@ -1,1 +1,1 @@
-"""Interfaces the application needs (repositories, event publisher, clients). Built in Phase 2."""
+"""Interfaces the application needs; adapters/ implements them, tests use in-memory fakes."""
