@@ -1,6 +1,8 @@
 # Visual Direction: Three Candidates for the Market Screens
 
-> **Status:** proposal (Phase 3), waiting for the owner's pick. Nothing in `web/` is built from it yet.
+> **Status:** decided (Phase 3, 2026-11-05): **Pink Paper and Terminal, as one theme system**: one layout, two skins.
+> Dalal Street Board is dropped. Built in `web/src/theme/` ([the decision](#the-decision-one-layout-two-skins)). The three
+> candidates below are kept as the record of what was compared.
 >
 > **Visual direction:** the look and feel every screen shares: colours, type, how numbers and motion behave. One is
 > picked, turned into **design tokens** (named CSS variables such as `--up` or `--font-num`) and then every screen is
@@ -22,7 +24,79 @@ described in words.
 copy, phones at 390×844). The fake data lives in [mockups/shared/market.js](mockups/shared/market.js). The QR panel in
 the mockups is a QR-like pattern; the real page encodes `PUBLIC_BASE_URL/join`.
 
-## Rules every direction follows
+
+## The decision: one layout, two skins
+
+The owner picked **Pink Paper as the light theme and Terminal as the dark theme**, as one theme system. There is **one
+layout and one component set**: Terminal's structure (watchlist, hero price, candlestick chart, depth, time and sales,
+the QR join box, the status bar; on the phone: account, hero and chart, ticker selector, order ticket, open orders,
+holdings). A theme changes only the **tokens** and a few **theme-only details**.
+
+**Why the two pair well.** Paper is a light theme: dark ink on a light ground keeps its contrast in a bright classroom
+and on a weak projector, where dark themes wash out to grey. Terminal is a dark theme: it suits a dim room, and phones
+at night, where a salmon page would be glaring. Both are typographic (rules, monospaced numbers, no decoration), so
+one layout reads as native in either.
+
+| | Where it lives |
+|---|---|
+| Tokens: colours, fonts, rules, radii, density, flash, candle style | `web/src/theme/tokens.css`, under `:root[data-theme='paper']` and `:root[data-theme='terminal']` |
+| The one layout | `web/src/theme/app.css` (tokens only) |
+| Theme-only details | Elements with class `paper-only` or `terminal-only`, hidden by the other theme (not separate components) |
+| Which theme shows | `web/src/theme/theme.ts`; the same rules run inline in `index.html` before the first paint |
+
+**Theme-only details.** Paper: the serif masthead "CircuitBreaker *Markets*", the italic dateline with the real date,
+italic chart captions, hollow up-candles, the "ink dries" flash. Terminal: the F-key bar, the `> TICKER EQUITY GP▌`
+command line, filled candles, the cell-light flash, `<GO>` before the submit button, the F-key tabs at the bottom of the
+phone.
+
+**Switching.** The URL's `?theme=paper|terminal` wins over everything (choose the projector's theme on demo day). Then
+the choice made with the toggle in the header, remembered per device in `localStorage`. Then the device's
+`prefers-color-scheme` (light → paper, dark → terminal). An inline script in `index.html` sets `data-theme` before the
+first paint, so the wrong theme never flashes. A test checks that it and `resolveTheme` agree in every case. Lightweight
+Charts takes its colours in JavaScript, so the chart re-applies its layout and series options on every theme change
+(also tested).
+
+**Fonts** are the ones each mockup used: Newsreader + IBM Plex Mono + Libre Franklin (paper), JetBrains Mono + IBM Plex
+Sans Condensed (terminal). They are Google Fonts' files, **self-hosted** through Fontsource, so phones on the demo
+hotspot need no internet. Only the weights used are loaded, all with `font-display: swap`.
+
+### Tokens, both themes
+
+| Token | Paper | Terminal | Use |
+|---|---|---|---|
+| `--bg` | `#F7E1CF` | `#0A0B0C` | Page |
+| `--surface` | `#F0D3BD` | `#111315` | Panels (paper: only the ticket and the join box) |
+| `--head-bg` | none | `#1A1D20` | Panel title bars |
+| `--text` / `--text-2` / `--text-3` | `#1B1611` / `#4A3F37` / `#62574D` | `#E8E3D6` / `#A39D90` / `#8C867A` | Text, labels, captions |
+| `--rule` / `--rule-soft` | `#1B1611` / `#C4A790` | `#2A2E32` / `#1C1F22` | Rules, row separators |
+| `--accent` | `#7A1C2C` (claret) | `#FFA028` (amber) | Masthead / commands, keys, selection |
+| `--up` / `--down` | `#0A6A45` / `#A3201F` | `#45D07A` / `#FF5C5C` | Changes (always with ▲ ▼ and a sign) |
+| `--font-head` / `--font-num` / `--font-ui` | Newsreader / IBM Plex Mono / Libre Franklin | Plex Sans Condensed / JetBrains Mono / JetBrains Mono | Type |
+| `--frame` / `--frame-strong` | 1 px ink / 3 px double | 1 px grid / 1 px grid | Outlines |
+| `--radius` | 0 | 0 | No rounded data surfaces |
+| `--gap` / `--pad` / `--cell-y` | 22 / 14 / 5 px | 6 / 10 / 3 px | Density: print breathes, a terminal is dense |
+| `--flash-*` | Fills with ink, paper-coloured digits, 900 ms | Lights the cell dark green or red, 600 ms | A price change (the hero changes its digits' colour instead) |
+| `--candle-up-fill` | `#F7E1CF` (hollow) | `#45D07A` (filled) | Candle style |
+
+**Measured, not guessed.** Every text colour is at least 4.5:1 on every surface it sits on, in both themes (63 pairs).
+Paper's `--text-3` was darkened from `#6E6157` to `#62574D` because it measured 4.2:1 on the ticket's tint. Both
+dashboards pass the 25% test (the 1920×1080 screen scaled to 480×270 still shows the hero price clearly). Component tests
+run in both themes against the real `tokens.css`. `web/scripts/screenshots.mjs` renders the real screens in both themes
+with Playwright and fails if the phone page is wider than the phone.
+
+**Self-review against the owner's lists (both themes).** No gradients, glass, blur, glow or shadows; no banned
+typefaces; no rounded data surfaces (all radii are 0); no emoji or decorative icons (▲ ▼ ● are text characters); amber,
+not cyan, on dark. Digits are tabular everywhere (set on `body`), prices right-aligned, every change has colour plus
+▲ ▼ and a sign. Motion is only the price flash and a new trade entering the tape; `prefers-reduced-motion` turns both
+off. Fixed during the review: the dashboard's main area collapsed in the paper theme when the F-key row was hidden; the
+paper hero was wider than its column; the hero's filled flash hid the digits, so it now changes their colour; the
+phone header wrapped, so the nickname moved into the account panel; the chart's attribution logo covered the small
+chart, so it is a text link on each page instead (the Lightweight Charts licence allows it); the System Status page's
+rounded card grid became ruled rows on the same tokens.
+
+## The three candidates (for the record)
+
+### Rules every direction follows
 
 | Rule | How |
 |---|---|
@@ -36,7 +110,7 @@ the mockups is a QR-like pattern; the real page encodes `PUBLIC_BASE_URL/join`.
 | Phones | Tap targets ≥ 44 px (main buttons 48–58 px), body text ≥ 15 px, no horizontal scroll except the deliberate ticker strip in Dalal Street |
 | Not generic | No gradients, glass, glow or shadow-heavy cards; no Inter/Poppins/Space Grotesk/Montserrat/Roboto; no grid of identical rounded KPI cards; radius ≤ 2 px; no emoji or decorative icons; and no "dark mode with a cyan accent" |
 
-## 1. Pink Paper
+### 1. Pink Paper
 
 **Mood:** the markets page of a financial newspaper (the salmon pages of the FT and the Economic Times) brought to
 life. Calm, editorial, authoritative: the market as a story you read.
@@ -64,7 +138,7 @@ newest trade in the tape is shown mid-flash). Up candles are hollow green, down 
 ground keeps its contrast where dark themes turn grey, and it looks unlike any trading app the audience has seen.
 *Risk:* it is the least "live-feeling" of the three, and the large light area is bright on a phone at night.
 
-## 2. Dalal Street Board
+### 2. Dalal Street Board (dropped)
 
 **Mood:** the LED board on the Bombay Stock Exchange building at Dalal Street: black, quiet, with amber dot-matrix
 numbers that you watch change. Theatrical but restrained: the LED is used **only** for the ticker strip and the hero
@@ -94,7 +168,7 @@ numbers are plain Barlow, right-aligned.
 exchange" to an Indian audience. *Risks:* dark themes lose contrast on weak projectors, and the dot-matrix hero is the
 least crisp of the three at 25% scale (still readable).
 
-## 3. Terminal
+### 3. Terminal
 
 **Mood:** a professional trading terminal (the Bloomberg kind): dense, everything visible at once, amber commands on
 near-black, function keys and a command line. Serious and fast: the market as an instrument.
@@ -123,7 +197,7 @@ and volume, plus depth and the tape), which suits an audience that wants to see 
 naturally with the later chaos panel and incident feed. *Risks:* dense screens are harder to read from far away; the
 hero price and the watchlist carry the room, the rest is for people near the front.
 
-## Comparison
+### Comparison
 
 | | Pink Paper | Dalal Street Board | Terminal |
 |---|---|---|---|
@@ -136,11 +210,6 @@ hero price and the watchlist carry the room, the rest is for people near the fro
 
 ## Viva Notes
 
-**Q: Why choose a visual direction before building any screen?**
-A: The dashboard is what the audience actually sees. Fixing colours, type and motion as tokens first means both screens
-(and every later one) share one design system instead of drifting apart, and the owner picks between real mockups,
-not adjectives.
-
 **Q: What are tabular figures and why do they matter here?**
 A: Digits that all have the same width. Prices change many times a second; with proportional digits the columns would
 shift on every change (a "1" is narrower than an "8") and the eye couldn't track them.
@@ -152,6 +221,11 @@ projector that washes the colours out.
 **Q: What does the price flash communicate, and why only two animations?**
 A: That a number just changed, and in which direction. Motion is reserved for meaning (a flash, a new trade); anything
 else on a live screen competes with the data, and reduced-motion users can switch both off.
+
+**Q: Why two themes, and why not two separate UIs?**
+A: Light paper for bright rooms and weak projectors, dark terminal for dim rooms and phones at night. One layout with
+two skins means every feature is built once: a theme only swaps the tokens and a few theme-only details, so the two can
+never drift apart.
 
 **Q: How did you check the screen is readable from the back of the room?**
 A: The 1920×1080 dashboard screenshot scaled to 25% (480×270) must still show the current price clearly; all three

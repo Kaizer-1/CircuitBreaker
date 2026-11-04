@@ -21,6 +21,8 @@ export default defineConfig(({ mode }) => {
       environment: 'jsdom',
       globals: true,
       setupFiles: ['./test/setup.ts'],
+      // The tests load the real design tokens (test/themes.ts), so this one CSS file is not stubbed.
+      css: { include: [/tokens\.css/] },
     },
   }
 })

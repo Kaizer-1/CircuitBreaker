@@ -1,0 +1,161 @@
+/*
+ * The one design system (docs/design/visual-direction.md): one layout, two skins.
+ * Every screen uses these tokens only. `paper` is the light theme (Pink Paper: bright rooms and projectors),
+ * `terminal` the dark one (dim rooms, phones at night). index.html sets data-theme before the first paint.
+ * Every text colour is >= 4.5:1 on the surface it sits on, in both themes (measured; see the doc).
+ */
+:root[data-theme='paper'] {
+  color-scheme: light;
+  --bg: #f7e1cf; /* salmon newsprint */
+  --surface: #f0d3bd; /* a boxed panel: the order ticket, the join box */
+  --head-bg: transparent; /* panel title bars: none in print */
+  --text: #1b1611; /* 14.2:1 on paper */
+  --text-2: #4a3f37; /* 8.1:1 */
+  --text-3: #62574d; /* 5.6:1 on paper, 4.9:1 on a panel */
+  --rule: #1b1611; /* hairlines */
+  --rule-soft: #c4a790; /* row separators */
+  --accent: #7a1c2c; /* masthead, kicker */
+  --accent-text: #7a1c2c;
+  --select-bg: #1b1611; /* the chosen ticker, the pressed toggle */
+  --select-text: #f7e1cf;
+  --row-select: #f0d3bd;
+  --up: #0a6a45; /* 5.3:1 */
+  --down: #a3201f; /* 6.0:1 */
+  --up-tint: rgba(10, 106, 69, 0.14); /* depth bars */
+  --down-tint: rgba(163, 32, 31, 0.14);
+  --on-up: #f7e1cf; /* text on a green button */
+  --on-down: #f7e1cf;
+  --danger: #a3201f;
+
+  --font-head: 'Newsreader Variable', Georgia, serif;
+  --font-num: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-ui: 'Libre Franklin', 'Helvetica Neue', Arial, sans-serif;
+  --font-label: 'Libre Franklin', 'Helvetica Neue', Arial, sans-serif;
+  --title-font: var(--font-head);
+  --title-size: 1.55rem;
+  --title-weight: 600;
+  --title-case: none;
+  --title-tracking: 0;
+  --label-tracking: 0.14em;
+
+  --frame: 1px solid var(--rule); /* a panel's outline */
+  --frame-strong: 3px double var(--rule); /* the join box, the ticket */
+  --radius: 0;
+  --gap: 22px; /* density: print breathes */
+  --pad: 14px;
+  --cell-y: 5px;
+
+  --flash-up-bg: #0a6a45; /* fresh ink: the cell fills, then dries back to paper */
+  --flash-down-bg: #a3201f;
+  --flash-text: #f7e1cf;
+  --flash-ms: 900ms;
+
+  --candle-up: #0a6a45;
+  --candle-up-fill: #f7e1cf; /* hollow up-candles, as on print charts */
+  --candle-down: #a3201f;
+  --candle-down-fill: #a3201f;
+  --chart-bg: #f7e1cf;
+  --chart-text: #4a3f37;
+  --chart-grid: #e2c4ac;
+  --chart-volume: rgba(27, 22, 17, 0.18);
+  --qr-dark: #1b1611;
+  --qr-light: #f7e1cf;
+}
+
+:root[data-theme='terminal'] {
+  color-scheme: dark;
+  --bg: #0a0b0c;
+  --surface: #111315; /* panels */
+  --head-bg: #1a1d20; /* panel title bars */
+  --text: #e8e3d6; /* 14.5:1 on a panel */
+  --text-2: #a39d90; /* 6.9:1 */
+  --text-3: #8c867a; /* 5.2:1 on a panel, 4.7:1 on a title bar */
+  --rule: #2a2e32;
+  --rule-soft: #1c1f22;
+  --accent: #ffa028; /* amber: commands, keys, selection */
+  --accent-text: #ffa028; /* 9.1:1 */
+  --select-bg: #ffa028;
+  --select-text: #0a0b0c;
+  --row-select: #1d1a12;
+  --up: #45d07a; /* 9.4:1 */
+  --down: #ff5c5c; /* 6.2:1 */
+  --up-tint: rgba(69, 208, 122, 0.22);
+  --down-tint: rgba(255, 92, 92, 0.22);
+  --on-up: #04130a;
+  --on-down: #1a0505;
+  --danger: #ff5c5c;
+
+  --font-head: 'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif;
+  --font-num: 'JetBrains Mono', ui-monospace, monospace;
+  --font-ui: 'JetBrains Mono', ui-monospace, monospace;
+  --font-label: 'IBM Plex Sans Condensed', 'Arial Narrow', sans-serif;
+  --title-font: var(--font-label);
+  --title-size: 0.95rem;
+  --title-weight: 600;
+  --title-case: uppercase;
+  --title-tracking: 0.1em;
+  --label-tracking: 0.1em;
+
+  --frame: 1px solid var(--rule);
+  --frame-strong: 1px solid var(--rule);
+  --radius: 0;
+  --gap: 6px; /* density: everything at once */
+  --pad: 10px;
+  --cell-y: 3px;
+
+  --flash-up-bg: #0f3a22; /* a tick lights its cell */
+  --flash-down-bg: #48161a;
+  --flash-text: inherit;
+  --flash-ms: 600ms;
+
+  --candle-up: #45d07a;
+  --candle-up-fill: #45d07a; /* filled candles */
+  --candle-down: #ff5c5c;
+  --candle-down-fill: #ff5c5c;
+  --chart-bg: #111315;
+  --chart-text: #a39d90;
+  --chart-grid: #22262a;
+  --chart-volume: #2b2f33;
+  --qr-dark: #0a0b0c;
+  --qr-light: #e8e3d6;
+}
+
+/* Theme-only details are the same components, shown or hidden by the theme. */
+:root[data-theme='paper'] .terminal-only,
+:root[data-theme='terminal'] .paper-only {
+  display: none !important;
+}
+
+@keyframes flash {
+  from {
+    background-color: var(--flash-bg);
+    color: var(--flash-text);
+  }
+}
+.flash-up,
+.flash-down {
+  animation: flash var(--flash-ms) ease-out;
+}
+.flash-up {
+  --flash-bg: var(--flash-up-bg);
+}
+.flash-down {
+  --flash-bg: var(--flash-down-bg);
+}
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+.enter {
+  animation: enter 240ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

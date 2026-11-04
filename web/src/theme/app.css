@@ -1,0 +1,966 @@
+/*
+ * One layout for both skins (docs/design/visual-direction.md): the Terminal structure, styled only
+ * through tokens.css. Sizes on the dashboard are in em of a base that follows the screen width, so
+ * a 1280×720 projector shows the same screen as a 1920×1080 one.
+ */
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums lining-nums; /* every digit the same width, everywhere */
+  -webkit-text-size-adjust: 100%;
+}
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.up {
+  color: var(--up);
+}
+.down {
+  color: var(--down);
+}
+.muted {
+  color: var(--text-2);
+}
+.dim {
+  color: var(--text-3);
+}
+.label {
+  font-family: var(--font-label);
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* ---------------------------------------------------------------- panels */
+.panel {
+  background: var(--surface-panel, transparent);
+  border: var(--panel-border, none);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+:root[data-theme='terminal'] .panel {
+  --surface-panel: var(--surface);
+  --panel-border: var(--frame);
+}
+.panel > h2,
+.panel-title {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1em;
+  padding: 0.25em var(--pad);
+  background: var(--head-bg);
+  font-family: var(--title-font);
+  font-size: var(--title-size);
+  font-weight: var(--title-weight);
+  letter-spacing: var(--title-tracking);
+  text-transform: var(--title-case);
+  color: var(--text-2);
+  border-bottom: var(--frame);
+}
+:root[data-theme='paper'] .panel > h2 {
+  color: var(--text);
+  padding: 0 0 0.15em;
+}
+.panel > h2 small {
+  font-family: var(--font-label);
+  font-size: 0.6em;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.panel > h2 b {
+  color: var(--accent-text);
+  font-family: var(--font-num);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th,
+td {
+  padding: var(--cell-y) 0.6em;
+  border-bottom: 1px solid var(--rule-soft);
+}
+th {
+  font-family: var(--font-label);
+  font-size: 0.7em;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-3);
+  text-align: right;
+  border-bottom: var(--frame);
+}
+th:first-child,
+td:first-child {
+  text-align: left;
+}
+.bar {
+  position: relative;
+}
+.bar > i {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+}
+.bar > span {
+  position: relative;
+}
+.bid-bar > i {
+  right: 0;
+  background: var(--up-tint);
+}
+.ask-bar > i {
+  left: 0;
+  background: var(--down-tint);
+}
+.theme-toggle {
+  border: var(--frame);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-label);
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  padding: 0.45em 0.9em;
+  min-height: 44px;
+}
+.chart {
+  width: 100%;
+  height: 100%;
+  min-height: 120px;
+}
+
+/* ---------------------------------------------------------------- theme-only headers */
+.masthead {
+  font-family: var(--font-head);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  margin: 0;
+}
+.masthead em {
+  font-weight: 400;
+  color: var(--accent);
+}
+.dateline {
+  font-family: var(--font-head);
+  font-style: italic;
+  color: var(--text-2);
+}
+.caption {
+  font-family: var(--font-head);
+  font-style: italic;
+  color: var(--text-2);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.command {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  color: var(--accent-text);
+}
+.command .badge {
+  background: var(--accent);
+  color: var(--select-text);
+  font-weight: 800;
+  padding: 0.25em 0.6em;
+  letter-spacing: 0.04em;
+}
+.command .cursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.05em;
+  background: var(--accent);
+  vertical-align: -0.15em;
+  margin-left: 0.15em;
+}
+.command .typed {
+  color: var(--text);
+}
+
+/* ================================================================ the dashboard (presenter) */
+.dash {
+  font-size: clamp(13px, 0.98vw, 19px);
+  height: 100vh;
+  display: flex; /* a column; the main area takes what is left (theme-only rows may be hidden) */
+  flex-direction: column;
+  gap: var(--gap);
+  padding: calc(var(--gap) * 0.6) calc(var(--gap) * 1.1);
+  overflow: hidden;
+}
+:root[data-theme='terminal'] .dash {
+  padding: 0 0 0;
+  gap: var(--gap);
+}
+.dash-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5em;
+}
+:root[data-theme='paper'] .dash-head {
+  border-bottom: var(--frame-strong);
+  padding-bottom: 0.5em;
+}
+:root[data-theme='terminal'] .dash-head {
+  align-items: center;
+  padding: 0.5em 0.8em;
+  border-bottom: var(--frame);
+}
+.dash-head .masthead {
+  font-size: 2.7em;
+}
+.dash-head .dateline {
+  font-size: 1.15em;
+}
+.dash-head .command {
+  font-size: 1.3em;
+  flex: 1;
+}
+.dash-head .right {
+  display: flex;
+  align-items: center;
+  gap: 1.2em;
+  font-family: var(--font-label);
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  font-size: 0.95em;
+  color: var(--text-2);
+}
+.dash-head .right b {
+  font-family: var(--font-num);
+  color: var(--text);
+  letter-spacing: 0;
+}
+.fkeys {
+  display: flex;
+  gap: 2px;
+  padding: 0 0.8em;
+}
+.fkeys a,
+.fkeys span {
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: 0.9em;
+  letter-spacing: 0.06em;
+  padding: 0.25em 0.8em;
+  border: var(--frame);
+  color: var(--text-2);
+  text-decoration: none;
+}
+.fkeys b {
+  color: var(--accent-text);
+  font-family: var(--font-num);
+  margin-right: 0.5em;
+}
+.fkeys .on {
+  background: var(--select-bg);
+  color: var(--select-text);
+  border-color: var(--select-bg);
+}
+.fkeys .on b {
+  color: var(--select-text);
+}
+.watch td {
+  font-size: 1.32em;
+  padding: calc(var(--cell-y) + 1px) 0.6em;
+}
+.watch td.tk {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-family: var(--font-label);
+}
+:root[data-theme='terminal'] .watch td.tk {
+  color: var(--accent-text);
+  font-family: var(--font-num);
+}
+.watch td.nm {
+  font-family: var(--font-label);
+  font-size: 0.95em;
+  color: var(--text-2);
+}
+.watch tr {
+  cursor: pointer;
+}
+.watch tr[aria-selected='true'] td {
+  background: var(--row-select);
+}
+:root[data-theme='terminal'] .watch {
+  margin: 0 calc(var(--gap) * 1);
+}
+.dash-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 33em; /* the side column is never pushed off the screen */
+  gap: var(--gap);
+  min-height: 0;
+}
+:root[data-theme='terminal'] .dash-main {
+  padding: 0 var(--gap);
+}
+.hero-panel {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  min-height: 0;
+}
+.hero {
+  display: flex;
+  align-items: flex-end;
+  gap: 1.2em;
+  padding: 0.3em var(--pad) 0.2em;
+}
+:root[data-theme='paper'] .hero {
+  padding-left: 0;
+  border-bottom: var(--frame);
+}
+.hero .price {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-size: 8.4em;
+  font-weight: 600;
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+}
+:root[data-theme='terminal'] .hero .price {
+  font-weight: 700;
+}
+:root[data-theme='paper'] .hero .price {
+  font-size: 7.4em; /* the ₹ sign takes the room the terminal skin leaves out */
+}
+/* At hero size a filled flash would hide the digits mid-fade: the digits themselves change ink. */
+.hero .price .flash-up,
+.hero .price .flash-down {
+  animation-name: flash-ink;
+}
+.hero .price .flash-up {
+  --flash-ink: var(--up);
+}
+.hero .price .flash-down {
+  --flash-ink: var(--down);
+}
+@keyframes flash-ink {
+  from {
+    color: var(--flash-ink);
+  }
+}
+.hero .price .rs {
+  font-size: 0.55em;
+  letter-spacing: 0;
+  margin-right: 0.08em;
+  font-weight: 500;
+}
+.hero .change {
+  font-family: var(--font-num);
+  font-size: 2em;
+  font-weight: 600;
+  line-height: 1.15;
+  padding-bottom: 0.35em;
+}
+.hero .change small {
+  display: block;
+  font-size: 0.55em;
+  color: var(--text-2);
+  font-weight: 500;
+}
+.hero .facts {
+  margin-left: auto;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.15em 1em;
+  padding-bottom: 0.6em;
+  font-size: 1.05em;
+}
+.hero .facts dt {
+  font-family: var(--font-label);
+  color: var(--text-3);
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  font-size: 0.8em;
+  align-self: center;
+}
+.hero .facts dd {
+  margin: 0;
+}
+.chart-box {
+  min-height: 0;
+  padding: 0.4em 0 0;
+}
+.chart-caption {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85em;
+  padding: 0.2em 0;
+  border-top: var(--frame-strong);
+}
+.dash-side {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr); /* the tape takes what the depth leaves */
+  gap: var(--gap);
+  min-height: 0;
+}
+.dash-side .tape {
+  overflow: hidden;
+}
+.depth td,
+.tape td {
+  font-size: 1.12em;
+}
+.depth .spread {
+  text-align: center;
+  font-size: 0.85em;
+  padding: 0.25em 0;
+}
+.tape tr td:first-child {
+  color: var(--text-3);
+}
+.tape .side {
+  font-family: var(--font-label);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-size: 0.8em;
+}
+.join {
+  margin-left: auto;
+  display: grid;
+  grid-template-columns: auto minmax(11em, 15em);
+  gap: 1em;
+  align-items: center;
+  padding: 0.7em;
+  align-self: center;
+}
+:root[data-theme='paper'] .join {
+  border: var(--frame-strong);
+  background: var(--surface);
+}
+:root[data-theme='terminal'] .join {
+  border: var(--frame);
+  background: var(--head-bg);
+}
+.join .head {
+  font-family: var(--font-head);
+  font-size: 1.55em;
+  font-weight: 800;
+  line-height: 1.05;
+}
+:root[data-theme='terminal'] .join .head {
+  font-family: var(--font-num);
+  color: var(--accent-text);
+  text-transform: uppercase;
+  font-size: 1.35em;
+}
+.join .head b {
+  font-family: var(--font-num);
+}
+.join p {
+  margin: 0.45em 0;
+  color: var(--text-2);
+  font-size: 0.95em;
+}
+.join .url {
+  font-family: var(--font-num);
+  font-weight: 600;
+  font-size: 0.75em;
+  overflow-wrap: anywhere;
+}
+.statusbar {
+  display: flex;
+  gap: 2em;
+  align-items: center;
+  font-family: var(--font-label);
+  font-size: 0.85em;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 0.35em 0;
+  border-top: var(--frame);
+}
+:root[data-theme='terminal'] .statusbar {
+  padding: 0.35em 0.9em;
+}
+.statusbar b {
+  font-family: var(--font-num);
+  color: var(--text);
+  letter-spacing: 0;
+}
+.statusbar .end {
+  margin-left: auto;
+}
+
+/* ================================================================ the phone */
+.phone {
+  font-size: 16px;
+  overflow-x: hidden; /* never a horizontal scroll on the phone */
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 0 16px calc(76px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--gap) * 0.6);
+}
+:root[data-theme='paper'] .phone {
+  padding-bottom: 32px;
+}
+:root[data-theme='terminal'] .phone {
+  padding: 0 6px calc(70px + env(safe-area-inset-bottom));
+}
+.phone-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  padding: 10px 0 6px;
+  border-bottom: var(--frame-strong);
+}
+:root[data-theme='terminal'] .phone-head {
+  padding: 8px 4px;
+  border-bottom: var(--frame);
+}
+.phone-head .masthead {
+  font-size: 1.35rem;
+  white-space: nowrap;
+}
+.phone-head .command {
+  font-size: 1rem;
+  min-width: 0;
+}
+.phone-head .who {
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+.phone-head .theme-toggle {
+  font-size: 0.7rem;
+  padding: 0.3em 0.6em;
+}
+.account {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  padding: 8px var(--pad) 8px;
+}
+:root[data-theme='paper'] .account {
+  padding: 4px 0 8px;
+  border-bottom: var(--frame);
+}
+.account .worth {
+  font-family: var(--font-num);
+  font-size: 1.9rem;
+  font-weight: 600;
+  text-align: left;
+}
+.account .pnl {
+  font-family: var(--font-num);
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-align: right;
+}
+.account .pnl small {
+  display: block;
+  font-family: var(--font-label);
+  font-size: 0.75rem;
+  color: var(--text-3);
+  font-weight: 500;
+}
+.quote {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 6px var(--pad) 0;
+}
+:root[data-theme='paper'] .quote {
+  padding: 4px 0 0;
+}
+.quote h1 {
+  margin: 0;
+  font-family: var(--font-head);
+  font-size: 1.6rem;
+  font-weight: 600;
+  line-height: 1;
+}
+:root[data-theme='terminal'] .quote h1 {
+  font-family: var(--font-num);
+  color: var(--accent-text);
+  font-size: 1.25rem;
+}
+.quote h1 small {
+  display: block;
+  font-size: 0.6em;
+  font-weight: 400;
+  color: var(--text-2);
+  margin-top: 4px;
+}
+:root[data-theme='paper'] .quote h1 small {
+  font-style: italic;
+}
+.quote .price {
+  font-family: var(--font-num);
+  font-size: 2.5rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.quote .change {
+  font-family: var(--font-num);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: right;
+  margin-top: 3px;
+}
+.phone .chart {
+  height: 130px;
+  min-height: 130px;
+}
+.selector {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border-top: var(--frame);
+  border-bottom: var(--frame);
+}
+.selector button {
+  border: none;
+  border-right: 1px solid var(--rule-soft);
+  background: transparent;
+  min-height: 52px;
+  padding: 6px 2px;
+  font-family: var(--font-label);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+.selector button:last-child {
+  border-right: none;
+}
+.selector button span {
+  display: block;
+  font-family: var(--font-num);
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin-top: 2px;
+}
+.selector button[aria-pressed='true'] {
+  background: var(--select-bg);
+  color: var(--select-text);
+}
+.selector button[aria-pressed='true'] span {
+  color: var(--select-text);
+}
+.ticket {
+  padding: 12px;
+  gap: 10px;
+}
+:root[data-theme='paper'] .ticket {
+  border: var(--frame-strong);
+  background: var(--surface);
+}
+.ticket h2 {
+  border: none;
+  padding: 0;
+  background: none;
+}
+.seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.seg button {
+  min-height: 50px;
+  border: var(--frame);
+  background: transparent;
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.1em;
+  color: var(--text-2);
+}
+.seg .buy[aria-pressed='true'] {
+  background: var(--up);
+  border-color: var(--up);
+  color: var(--on-up);
+}
+.seg .sell[aria-pressed='true'] {
+  background: var(--down);
+  border-color: var(--down);
+  color: var(--on-down);
+}
+.seg .kind[aria-pressed='true'] {
+  background: var(--select-bg);
+  border-color: var(--select-bg);
+  color: var(--select-text);
+}
+:root[data-theme='terminal'] .seg .kind[aria-pressed='true'] {
+  background: transparent;
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+.fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.field label {
+  display: block;
+  font-family: var(--font-label);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.stepper {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  border: var(--frame);
+  background: var(--bg);
+}
+.stepper button {
+  border: none;
+  background: transparent;
+  font-size: 1.4rem;
+  min-height: 48px;
+  color: var(--text-2);
+}
+:root[data-theme='terminal'] .stepper button {
+  color: var(--accent-text);
+}
+.stepper input {
+  width: 100%;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 1.15rem;
+  font-weight: 600;
+  text-align: center;
+}
+.stepper input:disabled {
+  color: var(--text-3);
+}
+.field .error,
+.ticket .error {
+  color: var(--danger);
+  font-size: 0.85rem;
+  margin: 4px 0 0;
+}
+.estimate {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--text-2);
+}
+.estimate b {
+  color: var(--text);
+}
+.submit {
+  min-height: 56px;
+  border: none;
+  font-family: var(--font-label);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.submit.buy {
+  background: var(--up);
+  color: var(--on-up);
+}
+.submit.sell {
+  background: var(--down);
+  color: var(--on-down);
+}
+.submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.orders .order {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--pad);
+  border-bottom: 1px solid var(--rule-soft);
+}
+:root[data-theme='paper'] .orders .order {
+  padding: 8px 0;
+}
+.orders .what b {
+  font-family: var(--font-label);
+}
+.orders .state {
+  font-family: var(--font-label);
+  font-size: 0.75rem;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.cancel {
+  min-height: 44px;
+  padding: 0 14px;
+  border: var(--frame);
+  background: transparent;
+  font-family: var(--font-label);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+:root[data-theme='terminal'] .cancel {
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+.empty {
+  padding: 10px var(--pad);
+  color: var(--text-3);
+  margin: 0;
+}
+.toast {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 12px 14px;
+  background: var(--select-bg);
+  color: var(--select-text);
+  font-weight: 600;
+  z-index: 20;
+}
+:root[data-theme='paper'] .toast {
+  bottom: 16px;
+}
+.tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  background: var(--bg);
+  border-top: var(--frame);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 10;
+}
+.tabs a {
+  min-height: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-label);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+  text-decoration: none;
+  border-right: var(--frame);
+}
+.tabs a b {
+  font-family: var(--font-num);
+  color: var(--accent-text);
+}
+.tabs a.on {
+  background: var(--select-bg);
+  color: var(--select-text);
+}
+.tabs a.on b {
+  color: var(--select-text);
+}
+.stream-note {
+  font-family: var(--font-label);
+  font-size: 0.8rem;
+  color: var(--danger);
+  padding: 4px var(--pad);
+}
+
+/* ---------------------------------------------------------------- join and sign-in */
+.gate {
+  max-width: 30rem;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+.gate .masthead {
+  font-size: 2.2rem;
+}
+.login {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+.login label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: 0.85rem;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.login input {
+  font-family: var(--font-num);
+  font-size: 1.2rem;
+  padding: 12px;
+  min-height: 50px;
+  border: var(--frame);
+  background: var(--bg);
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.login button {
+  min-height: 54px;
+  border: none;
+  background: var(--select-bg);
+  color: var(--select-text);
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+}
+.problem {
+  color: var(--danger);
+}
+
+.attribution {
+  font-family: var(--font-label);
+  font-size: 0.75rem;
+  color: var(--text-3);
+  margin: 4px 0;
+}
+.attribution a {
+  color: inherit;
+}
+.phone table th,
+.phone table td {
+  padding-left: 0.35em;
+  padding-right: 0.35em;
+}

@@ -14,7 +14,11 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
   },
   {
-    files: ['mock/**/*.mjs'],
+    files: ['public/**/*.js'],
+    languageOptions: { globals: globals.browser },
+  },
+  {
+    files: ['mock/**/*.mjs', 'scripts/**/*.mjs'],
     languageOptions: { globals: globals.node },
   },
   prettier,
