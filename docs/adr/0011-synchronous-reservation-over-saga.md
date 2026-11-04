@@ -1,6 +1,7 @@
 # 0011 — Synchronous Reservation instead of an Asynchronous Saga
 
-- **Status:** Accepted
+- **Status:** Accepted — orphan clean-up (supporting rule 3) amended by [ADR-0017](0017-fail-closed-orphan-release.md)
+  (money is released only when the matching engine confirms the order can never trade; the 60 s publish limit stays)
 - **Date:** 2026-11-02
 - **Deciders:** Kaizer Dewaswala, MD Asif Ali, Mohammad Oweis
 
@@ -31,6 +32,10 @@ Supporting rules:
    (it consumes `matching.v1`) within **120 s**; and order-service's outbox relay **never publishes an `OrderPlaced`
    older than 60 s** — it marks such orders `REJECTED` (reason `PUBLISH_TIMEOUT`) instead. Because 60 s < 120 s, an
    order can never reach the engine after its reservation was released.
+
+   > **Amended by [ADR-0017](0017-fail-closed-orphan-release.md) (2026-11-04).** The 120 s timer only covers delays inside
+   > order-service, not an engine that is down or crashed before publishing. portfolio-service now asks for an expiry
+   > at 120 s and releases only on the engine's answer (`OrderCancelled` `ORDER_EXPIRED` or `OrderExpired`).
 
 ## The two options compared
 
@@ -104,6 +109,7 @@ data, time travel and existing resting orders are unaffected.
 A: An action that undoes an earlier step. Releasing a reservation when an order is cancelled, or when it was orphaned
 by a crash, is our compensating action.
 
-**Q: Why the 60-second and 120-second numbers?**
+**Q: Why the 60-second and 120-second numbers?** *(Rule changed by ADR-0017: at 120 s portfolio asks for an expiry
+instead of releasing; see its Viva Notes.)*
 A: The relay gives up publishing after 60 s; portfolio releases unconfirmed reservations after 120 s. Because 60 < 120,
 an order can never be matched after its reserved money was handed back.

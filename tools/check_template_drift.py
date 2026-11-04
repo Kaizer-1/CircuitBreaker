@@ -6,7 +6,8 @@ Instead the shared plumbing is copied from services/order-service by tools/scaff
 sure the copies stay equal. After renaming the package and service name, every copy of a managed file must
 match the others byte for byte.
 
-    python3 tools/check_template_drift.py
+    python3 tools/check_template_drift.py          # check (make lint, CI)
+    python3 tools/check_template_drift.py --sync   # copy the template's managed files to every service
 """
 
 from __future__ import annotations
@@ -38,7 +39,38 @@ def normalised(path: Path, name: str, pkg: str) -> str:
     return path.read_text().replace(pkg, "<PKG>").replace(name, "<SERVICE>")
 
 
+TEMPLATE = "order-service"
+
+
+def sync() -> int:
+    """Copy every managed file from the template service into the others, renamed for each."""
+    template_dir = SERVICES_DIR / TEMPLATE
+    template_pkg = TEMPLATE.replace("-", "_")
+    written = 0
+    for service_dir in sorted(p for p in SERVICES_DIR.iterdir() if (p / "pyproject.toml").exists()):
+        name = service_dir.name
+        if name == TEMPLATE:
+            continue
+        pkg = name.replace("-", "_")
+        for pattern in MANAGED:
+            for source in sorted(template_dir.glob(pattern.format(pkg=template_pkg))):
+                rel = source.relative_to(template_dir).as_posix().replace(template_pkg, pkg)
+                text = source.read_text().replace(template_pkg, pkg).replace(TEMPLATE, name)
+                target = service_dir / rel
+                if not target.exists() and not rel.startswith("src/"):
+                    continue  # only runtime/ must exist everywhere (the gateway has no test_stubs.py)
+                if not target.exists() or target.read_text() != text:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(text)
+                    written += 1
+                    print(f"synced {name}/{rel}")
+    print(f"{written} file(s) copied from {TEMPLATE}")
+    return 0
+
+
 def main() -> int:
+    if "--sync" in sys.argv[1:]:
+        return sync()
     copies: dict[str, dict[str, str]] = defaultdict(
         dict
     )  # managed path -> {service: normalised text}

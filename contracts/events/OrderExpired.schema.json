@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/OrderExpired.schema.json",
+  "title": "OrderExpired",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "matching.v1",
+  "x-key": "ticker",
+  "x-producer": "matching-engine",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "OrderExpired"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "matching-engine"
+    },
+    "data": {
+      "title": "OrderExpired.data",
+      "type": "object",
+      "required": [
+        "sequence",
+        "ticker",
+        "order_id",
+        "trader_id",
+        "expired_at"
+      ],
+      "properties": {
+        "sequence": {
+          "$ref": "defs.schema.json#/$defs/sequence"
+        },
+        "ticker": {
+          "$ref": "defs.schema.json#/$defs/ticker"
+        },
+        "order_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "trader_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "expired_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

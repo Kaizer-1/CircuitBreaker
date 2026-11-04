@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: matching-engine internal API
-  version: 1.0.0
+  version: 1.1.0
   summary: Read-only access to the market event store and order books.
   description: |
     Owned by the **Trading Team** (Kaizer Dewaswala); treated as a complicated subsystem.
@@ -118,6 +118,8 @@ paths:
                 has_more: true
         '422':
           $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
   /internal/v1/snapshots/{ticker}:
     get:
       tags: [Event store]
@@ -162,6 +164,8 @@ paths:
                         accepted_sequence: 995
         '422':
           $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
   /internal/v1/books/{ticker}:
     get:
       tags: [Books]
@@ -171,6 +175,8 @@ paths:
       description: |
         **Q-16** — Full live book (every resting order, in priority order) straight from the engine's memory. For
         debugging and for checking that market-data-service's depth read model agrees with the source of truth.
+        Includes `state_hash`, so two books (before and after a restart, or rebuilt elsewhere) can be compared in
+        one line. 404 while the engine is still rebuilding its books.
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/TickerPath'
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
@@ -193,6 +199,7 @@ paths:
                         remaining_quantity: 30
                         accepted_sequence: 1041
                 asks: []
+                state_hash: 3f1d8b2a9c4e7f6a5b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a
         '404':
           $ref: './shared/common.yaml#/components/responses/NotFound'
 components:
@@ -295,3 +302,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PriceLevel'
+        state_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: |
+            Q-16 only. SHA-256 of the canonical book (resting orders, finished and expired order IDs, sequence).
+            Equal hashes mean identical books; used to check that a restarted engine rebuilt exactly the same state.

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/RemediationProposed.schema.json",
+  "title": "RemediationProposed",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "incidents.v1",
+  "x-key": "incident_id",
+  "x-producer": "sre-agent",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "RemediationProposed"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "sre-agent"
+    },
+    "data": {
+      "title": "RemediationProposed.data",
+      "type": "object",
+      "required": [
+        "incident_id",
+        "remediation_id",
+        "action",
+        "target_service",
+        "parameters",
+        "explanation",
+        "model",
+        "requires_approval",
+        "proposed_at"
+      ],
+      "properties": {
+        "incident_id": {
+          "type": "string",
+          "pattern": "^INC-[0-9]{4}$"
+        },
+        "remediation_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "action": {
+          "$ref": "defs.schema.json#/$defs/agent_action"
+        },
+        "target_service": {
+          "oneOf": [
+            {
+              "$ref": "defs.schema.json#/$defs/service"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "null only for do_nothing"
+        },
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "replicas": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "to_revision": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "explanation": {
+          "type": "string",
+          "description": "Plain-English reasoning shown on the incident feed"
+        },
+        "model": {
+          "type": "string",
+          "description": "OpenRouter model slug used for the diagnosis"
+        },
+        "requires_approval": {
+          "type": "boolean"
+        },
+        "proposed_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

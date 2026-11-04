@@ -222,8 +222,8 @@ As system designer, you keep the teams, standards and guardrails coherent.
 
 | Service | Responsibility | Data | Produces | Consumes |
 |---|---|---|---|---|
-| `order-service` | Validate, reserve, track status | Cassandra `order_service` | `OrderPlaced`, `OrderCancelRequested` | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderCancelRejected` |
-| `matching-engine` | Order books, matching, event store | Cassandra `matching_engine` | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderCancelRejected` | `OrderPlaced`, `OrderCancelRequested` |
+| `order-service` | Validate, reserve, track status, relay expiry requests | Cassandra `order_service` | `OrderPlaced`, `OrderCancelRequested`, `OrderExpiryRequested` | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderCancelRejected`, `OrderExpired` |
+| `matching-engine` | Order books, matching, event store | Cassandra `matching_engine` | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderCancelRejected`, `OrderExpired` | `OrderPlaced`, `OrderCancelRequested`, `OrderExpiryRequested` |
 | `bot-traders` | 20 bots, 4 strategies | none (memory) | — (calls public API) | `CandleClosed` |
 | `web` | Trader UI, presenter view, chaos panel, incident feed | browser only | — | public API + WebSockets |
 | `sre-agent` | Detect, diagnose, remediate, explain | Cassandra `sre_agent` | `IncidentOpened`, `Remediation*`, `IncidentResolved` | Prometheus, Loki, Kubernetes API |
@@ -273,7 +273,7 @@ you own the door they see it through. You are the **read side of CQRS**:
 | Service | Responsibility | Data | Produces | Consumes |
 |---|---|---|---|---|
 | `market-data-service` | Candles, depth, trades, live streams, time travel, replay | Cassandra `market_data` | `CandleClosed` | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`; matching-engine `/internal/v1/events`, `/internal/v1/snapshots/{ticker}` |
-| `portfolio-service` | Accounts, reservations, settlement, leaderboard | Postgres `portfolio` | — (local events only) | `OrderAccepted`, `TradeExecuted`, `OrderCancelled` |
+| `portfolio-service` | Accounts, reservations, settlement, leaderboard | Postgres `portfolio` | — (local events only) | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderExpired`; calls order-service `/internal/v1/order-expiries` |
 | `api-gateway` | Public entry: JWT sessions, routing, rate limits, WS proxy | none | — | portfolio-service `/internal/v1/accounts`; routes to all services |
 
 **Concepts you must be able to explain:**

@@ -5,6 +5,7 @@ import logging
 import httpx
 from fastapi import Request, Response
 
+from api_gateway.domain.sessions import Principal
 from api_gateway.runtime.jsonlog import correlation_id_var
 from api_gateway.runtime.problem import problem_response
 
@@ -23,11 +24,11 @@ _HOP_BY_HOP = {
     "host",
     "content-length",
 }
-# Identity comes only from the verified JWT (Phase 2): a client must never set these itself.
+# Identity comes only from the verified JWT: a client must never set these itself.
 _IDENTITY_HEADERS = {"x-trader-id", "x-role", "x-nickname"}
 
 
-async def proxy_request(request: Request, upstream: str) -> Response:
+async def proxy_request(request: Request, upstream: str, principal: Principal) -> Response:
     base_url = request.app.state.settings.service_upstreams.get(upstream)
     if base_url is None:
         return problem_response(
@@ -46,6 +47,10 @@ async def proxy_request(request: Request, upstream: str) -> Response:
     correlation_id = correlation_id_var.get()
     if correlation_id:
         headers["X-Correlation-Id"] = correlation_id
+    headers["X-Role"] = principal.role.value
+    headers["X-Nickname"] = principal.nickname
+    if principal.trader_id is not None:
+        headers["X-Trader-Id"] = principal.trader_id
 
     params: list[tuple[str, str | int | float | bool | None]] = list(
         request.query_params.multi_items()

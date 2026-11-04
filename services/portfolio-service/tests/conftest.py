@@ -1,13 +1,28 @@
+import os
+
 import pytest
+from hypothesis import HealthCheck
+from hypothesis import settings as hypothesis_settings
 from pydantic import SecretStr
 
 from portfolio_service.config import Settings
+
+# Hypothesis profiles (tests/property): `ci` is the default; `deep` for long runs.
+for _name, _examples in (("ci", 1_000), ("deep", 25_000), ("dev", 100)):
+    hypothesis_settings.register_profile(
+        _name,
+        max_examples=_examples,
+        deadline=None,
+        suppress_health_check=[HealthCheck.too_slow],
+        print_blob=True,
+    )
+hypothesis_settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "ci"))
 
 
 @pytest.fixture
 def settings() -> Settings:
     """Test settings; tests pass their own readiness checks, so no real dependency is contacted."""
-    return Settings(postgres_password=SecretStr("test-only"))
+    return Settings(postgres_password=SecretStr("test-only"), start_consumers=False)
 
 
 @pytest.fixture

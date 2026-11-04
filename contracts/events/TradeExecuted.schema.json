@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/TradeExecuted.schema.json",
+  "title": "TradeExecuted",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "matching.v1",
+  "x-key": "ticker",
+  "x-producer": "matching-engine",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "TradeExecuted"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "matching-engine"
+    },
+    "data": {
+      "title": "TradeExecuted.data",
+      "type": "object",
+      "required": [
+        "sequence",
+        "ticker",
+        "trade_id",
+        "price_paise",
+        "quantity",
+        "buy_order_id",
+        "sell_order_id",
+        "buyer_trader_id",
+        "seller_trader_id",
+        "aggressor_side",
+        "buy_order_remaining_quantity",
+        "sell_order_remaining_quantity",
+        "executed_at"
+      ],
+      "properties": {
+        "sequence": {
+          "$ref": "defs.schema.json#/$defs/sequence"
+        },
+        "ticker": {
+          "$ref": "defs.schema.json#/$defs/ticker"
+        },
+        "trade_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "price_paise": {
+          "$ref": "defs.schema.json#/$defs/price_paise"
+        },
+        "quantity": {
+          "$ref": "defs.schema.json#/$defs/quantity"
+        },
+        "buy_order_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "sell_order_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "buyer_trader_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "seller_trader_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "aggressor_side": {
+          "$ref": "defs.schema.json#/$defs/side"
+        },
+        "buy_order_remaining_quantity": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sell_order_remaining_quantity": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "executed_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

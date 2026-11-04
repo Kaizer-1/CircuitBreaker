@@ -7,7 +7,7 @@ from order_service.config import Settings
 @pytest.fixture
 def settings() -> Settings:
     """Test settings; tests pass their own readiness checks, so no real dependency is contacted."""
-    return Settings(cassandra_password=SecretStr("test-only"))
+    return Settings(cassandra_password=SecretStr("test-only"), start_consumers=False)
 
 
 @pytest.fixture

@@ -1,7 +1,9 @@
 # web
 
-> **Status:** Phase 1 — one screen so far: **System Status** (polls the gateway's `/v1/system/status` every 3 s and shows every
-> service and dependency as healthy or not). The trader, presenter and admin views below arrive in Phase 3.
+> **Status:** Phase 2 — one screen so far: **System Status** (polls the gateway's `/v1/system/status` every 3 s and shows every
+> service and dependency as healthy or not). The report is admin-only since Phase 2, so the page first asks for the
+> presenter passcode (A-04, local placeholder `cb-dev-admin-passcode`) and keeps the token for the browser tab
+> (`sessionStorage`). The trader, presenter and admin views below arrive in Phase 3.
 
 |                 |                                                  |
 | --------------- | ------------------------------------------------ |

@@ -1,6 +1,6 @@
 """Configuration from environment variables (see .env.example)."""
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 from api_gateway.runtime.settings import BaseServiceSettings
 
@@ -23,3 +23,9 @@ class Settings(BaseServiceSettings):
     service_upstreams: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_UPSTREAMS))
     upstream_timeout_seconds: float = 5.0
     status_timeout_seconds: float = 2.0
+
+    # Secrets: no defaults, a secret never lives in code (Compose sets dev placeholders).
+    jwt_secret: SecretStr  # signs session tokens (HS256)
+    bot_secret: SecretStr  # X-Bot-Secret for A-03
+    admin_passcode: SecretStr  # the presenter's passcode for A-04
+    session_hours: float = 12

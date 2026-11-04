@@ -53,16 +53,59 @@ jobs:
       - name: pytest (unit, smoke and contract tests against api/)
         run: uv run --frozen pytest
 
+  integration:
+    name: ${{ matrix.service }} (integration tests, real stores in Docker)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - matching-engine
+          - portfolio-service
+          - order-service
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: uv sync --frozen
+      - name: pytest -m integration (testcontainers)
+        run: uv run --frozen pytest -m integration --no-cov
+
+  e2e:
+    name: end to end in Compose (demo trade, kill -9 the engine, orphan rule)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build and start every container, wait until all are healthy
+        run: make up
+      - name: make demo-trade
+        run: make demo-trade
+      - name: make test-e2e
+        run: make test-e2e
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker compose --profile infra --profile app logs --tail=300
+
   contracts:
-    name: API specs, template drift, Compose file
+    name: API specs, event contracts, template drift, Compose file
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
       - name: redocly lint
         run: npx --yes @redocly/cli@${{ env.REDOCLY_VERSION }} lint
+      - name: event schemas equal the event catalog; catalog examples are valid
+        run: uv run --quiet --locked tools/check_event_contracts.py
       - name: services still share identical runtime plumbing
         run: python3 tools/check_template_drift.py
       - name: docker-compose.yml is valid

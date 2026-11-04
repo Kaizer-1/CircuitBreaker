@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/defs.schema.json",
+  "title": "Shared definitions for event schemas",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "$defs": {
+    "ticker": {
+      "type": "string",
+      "enum": [
+        "CHAIWALA",
+        "JUGAAD",
+        "DABBA",
+        "MONSOON",
+        "FILMY"
+      ]
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "SELL"
+      ]
+    },
+    "order_type": {
+      "type": "string",
+      "enum": [
+        "LIMIT",
+        "MARKET"
+      ]
+    },
+    "price_paise": {
+      "type": "integer",
+      "minimum": 5,
+      "multipleOf": 5,
+      "description": "Price in paise; multiple of the 5-paise tick"
+    },
+    "quantity": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Per-ticker, strictly increasing, assigned by matching-engine"
+    },
+    "service": {
+      "type": "string",
+      "enum": [
+        "api-gateway",
+        "order-service",
+        "matching-engine",
+        "market-data-service",
+        "portfolio-service",
+        "bot-traders",
+        "sre-agent",
+        "chaos-service"
+      ]
+    },
+    "agent_action": {
+      "type": "string",
+      "enum": [
+        "rollback_deployment",
+        "scale_deployment",
+        "restart_deployment",
+        "do_nothing"
+      ]
+    },
+    "limit_or_market_prices": {
+      "description": "A LIMIT order has a limit price and no protection price; a MARKET order the reverse",
+      "oneOf": [
+        {
+          "properties": {
+            "order_type": {
+              "const": "LIMIT"
+            },
+            "limit_price_paise": {
+              "$ref": "#/$defs/price_paise"
+            },
+            "protection_price_paise": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "order_type": {
+              "const": "MARKET"
+            },
+            "limit_price_paise": {
+              "type": "null"
+            },
+            "protection_price_paise": {
+              "$ref": "#/$defs/price_paise"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

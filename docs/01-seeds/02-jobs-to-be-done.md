@@ -78,6 +78,7 @@ They are listed so that **every** action and query has a traceable origin:
 | J-33 | **When** time travel is requested, `market-data-service` needs to read market events and snapshots, **so it can** rebuild the past book. | Q-14, Q-15 |
 | J-34 | **When** debugging or checking consistency, the team needs to see the engine's live in-memory book, **so it can** compare it with the read model. | Q-16 |
 | J-35 | **When** the memory-leak scenario runs, `chaos-service` needs to switch a fault on and off inside a target service, **so** the failure is realistic and reversible. | A-12, A-13 |
+| J-36 | **When** a reservation has had no `OrderAccepted` for 120 s, `portfolio-service` needs the matching engine to confirm the order can never trade, **so it can** release the money without risking a trade on it (found while building Phase 2; [ADR-0017](../adr/0017-fail-closed-orphan-release.md)). | A-19 |
 
 ## Viva Notes
 

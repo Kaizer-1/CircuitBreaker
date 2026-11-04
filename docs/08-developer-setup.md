@@ -48,9 +48,9 @@ Then open:
 
 | URL | What you should see |
 |---|---|
-| <http://localhost:5173> | **System Status**: "All systems healthy", 8 service cards and 3 dependencies, all green |
+| <http://localhost:5173> | **System Status** (sign in with the local passcode `cb-dev-admin-passcode`): "All systems healthy", 8 service cards and 3 dependencies, all green |
 | <http://localhost:8088> | Redpanda Console: the 4 topics and their dead-letter topics |
-| <http://localhost:8080/v1/system/status> | The same report as JSON |
+| `make status` | The same report as JSON (it signs in as admin first; the endpoint is admin-only) |
 
 The first run also downloads the base images (Redpanda, Cassandra, Postgres, Python, Node, nginx), so it takes several
 minutes depending on your connection. Later runs reuse Docker's cache; from an empty data state on a warm cache,
@@ -105,8 +105,12 @@ exist, so "healthy" means "can do its job", not just "the process started".
 | `make build` | Builds the Docker images (`s=<service>` for one) |
 | `make lint` | `ruff check`, `ruff format --check` and `mypy` per service, `redocly lint`, the template-drift check, and web ESLint + Prettier |
 | `make fmt` | Auto-fixes and formats Python (ruff) and web (Prettier) |
-| `make test` | `pytest` per service (unit, smoke and contract tests) and `vitest` for the web app |
-| `make status` | Calls the gateway's `/v1/system/status` and prints the report |
+| `make test` | `pytest` per service (unit, property, smoke and contract tests; matching-engine also enforces 100% branch coverage of `domain/`) and `vitest` for the web app |
+| `make test-integration` | Integration tests against real Cassandra/Postgres/Redpanda started by testcontainers (needs Docker); `s=<service>` for one |
+| `make test-deep` | Property tests (Hypothesis) at 25,000 examples each instead of 1,000; slow |
+| `make demo-trade` | With `make up` running: two traders join, a bot sells to one, who sells to the other, all through the gateway; prints the trades, the three portfolios and the order statuses |
+| `make test-e2e` | With `make up` running (~3 min): join → trade → settle with exact balances; `kill -9` of the matching engine mid-workload, then the same book hash after a rebuild; the orphan rule with Redpanda stopped (`REJECTED` after 60 s, money held until the engine answers) |
+| `make status` | Signs in as admin (`ADMIN_PASSCODE`, default the local placeholder) and prints the gateway's `/v1/system/status` |
 
 > **Not the same as the Terraform target.** `make infra` means *the Compose infrastructure*. The Terraform platform from
 > [ADR-0015](adr/0015-terraform-local-platform.md) (kind cluster, namespaces, Argo CD) will be `make platform`; it
@@ -137,6 +141,7 @@ secrets from Kubernetes Secrets created by Terraform ([ADR-0015](adr/0015-terraf
 | Cassandra role of a service | `<keyspace>_role` / `cb_dev_<keyspace>`, for example `order_service_role` / `cb_dev_order_service`. Allowed on **its own keyspace only**. |
 | Postgres administrator | `postgres` / `postgres` |
 | Postgres role of portfolio-service | `portfolio_service` / `cb_dev_portfolio`. Owns the `portfolio` database; nobody else can connect to it. |
+| Gateway secrets | `JWT_SECRET=cb-dev-jwt-secret-for-local-compose-only`, `BOT_SECRET=cb-dev-bot-secret`, `ADMIN_PASSCODE=cb-dev-admin-passcode` (log in as admin with any nickname and this passcode) |
 
 To run a service outside Docker, copy its `.env.example` to `.env` (git-ignored) and run
 `uv run uvicorn <package>.main:create_app --factory --reload` inside its folder.
@@ -148,7 +153,7 @@ Each file has one of three origins:
 
 | Origin | Files | How it stays right |
 |---|---|---|
-| **Copied from the template**, identical in every service | `src/<package>/runtime/` (settings, JSON logging, Problem Details, middleware, metrics, health and readiness checks), `Dockerfile`, `.dockerignore`, `.python-version`, the shared tests | `tools/check_template_drift.py` (in `make lint` and CI) fails if any copy differs. See [duplication over coupling](05-coding-standards.md#duplication-over-coupling-why-the-services-share-no-library). |
+| **Copied from the template**, identical in every service | `src/<package>/runtime/` (settings, JSON logging, Problem Details, middleware, metrics, health and readiness checks, and since Phase 2 the event envelope and the Kafka publisher/consumer with the dead-letter rule), `Dockerfile`, `.dockerignore`, `.python-version`, the shared tests | `tools/check_template_drift.py` (in `make lint` and CI) fails if any copy differs; `--sync` copies the template's files to every service. See [duplication over coupling](05-coding-standards.md#duplication-over-coupling-why-the-services-share-no-library). |
 | **Generated from the OpenAPI spec**, then owned by the service | `src/<package>/api/stubs.py`: one `501` stub per operation | `tests/contract/` compares the app with `api/<service>.yaml`, both ways |
 | **Written per service** | `config.py`, `main.py`, `business_metrics.py`, `pyproject.toml`, `tests/conftest.py`, `.env.example` | Rendered by `tools/scaffold.py` from the service table; reviewed like any code |
 
@@ -212,7 +217,7 @@ stores in kind, which will need much more; we will re-measure then. The limits a
 | A service stays `starting` or `not_ready` | A dependency is down, or the init jobs failed | `curl localhost:8080/v1/system/status`: the `checks` show which one. `make logs s=redpanda-init` or `s=cassandra-init` for the init jobs. |
 | After changing a Cassandra role or password, services cannot log in | The Cassandra data volume still holds the old roles | `make reset` (wipes data) and `make up` |
 | `make doctor` says Node is too old although you installed a newer one | An older Homebrew Node formula is still linked | `brew unlink node@20 && brew link --overwrite --force node@24`, then open a new terminal |
-| `make lint` fails with `DRIFT` | A file that must be identical in every service was changed in one | Change `services/order-service` (the template) and copy it to the others, or revert; see [§6](#6-how-the-services-are-built) |
+| `make lint` fails with `DRIFT` | A file that must be identical in every service was changed in one | Change `services/order-service` (the template) and run `python3 tools/check_template_drift.py --sync`, or revert; see [§6](#6-how-the-services-are-built) |
 | The pre-commit hook rejects a commit | Lint error, a secret was detected, or `private/` / `CLAUDE.md` was staged | Read the message; `git restore --staged <file>` for the last case |
 
 ## Viva Notes

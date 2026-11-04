@@ -27,8 +27,9 @@ flowchart LR
 | Phase | Status |
 |---|---|
 | 0 | 🔒 Design frozen on 2026-11-03 (owners still to review their study guides) |
-| 1 | 🟢 Built and verified (2026-11-03); CI runs once the repository is pushed to GitHub |
-| 2–8 | ⚪ Not started |
+| 1 | 🟢 Built and verified (2026-11-03); CI green on GitHub |
+| 2 | 🟢 Built and verified (2026-11-04): `make demo-trade`; `make test-e2e` (join → trade → settle, `kill -9` of the engine mid-workload with an identical book hash, the fail-closed orphan rule with Redpanda stopped); matching `domain/` at 100% branch coverage; replay and duplicate-event property tests at 1,000 examples in CI and 25,000 in `make test-deep`. Design changes made while building: [ADR-0017](adr/0017-fail-closed-orphan-release.md) (fail-closed orphan release) and self-trade prevention |
+| 3–8 | ⚪ Not started |
 
 ## Design freeze
 

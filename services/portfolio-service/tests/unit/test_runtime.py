@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import FastAPI
@@ -9,8 +10,17 @@ from fastapi.testclient import TestClient
 
 from portfolio_service.config import Settings
 from portfolio_service.main import create_app
+from portfolio_service.runtime.events import (
+    EventEnvelope,
+    InvalidEventError,
+    build_event,
+    deterministic_event_id,
+    format_timestamp,
+    parse_timestamp,
+)
 from portfolio_service.runtime.health import ReadinessCheck, health_router
 from portfolio_service.runtime.jsonlog import configure_logging
+from portfolio_service.runtime.kafka import MAX_ATTEMPTS, Delivery, EventConsumer, consumer_check
 from portfolio_service.runtime.metrics import Metrics, metrics_router
 from portfolio_service.runtime.middleware import ObservabilityMiddleware
 from portfolio_service.runtime.problem import install_exception_handlers
@@ -138,6 +148,18 @@ def test_validation_errors_list_the_fields(plain_app: FastAPI) -> None:
     assert body["errors"][0]["field"] == "limit"
 
 
+def test_a_body_that_is_not_json_is_a_400_bad_request(plain_app: FastAPI) -> None:
+    async def takes_body(body: dict[str, int]) -> dict[str, int]:
+        return body
+
+    plain_app.add_api_route("/test-only/body", takes_body, methods=["POST"])
+    with TestClient(plain_app) as c:
+        response = c.post(
+            "/test-only/body", content=b"{not json", headers={"content-type": "application/json"}
+        )
+    assert (response.status_code, response.json()["code"]) == (400, "BAD_REQUEST")
+
+
 def test_an_unhandled_exception_becomes_a_problem_details_500(plain_app: FastAPI) -> None:
     async def boom() -> None:
         raise RuntimeError("secret internals must not leak")
@@ -169,3 +191,142 @@ def test_access_log_is_one_json_line_with_the_correlation_id(
     assert entry["status"] == 200
     assert entry["level"] == "INFO"
     assert "timestamp" in entry
+
+
+# ------------------------------------------------- events and the consumer's delivery rules
+
+
+def _event(event_type: str = "SomethingHappened") -> EventEnvelope:
+    return build_event(
+        event_type,
+        {"answer": 42},
+        producer="portfolio-service",
+        environment="dev",
+        correlation_id="cid-ev",
+        occurred_at=datetime(2026, 11, 20, 10, 42, 1, 250_000, tzinfo=UTC),
+    )
+
+
+def test_an_event_round_trips_through_json_and_ignores_unknown_fields() -> None:
+    event = _event()
+    assert event.occurred_at == "2026-11-20T10:42:01.250Z"
+    raw = json.loads(event.to_json())
+    raw["added_later"] = True  # tolerant reader
+    assert EventEnvelope.from_json(json.dumps(raw).encode()) == event
+
+
+def test_a_message_that_is_not_an_envelope_is_an_invalid_event() -> None:
+    with pytest.raises(InvalidEventError):
+        EventEnvelope.from_json(b"not json")
+    with pytest.raises(InvalidEventError):
+        EventEnvelope.from_json(b'{"event_type": "X"}')
+
+
+def test_timestamps_and_deterministic_ids() -> None:
+    moment = parse_timestamp("2026-11-20T10:42:01.250Z")
+    assert format_timestamp(moment) == "2026-11-20T10:42:01.250Z"
+    assert deterministic_event_id("https://x/1") == deterministic_event_id("https://x/1")
+    assert deterministic_event_id("https://x/1") != deterministic_event_id("https://x/2")
+
+
+class _Sink:
+    def __init__(self) -> None:
+        self.letters: list[tuple[str, bytes | None, dict[str, object]]] = []
+
+    async def __call__(self, topic: str, key: bytes | None, value: bytes) -> None:
+        self.letters.append((topic, key, json.loads(value)))
+
+
+async def _no_sleep(_: float) -> None:
+    return None
+
+
+def _consumer(settings: Settings, handler: object, sink: _Sink) -> EventConsumer:
+    return EventConsumer(
+        bootstrap_servers="unused:9092",
+        topics=["things.v1"],
+        group_id=f"{settings.service_name}.things.v1",
+        service=settings.service_name,
+        metrics=Metrics(settings.service_name),
+        handler=handler,  # type: ignore[arg-type]
+        dead_letters=sink,
+        sleep=_no_sleep,
+    )
+
+
+def _delivery(value: bytes) -> Delivery:
+    return Delivery("things.v1", 0, 7, b"KEY", value)
+
+
+async def test_a_handled_message_is_not_dead_lettered(settings: Settings) -> None:
+    seen: list[str] = []
+
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        seen.append(event.event_id)
+
+    sink = _Sink()
+    event = _event()
+    assert await _consumer(settings, handler, sink).handle(_delivery(event.to_json())) is True
+    assert seen == [event.event_id]
+    assert sink.letters == []
+
+
+async def test_a_message_failing_five_times_goes_to_the_dlq_with_the_error(
+    settings: Settings,
+) -> None:
+    calls = 0
+
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        nonlocal calls
+        calls += 1
+        raise ValueError("bad data in the message")
+
+    sink = _Sink()
+    assert await _consumer(settings, handler, sink).handle(_delivery(_event().to_json())) is False
+    assert calls == MAX_ATTEMPTS
+    [(topic, key, body)] = sink.letters
+    assert topic == "things.v1.dlq"
+    assert key == b"KEY"
+    assert body["attempts"] == MAX_ATTEMPTS
+    assert "bad data in the message" in str(body["error"])
+    assert body["offset"] == 7
+
+
+async def test_an_infrastructure_outage_is_retried_and_never_dead_lettered(
+    settings: Settings,
+) -> None:
+    calls = 0
+
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        nonlocal calls
+        calls += 1
+        if calls <= MAX_ATTEMPTS * 2:
+            raise ConnectionError("database is down")
+
+    sink = _Sink()
+    assert await _consumer(settings, handler, sink).handle(_delivery(_event().to_json())) is True
+    assert calls == MAX_ATTEMPTS * 2 + 1
+    assert sink.letters == []
+
+
+async def test_a_message_that_is_not_an_event_goes_straight_to_the_dlq(settings: Settings) -> None:
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        raise AssertionError("must not be called")
+
+    sink = _Sink()
+    assert await _consumer(settings, handler, sink).handle(_delivery(b"{broken")) is False
+    assert sink.letters[0][2]["attempts"] == 1
+
+
+async def test_the_consumer_readiness_check_waits_until_it_has_caught_up(
+    settings: Settings,
+) -> None:
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        return None
+
+    consumer = _consumer(settings, handler, _Sink())
+    for current in (None, consumer):
+        with pytest.raises(RuntimeError):
+            await consumer_check(lambda current=current: current).probe()  # type: ignore[misc]
+    consumer.caught_up_once = True
+    await consumer_check(lambda: consumer).probe()

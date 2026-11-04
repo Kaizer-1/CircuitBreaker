@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/CandleClosed.schema.json",
+  "title": "CandleClosed",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "candles.v1",
+  "x-key": "ticker",
+  "x-producer": "market-data-service",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "CandleClosed"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "market-data-service"
+    },
+    "data": {
+      "title": "CandleClosed.data",
+      "type": "object",
+      "required": [
+        "ticker",
+        "interval",
+        "bucket_start",
+        "bucket_end",
+        "open_paise",
+        "high_paise",
+        "low_paise",
+        "close_paise",
+        "volume",
+        "trade_count"
+      ],
+      "properties": {
+        "ticker": {
+          "$ref": "defs.schema.json#/$defs/ticker"
+        },
+        "interval": {
+          "type": "string",
+          "enum": [
+            "5s",
+            "1m",
+            "5m"
+          ]
+        },
+        "bucket_start": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        },
+        "bucket_end": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        },
+        "open_paise": {
+          "$ref": "defs.schema.json#/$defs/price_paise"
+        },
+        "high_paise": {
+          "$ref": "defs.schema.json#/$defs/price_paise"
+        },
+        "low_paise": {
+          "$ref": "defs.schema.json#/$defs/price_paise"
+        },
+        "close_paise": {
+          "$ref": "defs.schema.json#/$defs/price_paise"
+        },
+        "volume": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trade_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

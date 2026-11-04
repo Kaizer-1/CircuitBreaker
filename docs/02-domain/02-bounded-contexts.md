@@ -96,6 +96,7 @@ flowchart TB
     ACC -- "C/S: open account<br/>(sync)" --> PA
     ACC -- "routes to" --> OM
     OM -- "C/S: reserve cash or shares<br/>(sync)" --> PA
+    PA -- "C/S: request expiry, A-19<br/>(sync, background sweeper)" --> OM
     OM == "PL: orders.v1<br/>(async)" ==> MA
     MA == "PL: matching.v1<br/>(async)" ==> OM
     MA == "PL: matching.v1, CF<br/>(async)" ==> PA

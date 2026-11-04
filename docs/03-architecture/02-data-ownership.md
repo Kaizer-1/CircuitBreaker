@@ -66,20 +66,25 @@ clusters without changing any code.
 | Table | Partition key | Clustering key | Answers the query |
 |---|---|---|---|
 | `market_events` | `(ticker, day)` | `sequence ASC` | "Events for CHAIWALA after sequence N until time T" (replay, time travel, re-publish) |
+| `ticker_days` | `ticker` | `day ASC` | "Which day partitions of `market_events` exist, and the first sequence in each" (where a rebuild or a Q-14 page starts) |
 | `book_snapshots` | `ticker` | `sequence DESC` | "Latest snapshot at or before time T" |
 | `processed_commands` | `command_id` (the `event_id` of the incoming `OrderPlaced`/`OrderCancelRequested`) | — | "Have I already processed this command?" (idempotency) |
 | `publish_cursor` | `ticker` | — | "Last sequence successfully published to `matching.v1`" |
 
 `market_events` columns: `sequence`, `event_id`, `event_type`, `occurred_at`, `payload` (the full JSON envelope).
-`day` bucketing keeps partitions from growing forever.
+`day` bucketing keeps partitions from growing forever. A command's events, its `ticker_days` row (on a new day) and its
+`processed_commands` row are written in **one logged batch**. A snapshot's `state` is the whole book, including every
+finished or expired order ID (so cancel rejections and tombstones give the same answer after a restart).
 
 ### Keyspace `order_service` (owner: order-service)
 
 | Table | Partition key | Clustering key | Answers the query |
 |---|---|---|---|
 | `orders_by_id` | `order_id` | — | Q-08 Get one order |
-| `orders_by_trader` | `trader_id` | `placed_at DESC, order_id` | Q-07 List my orders, newest first |
+| `orders_by_trader` | `trader_id` | `placed_at DESC, order_id DESC` | Q-07 List my orders, newest first |
 | `order_events` | `order_id` | `occurred_at ASC` | Order history; outbox (column `published` boolean) |
+| `outbox` | `bucket` (minutes since 1970) | `occurred_at ASC, event_id` | "Which events are not yet published?" for the relay; a row is deleted once published. `order_events` alone cannot answer this: it is partitioned by order |
+| `orders_by_idempotency_key` | `(trader_id, idempotency_key)` | — | "Did this trader already send this `Idempotency-Key`?" (24 h TTL, claimed with a lightweight transaction) |
 | `processed_events` | `event_id` | — | Idempotent consumption of `matching.v1` |
 
 ### Keyspace `market_data` (owner: market-data-service)
@@ -109,10 +114,11 @@ and is only ever needed "now".
 |---|---|---|
 | `accounts` | `trader_id` (PK), `nickname` (UNIQUE) | `kind` (`HUMAN`, `BOT`, `LOAD`), `cash_paise`, `reserved_cash_paise`, `CHECK (cash_paise >= reserved_cash_paise AND reserved_cash_paise >= 0)` |
 | `holdings` | `(trader_id, ticker)` | `quantity`, `reserved_quantity`, `avg_cost_paise`, `CHECK (quantity >= reserved_quantity AND reserved_quantity >= 0)` |
-| `reservations` | `reservation_id`; UNIQUE `order_id` | `side`, `ticker`, `reserved_cash_paise` or `reserved_quantity`, remaining amounts, `status` (`ACTIVE`, `RELEASED`, `CONSUMED`) |
+| `reservations` | `reservation_id`; UNIQUE `order_id` | `side`, `ticker`, `reserved_cash_paise` or `reserved_quantity`, remaining amounts, `status` (`ACTIVE`, `RELEASED`, `CONSUMED`), `confirmed` (`OrderAccepted` seen), `expiry_requested_at` (the fail-closed sweeper asked for an expiry, [ADR-0017](../adr/0017-fail-closed-orphan-release.md)) |
 | `settlements` | `(trade_id, trader_id)` | One row per side of each trade, for the trader's history |
 | `last_prices` | `ticker` | Copy of last traded price, used for valuation and market-order protection price |
 | `processed_events` | `event_id` | Idempotency: inserted in the same transaction as the change it caused |
+| `schema_migrations` | `version` | Which migration files have been applied (start-up applies the rest) |
 
 ## 5. Duplicated data (on purpose)
 
@@ -134,7 +140,7 @@ the textbook; its chapter on data is not among those we have read.
 
 | Pattern | How it works | Trade-off | Where CircuitBreaker uses it |
 |---|---|---|---|
-| **(a) Synchronous API call to the owner** | Ask the owning service's API at the moment you need the data or decision. | Always fresh, but the caller depends on the owner being up, which is why we add timeouts and a circuit breaker. | order-service → portfolio-service `POST /internal/v1/reservations`; api-gateway → portfolio-service `POST /internal/v1/accounts`; market-data-service → matching-engine `/internal/v1/events` and `/internal/v1/snapshots/{ticker}` (time travel). |
+| **(a) Synchronous API call to the owner** | Ask the owning service's API at the moment you need the data or decision. | Always fresh, but the caller depends on the owner being up, which is why we add timeouts and a circuit breaker. | order-service → portfolio-service `POST /internal/v1/reservations`; portfolio-service → order-service `POST /internal/v1/order-expiries` (background sweeper, [ADR-0017](../adr/0017-fail-closed-orphan-release.md)); api-gateway → portfolio-service `POST /internal/v1/accounts`; market-data-service → matching-engine `/internal/v1/events` and `/internal/v1/snapshots/{ticker}` (time travel). |
 | **(b) Published events + local read-only copies** | The owner publishes events; other services keep their own copy of only the fields they need. | Works even when the owner is down, but the copy is briefly stale (eventual consistency) and uses extra storage. | Last price in `market_data.last_prices` and `portfolio.last_prices` (from `TradeExecuted`); order status in order-service (from `matching.v1`); bots' latest candles (from `candles.v1`). |
 | **(c) Event sourcing + CQRS read models** | The owner stores every change as an event; read-side services build query-shaped models by replaying and following those events. | The most flexible: new views and time travel can be built from history. It is also the most moving parts. | matching-engine's event store → market-data candles, depth and time travel; portfolio balances and leaderboard ([ES and CQRS](04-event-sourcing-and-cqrs.md)). |
 

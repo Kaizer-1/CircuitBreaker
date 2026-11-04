@@ -1,7 +1,7 @@
 """GET /v1/system/status: ask every service's /readyz and combine the answers.
 
 An operational endpoint, like /healthz: it has no SEED(S) ID and is not in api/api-gateway.yaml
-(see docs/05-coding-standards.md section 7). Open in Phase 1; Phase 2 makes it admin-only.
+(see docs/05-coding-standards.md section 7). Admin only since Phase 2.
 """
 
 import asyncio
@@ -10,7 +10,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+
+from api_gateway.api.auth import ADMIN
 
 SERVICE_ORDER = (
     "order-service",
@@ -64,7 +66,7 @@ def _dependencies(services: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-@router.get("/v1/system/status", include_in_schema=False)
+@router.get("/v1/system/status", include_in_schema=False, dependencies=[Depends(ADMIN)])
 async def system_status(request: Request) -> dict[str, Any]:
     settings = request.app.state.settings
     client: httpx.AsyncClient = request.app.state.http_client

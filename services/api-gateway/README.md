@@ -1,9 +1,8 @@
 # api-gateway
 
-> **Status:** Phase 1 — runnable skeleton. Follows the layout in
-> [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service)
-> (Python package `api_gateway`). Every operation in its API spec answers `501 Not Implemented` until its phase;
-> `/healthz`, `/readyz` and `/metrics` work.
+> **Status:** Phase 2 — sessions (JWT), role checks, identity headers, rate limits and proxying are built; the
+> WebSocket proxy arrives in Phase 3. Layout:
+> [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service) (package `api_gateway`).
 
 | | |
 |---|---|
@@ -16,9 +15,31 @@
 
 The single public entry point. Issues and verifies JWT sessions (trader, bot, admin), checks roles, applies rate limits (20 req/s per trader, 50 req/s per bot token), adds `X-Correlation-Id`, strips client-supplied identity headers and sets `X-Trader-Id` / `X-Role` / `X-Nickname`, proxies HTTP and WebSocket traffic to the owning service, and refuses every `/internal/` path.
 
+## How it works
+
+| Code | Role |
+|---|---|
+| `domain/sessions.py` | Issue and verify HS256 JWTs: `sub` (trader_id, or the nickname for an admin), `role`, `nickname`, `iat`, `exp` (12 h) |
+| `domain/rate_limit.py` | A token bucket per caller |
+| `api/sessions.py` | A-01 join (calls portfolio A-02, kind `HUMAN`), A-03 bot session (`X-Bot-Secret`; kind `BOT` or `LOAD`), A-04 admin (passcode), Q-01 |
+| `api/auth.py` | Per route: verify the bearer token, check the role, apply the rate limit |
+| `api/proxied.py` | Every other public route, proxied with `X-Trader-Id` / `X-Role` / `X-Nickname` from the token |
+
+**Roles per route** (from [`api/api-gateway.yaml`](../../api/api-gateway.yaml)): orders and portfolio: `trader`, `bot`;
+market data, time travel, leaderboard, incident list and detail: any signed-in role; agent settings, decisions and
+chaos: `admin`. A missing, expired or forged token is `401 UNAUTHENTICATED`; the wrong role is `403 FORBIDDEN`. The
+admin has no trading account, so no `X-Trader-Id` is ever sent for an admin.
+
+**Rate limits:** 20 requests/s per trader, 50/s per bot token, 20/s per client address on the session endpoints (no
+token yet); then `429 RATE_LIMITED` with `Retry-After`. A token bucket in memory, **per replica**: with 2 replicas a
+caller can reach twice the limit, which is enough to stop a runaway client.
+
+**`GET /v1/system/status`** (the System Status page and `make status`) is **admin-only** since Phase 2.
+
 ## Owned data
 
-None (stateless). Sessions are self-contained signed JWTs (`JWT_SECRET`).
+None (stateless). Sessions are self-contained signed JWTs (`JWT_SECRET`). Secrets `JWT_SECRET`, `BOT_SECRET` and
+`ADMIN_PASSCODE` have no defaults; Compose sets local-development placeholders.
 
 ## Events
 
@@ -59,9 +80,14 @@ curl localhost:8080/readyz         # or `make up` from the repo root to run its 
 
 **Ready means:**
 
-- none of its own: it needs no database or broker. `/readyz` is `200` once it is configured and running. `GET /v1/system/status` asks every other service's `/readyz`.
+- none of its own: it needs no database or broker. `/readyz` is `200` once it is configured and running. `GET /v1/system/status` (admin token) asks every other service's `/readyz`.
 
 The gateway reads `SERVICE_UPSTREAMS` (a JSON map of service name to base URL; the defaults are the host ports of `make up`).
+
+```bash
+curl -s -X POST localhost:8080/v1/sessions -H 'Content-Type: application/json' -d '{"nickname":"RajuTrader"}'
+curl -s -H "Authorization: Bearer <access_token>" localhost:8080/v1/portfolio
+```
 
 ## Viva Notes
 

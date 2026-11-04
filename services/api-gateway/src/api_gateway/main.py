@@ -9,8 +9,11 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from api_gateway.api import internal_block, stubs, system_status
+from api_gateway.api import internal_block, proxied, sessions, system_status
+from api_gateway.api.auth import install_problem_handler
 from api_gateway.config import Settings
+from api_gateway.domain.rate_limit import RateLimiter
+from api_gateway.domain.sessions import Sessions
 from api_gateway.runtime.health import ReadinessCheck, health_router
 from api_gateway.runtime.jsonlog import configure_logging
 from api_gateway.runtime.metrics import Metrics, metrics_router
@@ -46,6 +49,10 @@ def create_app(
     )
     app.state.settings = settings
     app.state.metrics = metrics
+    app.state.sessions = Sessions(
+        settings.jwt_secret.get_secret_value(), hours=settings.session_hours
+    )
+    app.state.rate_limiter = RateLimiter()
 
     # The gateway issues the correlation ID; every other service passes it through.
     app.add_middleware(
@@ -55,9 +62,11 @@ def create_app(
         issue_correlation_id=True,
     )
     install_exception_handlers(app)
+    install_problem_handler(app)
     app.include_router(health_router(settings.service_name, checks))
     app.include_router(metrics_router(metrics))
     app.include_router(system_status.router)
     app.include_router(internal_block.router)
-    app.include_router(stubs.router)
+    app.include_router(sessions.router)
+    app.include_router(proxied.router)
     return app

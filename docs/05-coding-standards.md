@@ -75,14 +75,14 @@ services/order-service/
 │   ├── main.py               # create_app(): FastAPI app, routers, lifespan (start consumers)
 │   ├── config.py             # Settings (pydantic-settings) read from env vars
 │   ├── business_metrics.py   # the service's own Prometheus metrics (the ones named in the docs)
-│   ├── runtime/              # IDENTICAL in every service: JSON logging, Problem Details, middleware, metrics, health
+│   ├── runtime/              # IDENTICAL in every service: logging, Problem Details, middleware, metrics, health, events, Kafka
 │   ├── api/                  # HTTP routers: thin — parse, call a use case, map errors to Problem Details
 │   ├── application/          # use cases (place_order, cancel_order, apply_matching_event)
 │   ├── domain/               # pure business logic and models (Order, OrderStatus, validation rules)
 │   ├── ports/                # interfaces the application needs (OrderRepository, EventPublisher, PortfolioClient)
 │   ├── adapters/             # implementations: cassandra/, redpanda/, http/
-│   └── events/               # Pydantic models of produced/consumed events (match contracts/events/)
-├── migrations/               # CQL (Cassandra) or SQL (Postgres) migrations, numbered
+│   ├── events/               # models of produced/consumed events (match contracts/events/)
+│   └── migrations/           # CQL (Cassandra) or SQL (Postgres) migrations, numbered; applied at start-up
 └── tests/
     ├── unit/                 # domain + application, no I/O, fast
     ├── integration/          # real Cassandra/Redpanda/Postgres via testcontainers
@@ -107,7 +107,8 @@ health and readiness endpoints. The obvious move is a shared Python package. We 
 **How it works.** The plumbing lives in `src/<package>/runtime/` (plus the `Dockerfile` and a few shared tests). The first
 service, `order-service`, is the template. `tools/scaffold.py` copies those files into a new service and renames the package;
 `tools/check_template_drift.py` (part of `make lint` and CI) compares every service's copy, after renaming, and fails if
-any differs. To change the plumbing: edit it in `order-service`, copy it to the others, and the check goes green.
+any differs. To change the plumbing: edit it in `order-service`, run `python3 tools/check_template_drift.py --sync` to copy
+it to the others, and the check goes green.
 
 This follows the textbook's reason for microservices (minimise coordination between teams) and its warning that a
 shared kernel needs tight coordination ([bounded contexts](02-domain/02-bounded-contexts.md#context-map)). Real business
@@ -172,7 +173,8 @@ Every service exposes these on port 8000 (not in the OpenAPI specs, not routed b
 The **api-gateway** has one more operational endpoint, `GET /v1/system/status`. It calls every service's `/readyz`
 and returns one combined report (`status`: `healthy` | `unhealthy`; `services`; `dependencies` grouped from the services'
 checks). The System Status page in `web` shows it. Like `/healthz` it is not derived from a job to be done, so it has no
-A/Q ID and is not in `api/api-gateway.yaml`. It is open in Phase 1 and becomes admin-only when auth arrives (Phase 2).
+A/Q ID and is not in `api/api-gateway.yaml`. It is **admin-only** (since Phase 2): the System Status page asks for the
+presenter passcode (A-04), and `make status` signs in with the local placeholder passcode first.
 
 **Standard metrics** (all services, labelled `service`, plus `route`, `method`, `status` where relevant):
 `http_requests_total`, `http_request_duration_seconds` (histogram), `http_requests_in_flight`,

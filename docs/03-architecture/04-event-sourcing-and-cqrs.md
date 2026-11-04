@@ -58,11 +58,11 @@ flowchart LR
 
 ### Appending (inside matching-engine)
 
-For each incoming command (`OrderPlaced` or `OrderCancelRequested`) from `orders.v1`:
+For each incoming command (`OrderPlaced`, `OrderCancelRequested` or `OrderExpiryRequested`) from `orders.v1`:
 
 1. **Deduplicate:** if `command_id` (the incoming `event_id`) is in `processed_commands`, skip to step 5.
 2. **Decide:** run the matching algorithm on the in-memory `OrderBook` for that ticker. This *produces* events
-   (`OrderAccepted`, zero or more `TradeExecuted`, maybe `OrderCancelled`) — it does not mutate yet.
+   (`OrderAccepted`, zero or more `TradeExecuted`, maybe `OrderCancelled`; or `OrderExpired`) — it does not mutate yet.
 3. **Append:** write those events with consecutive `sequence` numbers to `market_events`, plus the `command_id` into
    `processed_commands`, as one Cassandra **logged batch** (all-or-nothing).
 4. **Apply:** apply the events to the in-memory book (the *same* `apply(event)` function used during replay).
@@ -74,8 +74,8 @@ anything after the cursor → resume consuming from the last committed offset. D
 
 > **Decide vs apply.** "Decide" contains the business rules (matching) and can change between versions. "Apply"
 > is dumb: "an `OrderAccepted` adds the order to the book; a `TradeExecuted` reduces both orders; remaining 0 removes
-> it; an `OrderCancelled` removes it". Replay only ever calls *apply*. This is why history never changes even if we
-> fix a bug in matching.
+> it; an `OrderCancelled` removes it; an `OrderExpired` marks the ID as dead". Replay only ever calls *apply*. This is
+> why history never changes even if we fix a bug in matching.
 
 ### Snapshots
 
@@ -96,8 +96,15 @@ order-service has the same "save + publish" problem: it appends `OrderPlaced` to
 `published = false`, publishes to `orders.v1`, then sets `published = true`. A background **outbox relay** re-publishes
 any rows still `false` after 5 seconds. Result: once the API returns `202`, the order *will* reach the engine,
 possibly twice — and the engine deduplicates via `processed_commands`. One limit: the relay never publishes an
-`OrderPlaced` older than **60 s**; it marks the order `REJECTED` (`PUBLISH_TIMEOUT`) instead, because portfolio-service
-releases reservations that the engine hasn't accepted within **120 s** ([ADR-0011](../adr/0011-synchronous-reservation-over-saga.md)).
+`OrderPlaced` older than **60 s**; it marks the order `REJECTED` (`PUBLISH_TIMEOUT`) instead, so the trader learns quickly
+that the order did not get through ([ADR-0011](../adr/0011-synchronous-reservation-over-saga.md)). The same outbox carries
+`OrderCancelRequested` and `OrderExpiryRequested`; a cancel or expiry for an order is never published before that order's
+`OrderPlaced`.
+
+**Orphaned reservations are released fail-closed** ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)): after 120 s
+without `OrderAccepted`, portfolio-service asks order-service to publish an `OrderExpiryRequested`. It lands in the same
+partition as the order, so the engine answers only after any `OrderPlaced` already sent: it cancels a resting order
+(`ORDER_EXPIRED`) or records an `OrderExpired` tombstone for one it never saw. Money is released only on that answer.
 
 > **Outbox pattern:** write the outgoing message into your own database in the same step as your state change, and
 > publish it from there. It avoids the "saved but not published" (or the reverse) problem without distributed

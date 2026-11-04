@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://circuitbreaker.local/contracts/events/OrderCancelRequested.schema.json",
+  "title": "OrderCancelRequested",
+  "$comment": "Generated from docs/03-architecture/03-event-catalog.md by tools/check_event_contracts.py --write. Do not edit by hand: change the catalog and regenerate.",
+  "x-topic": "orders.v1",
+  "x-key": "ticker",
+  "x-producer": "order-service",
+  "allOf": [
+    {
+      "$ref": "envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "event_type": {
+      "const": "OrderCancelRequested"
+    },
+    "event_version": {
+      "const": 1
+    },
+    "producer": {
+      "const": "order-service"
+    },
+    "data": {
+      "title": "OrderCancelRequested.data",
+      "type": "object",
+      "required": [
+        "order_id",
+        "trader_id",
+        "ticker",
+        "requested_at"
+      ],
+      "properties": {
+        "order_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "trader_id": {
+          "$ref": "defs.schema.json#/$defs/uuid"
+        },
+        "ticker": {
+          "$ref": "defs.schema.json#/$defs/ticker"
+        },
+        "requested_at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

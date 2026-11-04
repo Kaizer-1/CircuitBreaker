@@ -3,8 +3,11 @@
 > **This document is the contract for every event in the system.** Event names, topic names and field names here
 > are the single source of truth; the docs, sequence diagrams and code must match them exactly.
 >
-> JSON Schemas use **JSON Schema draft 2020-12**. In Phase 1 they will be extracted into
-> `contracts/events/*.schema.json` and checked in CI.
+> JSON Schemas use **JSON Schema draft 2020-12**. Since Phase 2 they also live as files in
+> [`contracts/events/`](../../contracts/events/README.md), one `<EventType>.schema.json` per event, **generated from the
+> JSON blocks on this page** by `tools/check_event_contracts.py --write`. The same tool runs in `make lint` and CI without
+> `--write`: it fails if a schema file differs from this page or if any example below does not validate. Producers'
+> contract tests validate every event they publish against those files.
 
 ## Integration events vs local events
 
@@ -33,8 +36,8 @@ We publish an event only when another service needs it. Fewer public contracts =
 
 | Topic | Producer | Consumers | Message key | Partitions | Retention | Events |
 |---|---|---|---|---|---|---|
-| `orders.v1` | `order-service` | `matching-engine` | `ticker` | 5 | 7 days | `OrderPlaced`, `OrderCancelRequested` |
-| `matching.v1` | `matching-engine` | `order-service`, `portfolio-service`, `market-data-service` | `ticker` | 5 | 7 days | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderCancelRejected` |
+| `orders.v1` | `order-service` | `matching-engine` | `ticker` | 5 | 7 days | `OrderPlaced`, `OrderCancelRequested`, `OrderExpiryRequested` |
+| `matching.v1` | `matching-engine` | `order-service`, `portfolio-service`, `market-data-service` | `ticker` | 5 | 7 days | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderCancelRejected`, `OrderExpired` |
 | `candles.v1` | `market-data-service` | `bot-traders` | `ticker` | 5 | 1 day | `CandleClosed` |
 | `incidents.v1` | `sre-agent` | `chaos-service` | `incident_id` | 1 | 30 days | `IncidentOpened`, `RemediationProposed`, `RemediationApproved`, `RemediationDeclined`, `RemediationExecuted`, `IncidentResolved` |
 
@@ -47,6 +50,13 @@ store, which is replayable through matching-engine's API forever.
 
 **One topic per producer stream** (rather than one topic per event type) keeps related events in order: an
 `OrderAccepted` is always seen before the `TradeExecuted` it caused.
+
+**Ordering is what makes the fail-closed orphan rule safe** ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)).
+`OrderPlaced`, `OrderCancelRequested` and `OrderExpiryRequested` for one order all carry the same key (its ticker), so
+they land in the same `orders.v1` partition and the engine reads them in the order they were appended. Its answers all
+go to the same `matching.v1` partition in `sequence` order, so a consumer always sees an order's `OrderAccepted` before
+the answer to a later expiry request. Two conditions keep this true: every producer uses the same default partitioner
+(murmur2 of the key, which all Kafka clients share), and the partition count of a topic never changes.
 
 ## Delivery guarantees (apply to all consumers)
 
@@ -61,8 +71,13 @@ store, which is replayable through matching-engine's API forever.
 
 | Change | Allowed in same version? | How |
 |---|---|---|
-| Add an optional field | ✅ Yes | Consumers ignore unknown fields. |
+| Add an optional field | ✅ Yes | Update the schema first (schemas are strict, see below); consumers ignore unknown fields. |
 | Add a new event type to a topic | ✅ Yes | Consumers ignore unknown `event_type`s. |
+| Add an enum value | ✅ Only where every consumer treats the field as open | Allowed for `OrderCancelled.reason`: consumers act the same for every reason (remove the rest of the order, release its money). Phase 2 added `ORDER_EXPIRED` and `SELF_TRADE_PREVENTED` before any consumer existed. |
+
+**Strict schemas, tolerant readers.** Every `data` schema has `"additionalProperties": false`, so a producer cannot
+publish a field the contract does not list (its contract test fails). Consumers still ignore unknown fields, so adding
+an optional field (schema first, then producer) never breaks them.
 | Remove/rename a field, change a type or meaning | ❌ No | Bump `event_version`, publish to a new topic `<stream>.v2`, run v1 and v2 in parallel until all consumers have moved, then retire v1. |
 
 ---
@@ -107,10 +122,20 @@ Shared definitions used below:
     "timestamp":   { "type": "string", "format": "date-time" },
     "sequence":    { "type": "integer", "minimum": 1, "description": "Per-ticker, strictly increasing, assigned by matching-engine" },
     "service":     { "type": "string", "enum": ["api-gateway", "order-service", "matching-engine", "market-data-service", "portfolio-service", "bot-traders", "sre-agent", "chaos-service"] },
-    "agent_action": { "type": "string", "enum": ["rollback_deployment", "scale_deployment", "restart_deployment", "do_nothing"] }
+    "agent_action": { "type": "string", "enum": ["rollback_deployment", "scale_deployment", "restart_deployment", "do_nothing"] },
+    "limit_or_market_prices": {
+      "description": "A LIMIT order has a limit price and no protection price; a MARKET order the reverse",
+      "oneOf": [
+        { "properties": { "order_type": { "const": "LIMIT" },  "limit_price_paise": { "$ref": "#/$defs/price_paise" }, "protection_price_paise": { "type": "null" } } },
+        { "properties": { "order_type": { "const": "MARKET" }, "limit_price_paise": { "type": "null" }, "protection_price_paise": { "$ref": "#/$defs/price_paise" } } }
+      ]
+    }
   }
 }
 ```
+
+`limit_or_market_prices` is used by `OrderPlaced` and `OrderAccepted`: both always carry both price fields, and exactly
+one of them is set, depending on `order_type`.
 
 ---
 
@@ -127,7 +152,8 @@ A trader's order passed validation and its cash or shares are reserved. It is no
 {
   "title": "OrderPlaced.data",
   "type": "object",
-  "required": ["order_id", "trader_id", "ticker", "side", "order_type", "quantity", "reservation_id", "placed_at"],
+  "required": ["order_id", "trader_id", "ticker", "side", "order_type", "quantity", "limit_price_paise",
+               "protection_price_paise", "reservation_id", "placed_at"],
   "properties": {
     "order_id":               { "$ref": "#/$defs/uuid" },
     "trader_id":              { "$ref": "#/$defs/uuid" },
@@ -139,7 +165,9 @@ A trader's order passed validation and its cash or shares are reserved. It is no
     "protection_price_paise": { "oneOf": [{ "$ref": "#/$defs/price_paise" }, { "type": "null" }], "description": "Required for MARKET, null for LIMIT" },
     "reservation_id":         { "$ref": "#/$defs/uuid" },
     "placed_at":              { "$ref": "#/$defs/timestamp" }
-  }
+  },
+  "allOf": [{ "$ref": "#/$defs/limit_or_market_prices" }],
+  "additionalProperties": false
 }
 ```
 
@@ -185,7 +213,8 @@ The owner asked to cancel an order. Whether it *can* be cancelled is decided by 
     "trader_id":    { "$ref": "#/$defs/uuid" },
     "ticker":       { "$ref": "#/$defs/ticker" },
     "requested_at": { "$ref": "#/$defs/timestamp" }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -208,6 +237,55 @@ The owner asked to cancel an order. Whether it *can* be cancelled is decided by 
 }
 ```
 
+### `OrderExpiryRequested`
+
+portfolio-service holds a reservation that the engine has not confirmed (no `OrderAccepted`) for 120 s, and asks for it
+to be expired so the money can be released safely ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)). It is sent on
+`orders.v1` by order-service (the topic's only producer), which portfolio-service asks through
+`POST /internal/v1/order-expiries` (A-19). order-service may know nothing about the order, for example when it crashed
+after reserving but before storing it; it sends the request anyway.
+
+- **Producer:** `order-service` **Consumers:** `matching-engine` (policy P-14: make sure the order can never trade)
+- **Key:** `ticker` (the same partition as the order's `OrderPlaced`, so a published `OrderPlaced` is always read first)
+- **Deterministic `event_id`:** UUIDv5 (URL namespace) of `https://circuitbreaker.local/order-expiry/<order_id>`, so a
+  repeated request for the same order is one command to the engine.
+- **Engine's answer:** the order is resting → `OrderCancelled` (reason `ORDER_EXPIRED`); the engine never saw it →
+  `OrderExpired`; the order already finished → nothing (its earlier events already settled or released the money).
+
+```json
+{
+  "title": "OrderExpiryRequested.data",
+  "type": "object",
+  "required": ["order_id", "trader_id", "ticker", "requested_at"],
+  "properties": {
+    "order_id":     { "$ref": "#/$defs/uuid" },
+    "trader_id":    { "$ref": "#/$defs/uuid" },
+    "ticker":       { "$ref": "#/$defs/ticker" },
+    "requested_at": { "$ref": "#/$defs/timestamp" }
+  },
+  "additionalProperties": false
+}
+```
+
+```json
+{
+  "event_id": "a3b049e7-35d5-56e3-ad80-2b3bf48b3763",
+  "event_type": "OrderExpiryRequested",
+  "event_version": 1,
+  "occurred_at": "2026-11-20T10:46:12.410Z",
+  "producer": "order-service",
+  "environment": "prod",
+  "correlation_id": "expiry-6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
+  "causation_id": null,
+  "data": {
+    "order_id": "6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
+    "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+    "ticker": "CHAIWALA",
+    "requested_at": "2026-11-20T10:46:12.405Z"
+  }
+}
+```
+
 ---
 
 ## Topic `matching.v1` (producer: `matching-engine`)
@@ -220,15 +298,16 @@ events in the event store and the basis of replay.
 The engine took the order into processing for its ticker. Any trades it causes follow immediately.
 
 - **Producer:** `matching-engine` **Consumers:** `order-service` (status `OPEN`), `market-data-service` (depth),
-  `portfolio-service` (marks the reservation as confirmed; unconfirmed reservations are released after 120 s —
-  [ADR-0011](../adr/0011-synchronous-reservation-over-saga.md))
+  `portfolio-service` (marks the reservation as confirmed; for an unconfirmed reservation it asks for an expiry after
+  120 s — [ADR-0017](../adr/0017-fail-closed-orphan-release.md))
 - **Key:** `ticker`
 
 ```json
 {
   "title": "OrderAccepted.data",
   "type": "object",
-  "required": ["sequence", "ticker", "order_id", "trader_id", "side", "order_type", "quantity", "accepted_at"],
+  "required": ["sequence", "ticker", "order_id", "trader_id", "side", "order_type", "quantity", "limit_price_paise",
+               "protection_price_paise", "accepted_at"],
   "properties": {
     "sequence":               { "$ref": "#/$defs/sequence" },
     "ticker":                 { "$ref": "#/$defs/ticker" },
@@ -240,7 +319,9 @@ The engine took the order into processing for its ticker. Any trades it causes f
     "limit_price_paise":      { "oneOf": [{ "$ref": "#/$defs/price_paise" }, { "type": "null" }] },
     "protection_price_paise": { "oneOf": [{ "$ref": "#/$defs/price_paise" }, { "type": "null" }] },
     "accepted_at":            { "$ref": "#/$defs/timestamp" }
-  }
+  },
+  "allOf": [{ "$ref": "#/$defs/limit_or_market_prices" }],
+  "additionalProperties": false
 }
 ```
 
@@ -271,7 +352,8 @@ The engine took the order into processing for its ticker. Any trades it causes f
 
 ### `TradeExecuted`
 
-A buy and a sell matched. Trade price is always the **resting** order's price.
+A buy and a sell matched. Trade price is always the **resting** order's price. The buyer and the seller are always
+different traders (self-trade prevention, see `OrderCancelled`).
 
 - **Producer:** `matching-engine`
 - **Consumers:** `order-service` (filled quantity, status), `portfolio-service` (settlement, release leftover when
@@ -299,7 +381,8 @@ A buy and a sell matched. Trade price is always the **resting** order's price.
     "buy_order_remaining_quantity":  { "type": "integer", "minimum": 0 },
     "sell_order_remaining_quantity": { "type": "integer", "minimum": 0 },
     "executed_at":                   { "$ref": "#/$defs/timestamp" }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -333,12 +416,18 @@ A buy and a sell matched. Trade price is always the **resting** order's price.
 
 ### `OrderCancelled`
 
-Remaining quantity was removed from the book: either the owner asked, or a `MARKET` order could not be fully filled
-within its protection price.
+The rest of an order was removed from the book (or, for an incoming order, never entered it). Reasons:
+
+| `reason` | When |
+|---|---|
+| `USER_REQUESTED` | The owner asked (`OrderCancelRequested`). |
+| `UNFILLED_MARKET_ORDER` | A `MARKET` order could not be fully filled within its protection price. |
+| `SELF_TRADE_PREVENTED` | The next resting order the incoming order would match belongs to the **same trader**. Trading with yourself (a *wash trade*) is not allowed, so the incoming order's remainder is cancelled ("cancel newest"); trades it made before that point stand. |
+| `ORDER_EXPIRED` | portfolio-service asked for an expiry (`OrderExpiryRequested`) while the order was resting ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)). |
 
 - **Producer:** `matching-engine`
 - **Consumers:** `order-service` (status `CANCELLED`), `portfolio-service` (release leftover reservation),
-  `market-data-service` (depth)
+  `market-data-service` (depth). Every consumer handles all reasons the same way.
 - **Key:** `ticker`
 
 ```json
@@ -353,9 +442,10 @@ within its protection price.
     "trader_id":          { "$ref": "#/$defs/uuid" },
     "side":               { "$ref": "#/$defs/side" },
     "cancelled_quantity": { "type": "integer", "minimum": 1, "description": "Quantity that was still open and is now removed" },
-    "reason":             { "type": "string", "enum": ["USER_REQUESTED", "UNFILLED_MARKET_ORDER"] },
+    "reason":             { "type": "string", "enum": ["USER_REQUESTED", "UNFILLED_MARKET_ORDER", "SELF_TRADE_PREVENTED", "ORDER_EXPIRED"] },
     "cancelled_at":       { "$ref": "#/$defs/timestamp" }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -384,7 +474,8 @@ within its protection price.
 
 ### `OrderCancelRejected`
 
-A cancel request arrived but there was nothing left to cancel.
+A cancel request arrived but there was nothing left to cancel. `UNKNOWN_ORDER` also covers an order the book never
+held (including an expired one, see `OrderExpired`) and a request whose `trader_id` is not the order's owner.
 
 - **Producer:** `matching-engine` **Consumers:** `order-service` (clear `cancel_requested`)
 - **Key:** `ticker`
@@ -401,7 +492,8 @@ A cancel request arrived but there was nothing left to cancel.
     "trader_id":   { "$ref": "#/$defs/uuid" },
     "reason":      { "type": "string", "enum": ["ALREADY_FILLED", "ALREADY_CANCELLED", "UNKNOWN_ORDER"] },
     "rejected_at": { "$ref": "#/$defs/timestamp" }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -422,6 +514,57 @@ A cancel request arrived but there was nothing left to cancel.
     "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
     "reason": "ALREADY_FILLED",
     "rejected_at": "2026-11-20T10:44:02.510Z"
+  }
+}
+```
+
+### `OrderExpired`
+
+The answer to an `OrderExpiryRequested` for an order the engine **never saw**. It is a *tombstone*: the engine stores
+and applies it like any other event, remembers the order ID as dead, and refuses any `OrderPlaced` with that ID that
+arrives later (no events are produced for the refused order). Because the order can now never trade, portfolio-service
+may release its reservation ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)).
+
+> **Tombstone:** a record that says "this thing is deleted, and must stay deleted". It is kept so that a late copy of
+> the thing cannot bring it back.
+
+- **Producer:** `matching-engine`
+- **Consumers:** `portfolio-service` (release the whole reservation), `order-service` (an order still `PENDING` becomes
+  `REJECTED` with `PUBLISH_TIMEOUT`). `market-data-service` ignores it: the order was never in the book.
+- **Key:** `ticker`
+
+```json
+{
+  "title": "OrderExpired.data",
+  "type": "object",
+  "required": ["sequence", "ticker", "order_id", "trader_id", "expired_at"],
+  "properties": {
+    "sequence":   { "$ref": "#/$defs/sequence" },
+    "ticker":     { "$ref": "#/$defs/ticker" },
+    "order_id":   { "$ref": "#/$defs/uuid" },
+    "trader_id":  { "$ref": "#/$defs/uuid" },
+    "expired_at": { "$ref": "#/$defs/timestamp" }
+  },
+  "additionalProperties": false
+}
+```
+
+```json
+{
+  "event_id": "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+  "event_type": "OrderExpired",
+  "event_version": 1,
+  "occurred_at": "2026-11-20T10:46:12.431Z",
+  "producer": "matching-engine",
+  "environment": "prod",
+  "correlation_id": "expiry-6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
+  "causation_id": "a3b049e7-35d5-56e3-ad80-2b3bf48b3763",
+  "data": {
+    "sequence": 1188,
+    "ticker": "CHAIWALA",
+    "order_id": "6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
+    "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+    "expired_at": "2026-11-20T10:46:12.430Z"
   }
 }
 ```
@@ -456,7 +599,8 @@ volume 0) so charts and bots have no gaps.
     "close_paise":  { "$ref": "#/$defs/price_paise" },
     "volume":       { "type": "integer", "minimum": 0 },
     "trade_count":  { "type": "integer", "minimum": 0 }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -507,7 +651,8 @@ time to recover).
     "severity":    { "type": "string", "enum": ["warning", "critical"] },
     "summary":     { "type": "string" },
     "opened_at":   { "$ref": "#/$defs/timestamp" }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -551,7 +696,8 @@ The LLM chose an action and it passed the guardrails. If `requires_approval` is 
     "model":             { "type": "string", "description": "OpenRouter model slug used for the diagnosis" },
     "requires_approval": { "type": "boolean" },
     "proposed_at":       { "$ref": "#/$defs/timestamp" }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -592,7 +738,8 @@ The LLM chose an action and it passed the guardrails. If `requires_approval` is 
     "decided_by":     { "type": "string", "description": "Admin nickname" },
     "comment":        { "type": ["string", "null"] },
     "decided_at":     { "$ref": "#/$defs/timestamp" }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -631,7 +778,8 @@ Declined either by a human admin or automatically by a guardrail (e.g. cooldown 
     "declined_by":    { "type": "string", "enum": ["admin", "guardrail"] },
     "reason":         { "type": "string" },
     "declined_at":    { "$ref": "#/$defs/timestamp" }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -687,7 +835,8 @@ Declined either by a human admin or automatically by a guardrail (e.g. cooldown 
         }
       ]
     }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -735,7 +884,8 @@ Declined either by a human admin or automatically by a guardrail (e.g. cooldown 
     "resolved_at":             { "$ref": "#/$defs/timestamp" },
     "time_to_recover_seconds": { "type": "integer", "minimum": 0 },
     "actions_taken":           { "type": "array", "items": { "$ref": "#/$defs/agent_action" } }
-  }
+  },
+  "additionalProperties": false
 }
 ```
 
@@ -773,7 +923,8 @@ notice.
 | `AccountOpened` | `portfolio-service` | Postgres (`accounts` row + audit) | A new trader/bot/load account was created with its starting cash (and shares for bots). |
 | `ReservationCreated` | `portfolio-service` | Postgres `reservations` | Cash or shares set aside for an order. |
 | `TradeSettled` | `portfolio-service` | Postgres `settlements` | One side of a trade applied to an account. |
-| `ReservationReleased` | `portfolio-service` | Postgres `reservations` | Leftover reservation returned (order filled with price improvement, cancelled, or orphaned — no `OrderAccepted` within 120 s). |
+| `ReservationReleased` | `portfolio-service` | Postgres `reservations` | Leftover reservation returned: order filled with price improvement, cancelled (any reason), or expired by the engine (`OrderExpired`). Only ever caused by an engine event ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)). |
+| `ExpiryRequested` | `portfolio-service` | Postgres `reservations` (`expiry_requested_at`) | An unconfirmed reservation is 120 s old and order-service accepted the expiry request (A-19). |
 | `OrderRejected` | `order-service` | Cassandra `order_events` | Order failed validation or reservation; never reached the bus. |
 | `BookSnapshotTaken` | `matching-engine` | Cassandra `book_snapshots` | Full book for a ticker saved at a sequence number. |
 | `ChaosExperimentStarted` / `ChaosExperimentEnded` | `chaos-service` | memory + Loki | Experiment lifecycle; `ended` carries outcome `REMEDIATED`, `STOPPED` or `EXPIRED`. |
@@ -785,10 +936,12 @@ notice.
 |---|---|---|:-:|:-:|:-:|:-:|:-:|:-:|
 | `OrderPlaced` | `orders.v1` | order-service | — | ✅ | | | | |
 | `OrderCancelRequested` | `orders.v1` | order-service | — | ✅ | | | | |
+| `OrderExpiryRequested` | `orders.v1` | order-service | — | ✅ | | | | |
 | `OrderAccepted` | `matching.v1` | matching-engine | ✅ | — | ✅ | ✅ | | |
 | `TradeExecuted` | `matching.v1` | matching-engine | ✅ | — | ✅ | ✅ | | |
 | `OrderCancelled` | `matching.v1` | matching-engine | ✅ | — | ✅ | ✅ | | |
 | `OrderCancelRejected` | `matching.v1` | matching-engine | ✅ | — | | | | |
+| `OrderExpired` | `matching.v1` | matching-engine | ✅ | — | ✅ | | | |
 | `CandleClosed` | `candles.v1` | market-data-service | | | | — | ✅ | |
 | `IncidentOpened` | `incidents.v1` | sre-agent | | | | | | ✅ |
 | `RemediationProposed` | `incidents.v1` | sre-agent | | | | | | ✅ |
@@ -807,9 +960,6 @@ A: Standard fields — `event_id`, `event_type`, `event_version`, `occurred_at`,
 `causation_id` — wrapped around the event-specific `data`. Every consumer can deduplicate, route, trace and version
 events the same way.
 
-**Q: How do you guarantee the matching engine processes a cancel after the order it cancels?**
-A: Both go to `orders.v1` keyed by ticker, so they are in the same partition, which is strictly ordered.
-
 **Q: What if the same event is delivered twice?**
 A: Consumers are idempotent: they record each processed `event_id` (in the same transaction as their change where
 possible) and skip repeats.
@@ -821,3 +971,11 @@ an optional field needs no new version because consumers ignore unknown fields.
 **Q: Why does `TradeExecuted` carry the remaining quantities?**
 A: So consumers can tell when an order is finished without asking anyone: order-service sets `FILLED`, and
 portfolio-service releases leftover reserved cash, both from the event alone.
+
+**Q: How do you guarantee the engine sees a cancel or expiry after the order, and how can portfolio-service be sure an
+orphaned order will never trade before it releases the money?**
+A: `OrderPlaced`, `OrderCancelRequested` and `OrderExpiryRequested` all go to `orders.v1` keyed by ticker, so they are
+in one strictly ordered partition. Portfolio-service doesn't decide alone. After 120 s it asks (through order-service) for an `OrderExpiryRequested`, which goes into
+the same `orders.v1` partition as the order. The engine answers in order: if the order is resting it is cancelled
+(`ORDER_EXPIRED`); if the engine never saw it, it records an `OrderExpired` tombstone and refuses that order ID forever.
+Money is released only on that answer, so if the engine is down the money simply stays reserved (fail-closed).
