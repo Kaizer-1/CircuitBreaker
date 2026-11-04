@@ -137,7 +137,8 @@ half-applied match. Allowed speeds: 1, 2, 5, 10, 60.
 can time-travel to ten different moments while the live market keeps trading.
 
 **Rebuilding a read model from scratch** (e.g. after a bug in candle calculation): drop the projection tables and
-re-read the full history from matching-engine's events API — not from Redpanda, whose retention is only 7 days.
+re-read the full history from matching-engine's events API — not from Redpanda, whose retention is only 7 days. How each
+projection works, and how clients resync over WebSockets: [the read side](08-read-side.md).
 
 ## 6. Eventual consistency — what the user actually sees
 

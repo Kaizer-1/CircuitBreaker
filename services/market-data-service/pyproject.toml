@@ -1,15 +1,17 @@
 [project]
 name = "market-data-service"
 version = "0.1.0"
-description = "CircuitBreaker market-data-service: candles, depth, trades, live streams and time travel (skeleton)."
+description = "CircuitBreaker market-data-service: candles, depth, trades, live streams and time travel."
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.162,<1",
   "uvicorn>=0.54,<1",
   "pydantic-settings>=2.16,<3",
   "prometheus-client>=0.26,<1",
-  "aiokafka>=0.15,<1",
+  "aiokafka[lz4,snappy,zstd]>=0.15,<1",
   "cassandra-driver>=3.30,<4",
+  "websockets>=17.4,<18",  # uvicorn serves the Q-06 WebSocket with it
+  "httpx>=0.28,<1",
 ]
 
 [dependency-groups]
@@ -21,6 +23,10 @@ dev = [
   "types-pyyaml>=6,<7",
   "ruff>=0.17,<1",
   "mypy>=2.4,<3",
+  "hypothesis>=6.170,<7",
+  "jsonschema[format-nongpl]>=4.26,<5",
+  "pytest-cov>=7.1,<8",
+  "testcontainers[cassandra]>=4.15,<5",
 ]
 
 [build-system]
@@ -54,4 +60,9 @@ files = ["src", "tests"]
 [[tool.mypy.overrides]]
 # Optional drivers: imported lazily in runtime/checks.py, and not every service installs every driver.
 module = ["aiokafka.*", "cassandra.*", "psycopg.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Test-only libraries without type information.
+module = ["jsonschema.*", "testcontainers.*"]
 ignore_missing_imports = true

@@ -93,10 +93,11 @@ finished or expired order ID (so cancel rejections and tombstones give the same 
 |---|---|---|---|
 | `candles` | `(ticker, interval)` | `bucket_start DESC` | Q-03 Candles for a ticker and interval |
 | `trades_by_ticker` | `(ticker, day)` | `executed_at DESC, trade_id` | Q-05 Recent trades |
-| `last_prices` | `ticker` | — | Q-02 Instruments with last price |
+| `last_prices` | `ticker` | — | Q-02 Instruments with last price and today's figures; also the last applied `matching.v1` `sequence` (a repeat at or below it is skipped) |
 
 Order-book depth (Q-04) is kept **in memory** (rebuilt from events on start-up) because it changes on every event
-and is only ever needed "now".
+and is only ever needed "now". Each event's rows (its candles, its trade, the new `sequence`) are one logged batch, and
+every table can be dropped and rebuilt from the event store ([read side](08-read-side.md)).
 
 ### Keyspace `sre_agent` (owner: sre-agent)
 

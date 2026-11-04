@@ -102,7 +102,7 @@ carries its ID in its description and in an `x-seeds-id` field.
 
 | Direction | `type` | `data` |
 |---|---|---|
-| server → client | `snapshot` | On connect: `{ order_book: OrderBookDepth, last_price_paise, candles: Candle[] (last 60 of 5s) }` |
+| server → client | `snapshot` | On connect: `{ order_book: OrderBookDepth, last_price_paise, candles: Candle[] (last 60 of 5s), recent_trades: Trade[] (last 50, newest first; optional field added in Phase 3) }`, all as of `order_book.as_of_sequence` |
 | server → client | `trade` | `Trade` (same schema as Q-05) — every trade |
 | server → client | `candle` | `{ interval, closed: boolean, candle: Candle }` — the forming candle every second, and once more with `closed: true` |
 | server → client | `book` | `OrderBookDepth` — throttled to at most 4 per second |
@@ -111,6 +111,14 @@ carries its ID in its description and in an `x-seeds-id` field.
 ```json
 {"type": "trade", "data": {"trade_id": "a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d", "sequence": 1042, "price_paise": 24550, "quantity": 20, "aggressor_side": "BUY", "executed_at": "2026-11-20T10:42:01.263Z"}}
 ```
+
+**Snapshot, then updates in sequence (resync with no gaps or duplicates).** The snapshot and every later message come
+from one projection that applies the ticker's `matching.v1` events strictly in `sequence` order. The client keeps the
+snapshot's `order_book.as_of_sequence`; it drops a `trade` whose `sequence` is at or below what it already has, replaces
+the book with a `book` whose `as_of_sequence` is newer, and replaces the candle with the same `bucket_start` and
+`interval`. After any disconnect it reconnects and starts again from a fresh snapshot, so nothing is missed and nothing
+counted twice. A client that falls 1,000 messages behind is closed with `1011` and does the same. Close codes: `4404`
+unknown ticker, `1011` while market-data is still rebuilding from the event store (retry) or after falling behind.
 
 ### Q-10 — `/v1/ws/portfolio` (portfolio-service, roles trader, bot)
 

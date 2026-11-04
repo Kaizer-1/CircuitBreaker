@@ -580,8 +580,10 @@ volume 0) so charts and bots have no gaps.
 
 - **Producer:** `market-data-service` **Consumers:** `bot-traders` (policy P-09)
 - **Key:** `ticker`
-- **Deterministic `event_id`:** UUIDv5 of `ticker|interval|bucket_start`. If several market-data replicas emit the
-  same candle, consumers deduplicate it.
+- **Deterministic `event_id`:** UUIDv5 (URL namespace) of `ticker|interval|bucket_start`, e.g.
+  `CHAIWALA|1m|2026-11-20T10:42:00Z`. If several market-data replicas emit the same candle, consumers deduplicate it.
+  A candle corrected by a late trade (the engine republishing after a crash) is sent again with the same ID, so
+  consumers ignore the correction; the stored candle (Q-03) is the corrected one.
 
 ```json
 {

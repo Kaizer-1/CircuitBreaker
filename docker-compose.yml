@@ -202,6 +202,7 @@ services:
       CASSANDRA_KEYSPACE: market_data
       CASSANDRA_USERNAME: market_data_role
       CASSANDRA_PASSWORD: cb_dev_market_data
+      MATCHING_ENGINE_URL: http://matching-engine:8000 # Q-14/Q-15: catch-up and gap filling
     depends_on:
       redpanda-init:
         condition: service_completed_successfully

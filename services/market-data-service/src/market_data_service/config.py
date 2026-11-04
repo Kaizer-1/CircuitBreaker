@@ -15,3 +15,11 @@ class Settings(BaseServiceSettings):
     cassandra_keyspace: str = "market_data"
     cassandra_username: str = "market_data_role"
     cassandra_password: SecretStr  # no default: a secret never lives in code
+
+    # Q-14 and Q-15: the event store, read through matching-engine's internal API.
+    # Inside Compose: http://matching-engine:8000
+    matching_engine_url: str = "http://localhost:8002"
+
+    ws_ping_seconds: float = 15.0  # api/README.md heartbeat
+    ws_pong_timeout_seconds: float = 45.0
+    start_consumers: bool = True  # False in unit tests: no Cassandra or Kafka at start-up
