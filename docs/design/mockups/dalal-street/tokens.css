@@ -1,0 +1,32 @@
+/* Dalal Street Board: one token set for the projector dashboard and the phone (docs/design/visual-direction.md). */
+:root {
+  --board: #060606; /* the board itself */
+  --panel: #101010;
+  --line: #2a2a2a;
+  --text: #ece7dd; /* warm white signage paint */
+  --text-2: #a8a298;
+  --text-3: #7d786f; /* 4.6:1 on the board */
+  --led: #ffb000; /* amber LED, lit */
+  --led-ghost: #171000; /* the unlit dots behind each digit: there, but never read as a digit */
+  --up: #2fd67e; /* green LED */
+  --down: #ff5544; /* red LED */
+  --frame: #ffb000;
+
+  --font-led: 'Doto', 'DotGothic16', ui-monospace, monospace;
+  --font-sign: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --font-ui: 'Barlow', 'Helvetica Neue', sans-serif;
+
+  --radius: 2px;
+  --flash-ms: 1000ms; /* digits blank for 120 ms, light green or red, return to amber */
+}
+.num { font-family: var(--font-ui); font-variant-numeric: tabular-nums lining-nums; font-feature-settings: 'tnum' 1, 'lnum' 1; text-align: right; white-space: nowrap; }
+.led { font-family: var(--font-led); font-weight: 800; color: var(--led); font-variant-numeric: tabular-nums; position: relative; white-space: nowrap; }
+.led .ghost { position: absolute; inset: 0; color: var(--led-ghost); z-index: 0; }
+.led .lit { position: relative; z-index: 1; }
+.led .dp { display: inline-block; width: 0.13em; height: 0.13em; background: currentColor; margin: 0 0.05em 0.02em; vertical-align: baseline; }
+.led .ghost .dp { background: var(--led-ghost); }
+.up { color: var(--up); }
+.down { color: var(--down); }
+.led.flash-up .lit { color: var(--up); }
+.led.flash-down .lit { color: var(--down); }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

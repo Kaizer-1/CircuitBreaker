@@ -1,0 +1,37 @@
+/* Pink Paper: one token set for the projector dashboard and the phone (docs/design/visual-direction.md). */
+:root {
+  --paper: #f7e1cf; /* salmon newsprint */
+  --paper-tint: #f0d3bd; /* a boxed panel */
+  --ink: #1b1611; /* body text, rules */
+  --ink-2: #4a3f37; /* secondary text */
+  --ink-3: #6e6157; /* captions (4.7:1 on paper) */
+  --rule: #1b1611;
+  --rule-soft: #c4a790;
+  --up: #0a6a45; /* deep green ink */
+  --down: #a3201f; /* claret-red ink */
+  --accent: #7a1c2c; /* masthead claret */
+  --flash-up: #0a6a45;
+  --flash-down: #a3201f;
+  --flash-text: #f7e1cf;
+
+  --font-head: 'Newsreader', Georgia, serif;
+  --font-num: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-ui: 'Libre Franklin', 'Helvetica Neue', sans-serif;
+
+  --hairline: 1px solid var(--rule);
+  --double: 3px double var(--rule);
+  --radius: 0; /* print has no rounded corners */
+  --flash-ms: 900ms; /* ink dries */
+}
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.up { color: var(--up); }
+.down { color: var(--down); }
+.flash-up { background: var(--flash-up); color: var(--flash-text); }
+.flash-down { background: var(--flash-down); color: var(--flash-text); }
+@keyframes ink { from { background: var(--flash-bg); color: var(--flash-text); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
