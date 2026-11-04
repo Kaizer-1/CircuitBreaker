@@ -100,6 +100,7 @@ exist, so "healthy" means "can do its job", not just "the process started".
 | `make up` | Builds and starts everything (both profiles) and waits until every container is healthy |
 | `make down` | Stops everything; data volumes are kept |
 | `make reset` | Stops everything and **deletes all data volumes**; asks you to type `yes` first |
+| `make demo-reset` | **Rehearsal start.** Like `make reset` (asks for `yes`; `CONFIRM=yes make demo-reset` skips the question), then builds and starts everything and checks the starting state: five empty books with no history, only the seeded accounts (`bot-01`…`bot-20` with ₹5,00,000 and 1,000 shares of each ticker, `load-01`…`load-10`), no human accounts. Every rehearsal starts from the same state |
 | `make ps` | Shows the container status |
 | `make logs s=<service>` | Follows logs (all services if `s` is omitted) |
 | `make build` | Builds the Docker images (`s=<service>` for one) |

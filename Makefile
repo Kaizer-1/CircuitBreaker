@@ -16,7 +16,7 @@ GATEWAY  := http://localhost:8080
 ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
-.PHONY: help doctor setup infra up down reset ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status
+.PHONY: help doctor setup infra up down reset demo-reset ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -46,6 +46,14 @@ reset: ## Stop everything and WIPE all data volumes (asks for confirmation)
 	@read -r -p "This deletes ALL local data (Cassandra, Postgres, Redpanda). Type 'yes' to continue: " a; \
 	  [ "$$a" = "yes" ] || { echo "Aborted."; exit 1; }
 	$(COMPOSE) $(ALL) down -v --remove-orphans
+
+demo-reset: ## Rehearsal start: wipe ALL data, start everything, check the clean state (asks; CONFIRM=yes skips)
+	@[ "$(CONFIRM)" = "yes" ] || { read -r -p "This deletes ALL local data and restarts the stack. Type 'yes' to continue: " a; \
+	  [ "$$a" = "yes" ] || { echo "Aborted."; exit 1; }; }
+	$(COMPOSE) $(ALL) down -v --remove-orphans
+	$(COMPOSE) $(ALL) up -d --build
+	@python3 scripts/wait-stack.py infra app
+	@python3 scripts/demo_reset_check.py
 
 ps: ## Show container status
 	$(COMPOSE) $(ALL) ps -a

@@ -254,6 +254,7 @@ if you enable the optional module. `make doctor` checks all of this.
 | `make setup` | Install Python/Node dependencies and the git hooks (ruff, gitleaks, redocly, prettier, block-private) |
 | `make infra` | Start only the infrastructure in Docker Compose: Redpanda, Cassandra, Postgres and their init jobs |
 | `make up` / `make down` / `make reset` | Start everything / stop it (data kept) / stop it and wipe the data volumes |
+| `make demo-reset` | Wipe the data, start everything and check the clean starting state (before a rehearsal) |
 | `make logs s=<service>`, `make ps`, `make status` | Follow logs / container status / combined system status |
 | `make test s=order-service` | Unit, smoke and contract tests for one service (all if `s` is omitted) |
 | `make lint` / `make fmt` | ruff, mypy, redocly, template drift, eslint and prettier / auto-format |
