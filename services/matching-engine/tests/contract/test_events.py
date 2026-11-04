@@ -9,11 +9,11 @@ from typing import Any
 
 from hypothesis import given
 from jsonschema import Draft202012Validator, FormatChecker
+from referencing import Registry, Resource
+
 from matching_engine.domain.model import CancelOrder, ExpireOrder, PlaceOrder
 from matching_engine.events.commands import parse_command
 from matching_engine.events.market import from_envelope, to_envelope
-from referencing import Registry, Resource
-
 from matching_engine.runtime.events import EventEnvelope
 from tests.property.harness import run
 from tests.property.workload import Action, actions

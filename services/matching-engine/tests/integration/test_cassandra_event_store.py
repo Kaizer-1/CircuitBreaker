@@ -8,10 +8,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from matching_engine.adapters.cassandra_store import CassandraEventStore
-from matching_engine.application.engine import MatchingEngine
 from testcontainers.community.cassandra import CassandraContainer
 
+from matching_engine.adapters.cassandra_store import CassandraEventStore
+from matching_engine.application.engine import MatchingEngine
 from matching_engine.runtime.events import build_event
 from tests.builders import ALICE, BOB, CARA, cancel, expire, id_source, limit, market
 from tests.fakes import RecordingPublisher

@@ -3,9 +3,9 @@
 import json
 
 import pytest
+
 from matching_engine.domain.book import OrderBook
 from matching_engine.domain.model import BookSnapshot, CorruptEventError, OrderState
-
 from tests.builders import (
     ALICE,
     BOB,

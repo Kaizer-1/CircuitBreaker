@@ -10,7 +10,6 @@ from matching_engine.domain.model import (
     Outcome,
     TradeExecuted,
 )
-
 from tests.builders import ALICE, BOB, Market, cancel, expire, limit, market, oid
 
 # ------------------------------------------------- cancel

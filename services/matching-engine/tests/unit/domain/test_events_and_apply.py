@@ -3,6 +3,7 @@
 import dataclasses
 
 import pytest
+
 from matching_engine.domain.book import OrderBook
 from matching_engine.domain.model import (
     CancelReason,
@@ -14,7 +15,6 @@ from matching_engine.domain.model import (
     Side,
     TradeExecuted,
 )
-
 from tests.builders import ALICE, BOB, CARA, T0, Market, cancel, expire, id_source, limit, oid
 
 

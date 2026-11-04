@@ -26,8 +26,8 @@ from typing import Any
 
 from hypothesis import find, given, settings
 from hypothesis import strategies as st
-from matching_engine.application.engine import MatchingEngine
 
+from matching_engine.application.engine import MatchingEngine
 from matching_engine.runtime.events import EventEnvelope, build_event, deterministic_event_id
 from tests.builders import ALICE, BOB, CARA, DEV, id_source
 from tests.fakes import InMemoryEventStore

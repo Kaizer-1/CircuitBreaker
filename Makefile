@@ -58,7 +58,7 @@ build: ## Build the Docker images: make build [s=<service>]
 
 lint: ## ruff, mypy, redocly, template-drift and event-contract checks, web eslint/prettier
 	@set -e; for s in $(SEL); do echo "== lint $$s"; \
-	  (cd services/$$s && uv run --frozen ruff check . && uv run --frozen ruff format --check . && uv run --frozen mypy); done
+	  (cd services/$$s && uv run --frozen ruff check --no-cache . && uv run --frozen ruff format --check --no-cache . && uv run --frozen mypy); done
 	$(REDOCLY) lint
 	python3 tools/check_template_drift.py
 	uv run --quiet --locked tools/check_event_contracts.py

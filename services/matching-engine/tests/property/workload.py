@@ -11,6 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from hypothesis import strategies as st
+
 from matching_engine.domain.model import (
     CancelOrder,
     Command,
@@ -23,7 +24,6 @@ from matching_engine.domain.model import (
     Side,
     TradeExecuted,
 )
-
 from tests.builders import ALICE, BOB, CARA, DEV, T0, oid
 
 TRADERS = (ALICE, BOB, CARA, DEV)

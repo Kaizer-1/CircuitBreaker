@@ -8,8 +8,8 @@ and the consumer sends the message to orders.v1.dlq after 5 attempts.
 import dataclasses
 
 import pytest
-from matching_engine.domain.model import InvalidCommandError, Outcome, PlaceOrder
 
+from matching_engine.domain.model import InvalidCommandError, Outcome, PlaceOrder
 from tests.builders import ALICE, BOB, Market, cancel, expire, limit, market, oid
 
 

@@ -5,6 +5,7 @@ the smallest one, and prints it. Example counts come from the profile in tests/c
 """
 
 from hypothesis import given
+
 from matching_engine.domain.model import (
     CancelOrder,
     ExpireOrder,
@@ -17,7 +18,6 @@ from matching_engine.domain.model import (
     Side,
     TradeExecuted,
 )
-
 from tests.builders import id_source
 from tests.property.harness import NOW, run
 from tests.property.workload import TICKERS, Action, Ledger, actions

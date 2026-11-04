@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 
 from matching_engine.domain.book import OrderBook
 from matching_engine.domain.model import Command, Decision, MarketEvent
-
 from tests.builders import id_source
 from tests.property.workload import TICKERS, Action, Ledger, Workload
 
