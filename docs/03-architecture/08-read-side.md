@@ -130,7 +130,8 @@ follows the snapshot's sequence. The client keeps the highest sequence it has. I
 replaces the book with a newer one, and replaces a candle that has the same `bucket_start`. After a disconnect it does
 not try to replay what it missed: it takes a new snapshot. A test connects two clients, disconnects one for a while,
 reconnects it, and checks both end with the same book, the same last 50 trades (no gap, no duplicate) and the same
-candles.
+candles. In the web app these rules are one reducer, `web/src/market/marketState.ts`, and the reconnect with back-off
+is `web/src/market/stream.ts`; both have their own tests ([web README](../../web/README.md#live-data)).
 
 ## 5. Eventual consistency in practice
 

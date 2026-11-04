@@ -77,12 +77,14 @@ hotspot need no internet. Only the weights used are loaded, all with `font-displ
 | `--gap` / `--pad` / `--cell-y` | 22 / 14 / 5 px | 6 / 10 / 3 px | Density: print breathes, a terminal is dense |
 | `--flash-*` | Fills with ink, paper-coloured digits, 900 ms | Lights the cell dark green or red, 600 ms | A price change (the hero changes its digits' colour instead) |
 | `--candle-up-fill` | `#F7E1CF` (hollow) | `#45D07A` (filled) | Candle style |
+| `--chart-tag` | `#1B1611` (ink) | not set: the last candle's colour | The chart's last-price tag and line |
 
-**Measured, not guessed.** Every text colour is at least 4.5:1 on every surface it sits on, in both themes (63 pairs).
+**Measured, not guessed.** Every text colour is at least 4.5:1 on every surface it sits on, in both themes (70 pairs).
 Paper's `--text-3` was darkened from `#6E6157` to `#62574D` because it measured 4.2:1 on the ticket's tint. Both
 dashboards pass the 25% test (the 1920×1080 screen scaled to 480×270 still shows the hero price clearly). Component tests
 run in both themes against the real `tokens.css`. `web/scripts/screenshots.mjs` renders the real screens in both themes
-with Playwright and fails if the phone page is wider than the phone.
+with Playwright. It fails if any element overflows its container or the screen, if the terminal skin's fixed tabs hide
+the phone's last item, or if the hero price is not back in its normal colour after a flash.
 
 **Self-review against the owner's lists (both themes).** No gradients, glass, blur, glow or shadows; no banned
 typefaces; no rounded data surfaces (all radii are 0); no emoji or decorative icons (▲ ▼ ● are text characters); amber,
@@ -93,6 +95,21 @@ paper hero was wider than its column; the hero's filled flash hid the digits, so
 phone header wrapped, so the nickname moved into the account panel; the chart's attribution logo covered the small
 chart, so it is a text link on each page instead (the Lightweight Charts licence allows it); the System Status page's
 rounded card grid became ruled rows on the same tokens.
+
+**Second review, by the owner (2026-11-05), both themes, both sizes.**
+- **Chart:** with less data than the chart's width holds, the candles now spread to fit instead of leaving the left
+  side empty. Once the data fills the width, the chart rolls as usual.
+- **Price axis:** volume sits on its own unlabelled overlay scale in the bottom band, and an edge label is drawn only
+  when it fits whole (Terminal's top "249.00" was clipped). A tick label is left blank where the last-price tag would
+  half cover it, or where it would sit beside the volume bars. Paper's tag is ink, because a hollow candle's paper
+  body made it invisible.
+- **Phone holdings:** the P&L column was clipped at 390 px, so the average cost now sits under the stock name.
+- **Phone tabs:** the page leaves room under its last item for the fixed tab bar plus `env(safe-area-inset-bottom)`.
+- **QR address:** the dashboard warns when the join address is localhost.
+- **Nicknames:** shown as typed, with a quieter suffix only for a duplicate.
+- **Hero flash:** checked in the browser to return to the normal colour after a flash. The green hero in the first
+  Terminal screenshot was mid-flash.
+- **Trades tape:** it shows only whole rows; Paper's rows are taller, and the bottom one was half cut.
 
 ## The three candidates (for the record)
 

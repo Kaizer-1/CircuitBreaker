@@ -51,6 +51,10 @@ sequenceDiagram
   exists, so waiting is the correct behaviour. It is one quick call.
 - **Why no password?** Joining must take seconds on a phone during a demo. The JWT is stored in the browser;
   if it is lost, the trader simply joins again with a new nickname.
+- **What does the phone do with a 409?** The API only says the name is taken. The web join page then tries the
+  same name with a short random suffix (`RajuTrader_7k`), up to three times, and shows the suffix in a quieter colour.
+  Only if all three are taken does it ask for another name. This is client behaviour; A-01 is unchanged
+  ([web README](../../web/README.md#nicknames)).
 - ₹1,00,000 = 1,00,00,000 paise (10,000,000).
 
 ---

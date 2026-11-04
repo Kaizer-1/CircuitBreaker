@@ -19,10 +19,10 @@ refer to the [roadmap](07-roadmap.md). Textbook: *Microservices: Up and Running*
 | Operating model and Team Topologies | [team topology](04-team-topology.md) — the textbook's 5 design steps; System Design, microservices team template (Trading, Market Insights), Cloud Platform, Release & Reliability, API Team; 4 team types, 3 interaction modes, team-size principle | Ownership labels on alerts and dashboards (Phase 5); CODEOWNERS on `deploy/envs/prod/` for the release team (Phase 6) | Ch. 2 |
 | SEED(S): actors | [01-actors](01-seeds/01-actors.md) | — | Syllabus |
 | SEED(S): jobs to be done | [02-jobs-to-be-done](01-seeds/02-jobs-to-be-done.md) | — | Syllabus |
-| SEED(S): sequence diagrams | [03-sequence-diagrams](01-seeds/03-sequence-diagrams.md) (6 diagrams) | ✅ Phase 2: `make demo-trade` and `make test-e2e` follow diagrams 1–4 and 7 through the gateway (Phases 3–7: the rest) | Syllabus |
-| SEED(S): actions and queries | [04-actions-and-queries](01-seeds/04-actions-and-queries.md) (A-01…A-19, Q-01…Q-23) | — | Syllabus |
+| SEED(S): sequence diagrams | [03-sequence-diagrams](01-seeds/03-sequence-diagrams.md) (6 diagrams) | ✅ Phase 2: `make demo-trade` and `make test-e2e` follow diagrams 1–4 and 7 through the gateway. ✅ Phase 3: the web join and trade pages follow diagrams 1, 2 and 4 from a phone (Phases 4–7: the rest) | Syllabus |
+| SEED(S): actions and queries | [04-actions-and-queries](01-seeds/04-actions-and-queries.md) (A-01…A-19, Q-01…Q-23) | ✅ Phase 2: A-01–A-09 (A-08 and A-09 are event-driven), A-19, Q-01, Q-07–Q-09, Q-14–Q-16. ✅ Phase 3: Q-02–Q-06 (market data, REST and WebSocket) and Q-10 (portfolio WebSocket) | Syllabus |
 | SEED(S): open-standard spec | [`api/`](../api/README.md) — 7 OpenAPI 3.1 specs, lint-clean; events as JSON Schemas in the [event catalog](03-architecture/03-event-catalog.md) | Contract tests against the specs (Phase 1 onwards); ✅ Phase 2: `contracts/events/*.schema.json` generated from the catalog, every produced event validated against them | Syllabus |
-| SEED(S): feedback | [`api/README.md` — Feedback](../api/README.md#feedback-seeds-step-6) | Mock server for web/bots before the backend exists (Phase 1) | Syllabus |
+| SEED(S): feedback | [`api/README.md` — Feedback](../api/README.md#feedback-seeds-step-6) | ✅ Phase 3: `make mock` serves the public API from the specs: Prism with the owning services' examples, plus a WebSocket mock for Q-06 and Q-10; `npm run dev:mock` runs the web app against it, with no backend | Syllabus |
 | Microservices vs APIs | [system architecture §4](03-architecture/01-system-architecture.md#4-microservices-vs-apis) — the API at the system boundary (owned by the API Team) vs the microservices behind it | Public API (gateway) stays stable while services change behind it | Ch. 2 |
 
 ## Unit II — Boundaries, DDD and data
@@ -36,7 +36,7 @@ refer to the [roadmap](07-roadmap.md). Textbook: *Microservices: Up and Running*
 | Independent deployability | [ADR-0001](adr/0001-microservices-over-monolith.md), [sizing H6](02-domain/03-service-sizing.md), [deployment §4](03-architecture/07-deployment-and-environments.md#4-cicd-pipeline-github-actions--argo-cd-gitops) | Per-service pipelines and Argo CD Applications; deploy one service without others (Phase 6) | Project |
 | Data ownership and sharing data | [data ownership](03-architecture/02-data-ownership.md) — one owner per piece of data; [§6](03-architecture/02-data-ownership.md#6-how-services-share-data-without-a-shared-database) sync API calls, events + local copies, ES + CQRS read models | Keyspace/DB per service with per-service credentials (Phase 1) | Standard — Richardson, *Microservices Patterns* (2018) |
 | Event Sourcing | [ES and CQRS](03-architecture/04-event-sourcing-and-cqrs.md), [ADR-0005](adr/0005-event-sourcing-for-matching-engine.md) | ✅ Phase 2: matching-engine event store in Cassandra (logged batches), snapshots every 500 events, books rebuilt from the store on every start; property tests: replay from any snapshot gives the same book hash; `kill -9` → same hash ([how matching works](../services/matching-engine/docs/how-matching-works.md)). Time travel: Phase 4 | Standard |
-| CQRS | [ES and CQRS](03-architecture/04-event-sourcing-and-cqrs.md), [ADR-0006](adr/0006-cqrs-portfolio-read-model.md) | ✅ Phase 2: portfolio-service settles from `matching.v1` (idempotent, `processed_events` in the same transaction); order-service keeps order status from the same events. Market-data read models: Phase 3; time travel: Phase 4 | Standard |
+| CQRS | [ES and CQRS](03-architecture/04-event-sourcing-and-cqrs.md), [ADR-0006](adr/0006-cqrs-portfolio-read-model.md) | ✅ Phase 2: portfolio-service settles from `matching.v1` (idempotent, `processed_events` in the same transaction); order-service keeps order status from the same events. ✅ Phase 3: market-data-service builds candles, depth, trades and last price from `matching.v1` (gap fill from the engine's Q-14/Q-15, deterministic `CandleClosed` IDs); WebSocket clients get a snapshot, then updates in sequence; portfolio Q-10 pushes after each commit via Postgres LISTEN/NOTIFY ([read side](03-architecture/08-read-side.md)). Time travel: Phase 4 | Standard |
 
 ## Unit III — DevOps and infrastructure
 
@@ -55,7 +55,7 @@ refer to the [roadmap](07-roadmap.md). Textbook: *Microservices: Up and Running*
 | Docker | [coding standards §1, §3](05-coding-standards.md), [deployment §2](03-architecture/07-deployment-and-environments.md#2-docker-compose-dev), [developer setup](08-developer-setup.md) | ✅ Phase 1: multi-stage, non-root Dockerfile with HEALTHCHECK per service and for `web`; Docker Compose with `infra` and `app` profiles, healthchecks, `depends_on: service_healthy` and memory limits | Project |
 | Cassandra | [ADR-0004](adr/0004-cassandra-event-store.md), [data ownership §4](03-architecture/02-data-ownership.md#4-table-designs) | ✅ Phase 1: single node tuned for a laptop, one keyspace and one login role per owning service, isolation tested. ✅ Phase 2: matching-engine event store and order-service tables (outbox, lightweight transaction for Idempotency-Key, per-column writes), integration-tested with testcontainers. Event store and query tables: Phase 2 | Project |
 | Kubernetes | [ADR-0007](adr/0007-kubernetes-kind-and-helm-umbrella.md), [deployment §3](03-architecture/07-deployment-and-environments.md#3-kubernetes-with-kind--helm-umbrella-chart) | kind cluster (via Terraform), probes, rollouts, RBAC (Phase 5) | Ch. 7 (EKS → kind) |
-| Endpoint design | [`api/`](../api/README.md), [coding standards §4, §9](05-coding-standards.md#9-api-versioning-rules) | ✅ Phase 1: a `501` stub for every spec operation, generated from the specs, with a contract test per service. ✅ Phase 2: real routes for the gateway (sessions, roles, rate limits), order-service, portfolio-service and the matching-engine reads; the rest in Phases 3–7 | Syllabus |
+| Endpoint design | [`api/`](../api/README.md), [coding standards §4, §9](05-coding-standards.md#9-api-versioning-rules) | ✅ Phase 1: a `501` stub for every spec operation, generated from the specs, with a contract test per service. ✅ Phase 2: real routes for the gateway (sessions, roles, rate limits), order-service, portfolio-service and the matching-engine reads. ✅ Phase 3: market-data REST and WebSockets, the gateway's WebSocket proxy (per-channel roles, the trader's own stream only); the rest in Phases 4–7 | Syllabus |
 | Umbrella project | [coding standards — the umbrella project](05-coding-standards.md#the-umbrella-project-our-interpretation): local (root `docker-compose.yml` + `Makefile`) and Kubernetes (Helm umbrella chart) | ✅ Phase 1: `make up` (root `docker-compose.yml` + `Makefile`). Later: `charts/circuitbreaker` rendered per service by Argo CD (Phases 5, 6) | Project — our interpretation |
 
 ## Unit V — Releasing and evolving
@@ -89,9 +89,10 @@ vocabulary and the Universal Sizing Formula (Ch. 4), and the infrastructure shap
 and Argo CD as the GitOps deployment server (Ch. 7). The "Basis" column shows this for every topic.
 
 **Q: Where is the SEED(S) "feedback" step in your project?**
-A: Consumers review spec PRs, the UI is built against a mock server generated from the specs before the backend exists,
-and contract tests keep code and specs in sync. Phase 0 feedback already changed the design (async cancel, orphan rule), and building Phase 2 changed it
-again (the fail-closed orphan rule, ADR-0017; self-trade prevention).
+A: Consumers review spec PRs, the UI can run against a mock server generated from the specs (`make mock`) with no
+backend, and contract tests keep code and specs in sync. Phase 0 feedback already changed the design (async cancel,
+orphan rule). Building Phase 2 changed it again (the fail-closed orphan rule, ADR-0017; self-trade prevention), and so
+did Phase 3 (`recent_trades` in the Q-06 snapshot, so a reconnecting client rebuilds its trades tape).
 
 **Q: How do you measure whether moving to microservices worked?**
 A: The DORA four key metrics from *Accelerate* (deployment frequency, lead time, change failure rate, time to restore),
