@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from bot_traders.runtime.events import EventEnvelope, InvalidEventError, format_timestamp
+from bot_traders.runtime.health import ReadinessCheck
 from bot_traders.runtime.metrics import Metrics
 
 logger = logging.getLogger("events")
@@ -231,3 +232,17 @@ class EventConsumer:
         if self._consumer is None:
             return set()
         return set(self._consumer.partitions_for_topic(topic) or ())
+
+
+def consumer_check(get_consumer: Callable[[], "EventConsumer | None"]) -> ReadinessCheck:
+    """Ready only once the consumer has joined its group and read to the end of its partitions at
+    least once (coding standards section 7: "consumers are caught up")."""
+
+    async def probe() -> None:
+        consumer = get_consumer()
+        if consumer is None:
+            raise RuntimeError("the consumer has not started yet")
+        if not consumer.caught_up_once:
+            raise RuntimeError(f"{consumer.group_id} has not caught up yet")
+
+    return ReadinessCheck("consumer", probe)

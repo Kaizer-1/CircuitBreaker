@@ -28,7 +28,13 @@ from order_service.runtime.checks import cassandra_check, redpanda_check
 from order_service.runtime.events import EventEnvelope
 from order_service.runtime.health import ReadinessCheck, health_router
 from order_service.runtime.jsonlog import configure_logging
-from order_service.runtime.kafka import TRANSIENT_ERRORS, Delivery, EventConsumer, EventPublisher
+from order_service.runtime.kafka import (
+    TRANSIENT_ERRORS,
+    Delivery,
+    EventConsumer,
+    EventPublisher,
+    consumer_check,
+)
 from order_service.runtime.metrics import Metrics, metrics_router
 from order_service.runtime.middleware import ObservabilityMiddleware
 from order_service.runtime.problem import install_exception_handlers
@@ -116,6 +122,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
         dead_letters=publisher.publish_raw,
         transient_errors=transient_errors(),
     )
+    app.state.consumer = consumer
     relaying = asyncio.create_task(relay.run(settings.relay_interval_seconds))
     try:
         while True:
@@ -179,6 +186,9 @@ def create_app(
     app.state.business_metrics = business_metrics
     app.state.breaker = breaker
     app.state.orders = orders
+    app.state.consumer = None
+    if readiness_checks is None:
+        checks.append(consumer_check(lambda: app.state.consumer))
 
     app.add_middleware(
         ObservabilityMiddleware,

@@ -33,6 +33,7 @@ from portfolio_service.runtime.kafka import (
     Delivery,
     EventConsumer,
     EventPublisher,
+    consumer_check,
 )
 from portfolio_service.runtime.metrics import Metrics, metrics_router
 from portfolio_service.runtime.middleware import ObservabilityMiddleware
@@ -125,6 +126,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
         dead_letters=publisher.publish_raw,
         transient_errors=transient_errors(),
     )
+    app.state.consumer = consumer
     async with httpx.AsyncClient() as client:
         sweeper = OrphanSweeper(
             store,
@@ -185,6 +187,9 @@ def create_app(
     app.state.metrics = metrics
     app.state.business_metrics = business_metrics
     app.state.service = service
+    app.state.consumer = None
+    if readiness_checks is None:
+        checks.append(consumer_check(lambda: app.state.consumer))
 
     app.add_middleware(
         ObservabilityMiddleware,

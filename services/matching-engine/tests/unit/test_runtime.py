@@ -20,7 +20,7 @@ from matching_engine.runtime.events import (
 )
 from matching_engine.runtime.health import ReadinessCheck, health_router
 from matching_engine.runtime.jsonlog import configure_logging
-from matching_engine.runtime.kafka import MAX_ATTEMPTS, Delivery, EventConsumer
+from matching_engine.runtime.kafka import MAX_ATTEMPTS, Delivery, EventConsumer, consumer_check
 from matching_engine.runtime.metrics import Metrics, metrics_router
 from matching_engine.runtime.middleware import ObservabilityMiddleware
 from matching_engine.runtime.problem import install_exception_handlers
@@ -316,3 +316,17 @@ async def test_a_message_that_is_not_an_event_goes_straight_to_the_dlq(settings:
     sink = _Sink()
     assert await _consumer(settings, handler, sink).handle(_delivery(b"{broken")) is False
     assert sink.letters[0][2]["attempts"] == 1
+
+
+async def test_the_consumer_readiness_check_waits_until_it_has_caught_up(
+    settings: Settings,
+) -> None:
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        return None
+
+    consumer = _consumer(settings, handler, _Sink())
+    for current in (None, consumer):
+        with pytest.raises(RuntimeError):
+            await consumer_check(lambda current=current: current).probe()  # type: ignore[misc]
+    consumer.caught_up_once = True
+    await consumer_check(lambda: consumer).probe()

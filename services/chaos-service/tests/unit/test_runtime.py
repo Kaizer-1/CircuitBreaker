@@ -20,7 +20,7 @@ from chaos_service.runtime.events import (
 )
 from chaos_service.runtime.health import ReadinessCheck, health_router
 from chaos_service.runtime.jsonlog import configure_logging
-from chaos_service.runtime.kafka import MAX_ATTEMPTS, Delivery, EventConsumer
+from chaos_service.runtime.kafka import MAX_ATTEMPTS, Delivery, EventConsumer, consumer_check
 from chaos_service.runtime.metrics import Metrics, metrics_router
 from chaos_service.runtime.middleware import ObservabilityMiddleware
 from chaos_service.runtime.problem import install_exception_handlers
@@ -316,3 +316,17 @@ async def test_a_message_that_is_not_an_event_goes_straight_to_the_dlq(settings:
     sink = _Sink()
     assert await _consumer(settings, handler, sink).handle(_delivery(b"{broken")) is False
     assert sink.letters[0][2]["attempts"] == 1
+
+
+async def test_the_consumer_readiness_check_waits_until_it_has_caught_up(
+    settings: Settings,
+) -> None:
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        return None
+
+    consumer = _consumer(settings, handler, _Sink())
+    for current in (None, consumer):
+        with pytest.raises(RuntimeError):
+            await consumer_check(lambda current=current: current).probe()  # type: ignore[misc]
+    consumer.caught_up_once = True
+    await consumer_check(lambda: consumer).probe()

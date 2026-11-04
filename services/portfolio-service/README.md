@@ -110,6 +110,7 @@ curl localhost:8004/readyz         # or `make up` from the repo root to run its 
 
 - Redpanda, and the topic(s) `matching.v1` must exist (the init job creates them)
 - Postgres: logs in as `portfolio_service` and uses database `portfolio`
+- `consumer`: group `portfolio-service.matching.v1` has joined and read to the end of its partitions at least once
 
 ## Viva Notes
 

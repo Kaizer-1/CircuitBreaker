@@ -26,7 +26,13 @@ from matching_engine.runtime.checks import cassandra_check, redpanda_check
 from matching_engine.runtime.events import EventEnvelope
 from matching_engine.runtime.health import ReadinessCheck, health_router
 from matching_engine.runtime.jsonlog import configure_logging
-from matching_engine.runtime.kafka import TRANSIENT_ERRORS, Delivery, EventConsumer, EventPublisher
+from matching_engine.runtime.kafka import (
+    TRANSIENT_ERRORS,
+    Delivery,
+    EventConsumer,
+    EventPublisher,
+    consumer_check,
+)
 from matching_engine.runtime.metrics import Metrics, metrics_router
 from matching_engine.runtime.middleware import ObservabilityMiddleware
 from matching_engine.runtime.problem import install_exception_handlers
@@ -121,6 +127,7 @@ async def run_engine(app: FastAPI, settings: Settings, metrics: Metrics) -> None
         dead_letters=publisher.publish_raw,
         transient_errors=transient_errors(),
     )
+    app.state.consumer = consumer
     await consumer.start()
     try:
         await consumer.run()
@@ -162,8 +169,10 @@ def create_app(
     app.state.business_metrics = business_metrics
     app.state.engine = engine
     checks = list(readiness_checks) if readiness_checks is not None else default_checks(settings)
+    app.state.consumer = None
     if readiness_checks is None:
         checks.append(books_check(app))
+        checks.append(consumer_check(lambda: app.state.consumer))
 
     app.add_middleware(
         ObservabilityMiddleware,

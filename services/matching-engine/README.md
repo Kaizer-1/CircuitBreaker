@@ -108,6 +108,7 @@ curl localhost:8002/internal/v1/books/CHAIWALA
 - Redpanda, and the topic(s) `orders.v1`, `matching.v1` must exist (the init job creates them)
 - Cassandra: logs in with its own role `matching_engine_role` and uses keyspace `matching_engine` only
 - `books`: every order book has been rebuilt from the event store
+- `consumer`: group `matching-engine.orders.v1` has joined and read to the end of its partitions at least once
 
 ## Viva Notes
 
