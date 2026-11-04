@@ -43,6 +43,10 @@ npm run lint && npm run format:check && npm run typecheck
 npm run build           # type-check and build to dist/
 ```
 
+**Without the backend:** `make mock` (repo root) starts the API mocked from the specs: Prism on :4010 and the
+WebSocket mock on :4011 (`mock/ws-mock.mjs`, a moving market for Q-06 and a portfolio for Q-10). Then
+`npm run dev:mock` serves the app with `/v1` proxied to them.
+
 In Docker (`make up`) the built files are served by unprivileged nginx on host port 5173, which forwards `/v1/` to
 `api-gateway` so the browser sees a single origin (no CORS). Versions: React 19, Vite 8, TypeScript 6.0 (pinned below 6.1
 because typescript-eslint does not support TypeScript 7 yet), ESLint 10, Vitest 5.

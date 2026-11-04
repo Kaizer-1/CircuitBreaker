@@ -167,8 +167,11 @@ An API design is only "done" once its consumers have tried it. Our feedback loop
 
 1. **Review by consumers:** every spec change is a pull request reviewed by the *consuming* team (e.g. Market Insights
    reviews `matching-engine.yaml`; Trading reviews `portfolio-service.yaml` reservations).
-2. **Try before building:** the web app and bots are developed against a **mock server** generated from these specs
-   (e.g. `npx @stoplight/prism-cli mock api/api-gateway.yaml`), so UI feedback arrives before backend code exists.
+2. **Try before building:** the web app and bots are developed against a **mock server** generated from these specs,
+   so UI feedback arrives before backend code exists. `make mock` runs Prism 5.16.0 on the gateway spec, with each
+   proxied operation's examples copied from the owning service's spec (`tools/mock_spec.py`), plus a small WebSocket
+   mock (`web/mock/ws-mock.mjs`) for the channels below, which Prism cannot mock; `npm run dev:mock` points the web
+   app at both.
 3. **Record the outcome:** accepted changes update the spec, the actions/queries table and, if a decision changed, an
    ADR — in the same PR.
 4. **Automate the contract:** once code exists, contract tests fail the build if responses drift from the spec.

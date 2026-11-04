@@ -16,7 +16,7 @@ GATEWAY  := http://localhost:8080
 ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
-.PHONY: help doctor setup infra up down reset demo-reset bots bots-stop ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status
+.PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -64,6 +64,12 @@ bots: ## Start the 20 bots trading (needs make up): make bots [seed=42] [activit
 bots-stop: ## Stop the bots trading (the container keeps running, idle)
 	BOTS_ENABLED=false $(COMPOSE) $(ALL) up -d --no-deps bot-traders
 	@python3 scripts/wait-stack.py infra app
+
+mock: ## The public API mocked from the specs, for web work without the backend (Prism :4010, WebSockets :4011)
+	@uv run --quiet --locked tools/mock_spec.py
+	@trap 'kill 0' EXIT; \
+	  npx --yes @stoplight/prism-cli@5.16.0 mock web/mock/build/api/api-gateway.yaml --port 4010 & \
+	  node web/mock/ws-mock.mjs
 
 ps: ## Show container status
 	$(COMPOSE) $(ALL) ps -a

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "CircuitBreaker web app. Phase 1: the System Status screen only.",
+  "description": "CircuitBreaker web app: trader, presenter and System Status screens.",
   "engines": {
     "node": ">=22.12"
   },
@@ -15,7 +15,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dev:mock": "vite --mode mock"
   },
   "dependencies": {
     "react": "^19.3.1",
@@ -38,6 +39,7 @@
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.1",
     "vite": "^8.3.5",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "ws": "8.22.0"
   }
 }
