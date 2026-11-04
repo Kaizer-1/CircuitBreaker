@@ -29,7 +29,7 @@ def session() -> Iterator[Any]:
         cluster = Cluster(
             container.get_contact_points(),
             load_balancing_policy=None,
-            protocol_version=5,
+            protocol_version=4,
         )
         admin = cluster.connect()
         admin.execute(

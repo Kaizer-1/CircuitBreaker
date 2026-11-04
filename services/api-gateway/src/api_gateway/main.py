@@ -22,6 +22,10 @@ from api_gateway.runtime.metrics import Metrics, metrics_router
 from api_gateway.runtime.middleware import ObservabilityMiddleware
 from api_gateway.runtime.problem import install_exception_handlers
 
+# Idle connections are dropped after 2 s, before uvicorn closes them (after 5 s): otherwise a
+# request can be sent on a connection the server is closing (httpx.ReadError, a 503 to the caller).
+KEEP_ALIVE = httpx.Limits(keepalive_expiry=2.0)
+
 
 def create_app(
     settings: Settings | None = None,
@@ -38,7 +42,9 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with httpx.AsyncClient(
-            timeout=settings.upstream_timeout_seconds, transport=http_transport
+            timeout=settings.upstream_timeout_seconds,
+            transport=http_transport,
+            limits=KEEP_ALIVE,
         ) as client:
             app.state.http_client = client
             yield

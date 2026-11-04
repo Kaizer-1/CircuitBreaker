@@ -52,6 +52,9 @@ QUERIES = {
 }
 
 
+SCAN_READS_AT_ONCE = 8  # Q-07 listings, across all callers; the worker pool has about 32 threads
+
+
 def connect_cassandra(
     contact_points: Sequence[str], port: int, keyspace: str, username: str, password: str
 ) -> Any:
@@ -65,7 +68,9 @@ def connect_cassandra(
         port=port,
         auth_provider=PlainTextAuthProvider(username, password),
         connection_class=AsyncioConnection,
-        protocol_version=5,
+        # v4, not v5: under concurrent load, v5's segment framing failed its CRC with the asyncio
+        # reactor (CrcException, connection defunct, host marked down: seen with the Phase 3 bots).
+        protocol_version=4,
         connect_timeout=5,
     )
     return cluster.connect(keyspace)
@@ -120,6 +125,7 @@ class CassandraOrderStore:
     def __init__(self, session: Any) -> None:
         self._session = session
         self._q: dict[str, Any] = {}
+        self._scan_slots = asyncio.Semaphore(SCAN_READS_AT_ONCE)
 
     async def _run(self, query: Any, params: Sequence[Any] = ()) -> list[Any]:
         return await asyncio.to_thread(lambda: list(self._session.execute(query, params)))
@@ -248,8 +254,14 @@ class CassandraOrderStore:
             placed_at, order_id = before
             params = (trader_id, parse_timestamp(placed_at), order_id, limit)
             rows = await self._run(self._q["select_page_before"], params)
-        found = await asyncio.gather(*(self.get(r.order_id) for r in rows))
+        found = await asyncio.gather(*(self._scan_get(r.order_id) for r in rows))
         return [o for o in found if o is not None]
+
+    async def _scan_get(self, order_id: str) -> Order | None:
+        # Listing reads one row per order. Without a cap, a few long listings queue thousands of
+        # reads in the worker threads and an order placement waits behind them.
+        async with self._scan_slots:
+            return await self.get(order_id)
 
     # ------------------------------------------------------------------ outbox and events
 

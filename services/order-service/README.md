@@ -86,6 +86,16 @@ docker compose --profile infra --profile app stop portfolio-service   # then pla
 
 Other business metrics: `orders_placed_total{order_type,side}`, `orders_rejected_total{reason}`.
 
+**Under load (found in Phase 3 with the 20 bots running).** Two fixes keep order placement fast and error-free:
+
+- The Cassandra driver uses **protocol v4**. With v5, concurrent queries on the asyncio reactor corrupted its segment
+  framing (`CrcException`): the driver dropped the connection, and with one Cassandra node that marked the whole
+  cluster down for about a second, so every request failed (`NoHostAvailable`). matching-engine and market-data-service
+  use v4 too.
+- Q-07 with a status filter reads one row per order (`orders_by_trader` holds only IDs). Those reads share **8 slots**
+  across all callers, so a few long listings cannot fill the worker threads and delay a placement. Bots therefore list
+  their open orders only at start-up; they follow their Q-10 stream for fills.
+
 ## Owned data
 
 Cassandra keyspace `order_service` (schema: [`src/order_service/migrations/`](src/order_service/migrations/), applied at

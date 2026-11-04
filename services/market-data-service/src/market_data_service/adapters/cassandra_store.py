@@ -48,7 +48,9 @@ def connect_cassandra(
         port=port,
         auth_provider=PlainTextAuthProvider(username, password),
         connection_class=AsyncioConnection,
-        protocol_version=5,
+        # v4, not v5: under concurrent load, v5's segment framing failed its CRC with the asyncio
+        # reactor (CrcException, connection defunct, host marked down: seen with the Phase 3 bots).
+        protocol_version=4,
         connect_timeout=5,
     )
     return cluster.connect(keyspace)

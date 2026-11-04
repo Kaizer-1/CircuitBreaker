@@ -46,6 +46,9 @@ TOPICS = ("matching.v1",)
 CONSUMER_GROUP = "portfolio-service.matching.v1"
 
 logger = logging.getLogger("startup")
+# Idle connections are dropped after 2 s, before uvicorn closes them (after 5 s): otherwise a
+# request can be sent on a connection the server is closing (httpx.ReadError, a 503 to the caller).
+KEEP_ALIVE = httpx.Limits(keepalive_expiry=2.0)
 
 
 def default_checks(settings: Settings) -> list[ReadinessCheck]:
@@ -133,7 +136,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
         transient_errors=transient_errors(),
     )
     app.state.consumer = consumer
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(limits=KEEP_ALIVE) as client:
         sweeper = OrphanSweeper(
             store,
             HttpOrderService(settings.order_service_url, client),

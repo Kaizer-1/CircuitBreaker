@@ -30,6 +30,9 @@ from market_data_service.runtime.middleware import ObservabilityMiddleware
 from market_data_service.runtime.problem import install_exception_handlers
 
 logger = logging.getLogger("market-data-service")
+# Idle connections are dropped after 2 s, before uvicorn closes them (after 5 s): otherwise a
+# request can be sent on a connection the server is closing (httpx.ReadError, a 503 to the caller).
+KEEP_ALIVE = httpx.Limits(keepalive_expiry=2.0)
 
 # Topics this service produces or consumes, per the event catalog.
 TOPICS = ("matching.v1", "candles.v1")
@@ -66,7 +69,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
     business = app.state.business_metrics
     publisher = EventPublisher(settings.kafka_bootstrap_servers, settings.service_name, metrics)
     feed = MatchingFeed(settings.kafka_bootstrap_servers, settings.service_name, metrics)
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(limits=KEEP_ALIVE) as client:
         while True:
             try:
                 session = await asyncio.to_thread(
