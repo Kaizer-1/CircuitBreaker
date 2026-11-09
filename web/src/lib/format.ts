@@ -63,3 +63,15 @@ export function dateline(at: Date): string {
   })
   return `${weekday} ${date}`
 }
+
+/** "09 NOV 2026" (the terminal skin's date). */
+export function shortDate(at: Date): string {
+  return at
+    .toLocaleDateString('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })
+    .toUpperCase()
+}

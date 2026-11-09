@@ -1,11 +1,10 @@
 // The presenter's projector view (web/README.md "Presenter"; admin only): every ticker live, the
 // selected one big, its depth and trades, and the QR code to join. One layout for both skins; the
 // masthead and dateline (paper) and the command line and F-keys (terminal) are theme-only details.
-import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
-import { fetchSystemStatus, NotAuthorizedError } from '../api'
-import { AdminLogin } from '../components/AdminLogin'
+import { useEffect, useRef, useState } from 'react'
 import { CandleChart } from '../components/CandleChart'
 import { Flash } from '../components/Flash'
+import { FKeys, PresenterGate, Sections } from '../components/PresenterNav'
 import { QrCode } from '../components/QrCode'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { joinUrl, joinUrlWarning } from '../lib/config'
@@ -20,89 +19,18 @@ import {
   signedRupees,
 } from '../lib/format'
 import { type Instrument, type Ticker, TICKERS } from '../lib/market'
-import { loadAdminToken, saveAdminToken } from '../lib/session'
 import { useInstruments, useMarkets } from '../market/hooks'
+import { useHealth, useNow, useRowsThatFit } from './presenterHooks'
 
 const DEPTH_ROWS = 6
 const TAPE_ROWS = 12 // at most; the tape shows the whole rows that fit (useRowsThatFit)
 
-function useNow(everyMs = 1000): Date {
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(new Date()), everyMs)
-    return () => window.clearInterval(id)
-  }, [everyMs])
-  return now
-}
-
-/** How many whole table rows fit in a panel (the tape takes the height the depth leaves, and the
- * skins' rows differ in height): a half-cut row at the bottom would look like a bug. */
-function useRowsThatFit(panel: RefObject<HTMLElement | null>, max: number, hasRows: boolean) {
-  const [rows, setRows] = useState(max)
-  useEffect(() => {
-    const box = panel.current
-    if (!box || !hasRows) return
-    const measure = () => {
-      const body = box.querySelector('tbody')
-      const row = body?.querySelector('tr')?.getBoundingClientRect().height
-      if (!body || !row) return
-      const room = box.getBoundingClientRect().bottom - body.getBoundingClientRect().top - 2
-      setRows(Math.max(1, Math.min(max, Math.floor(room / row))))
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(box)
-    return () => observer.disconnect()
-  }, [panel, max, hasRows])
-  return rows
-}
-
-function useHealth(token: string, onExpired: () => void): string {
-  const [health, setHealth] = useState('checking')
-  useEffect(() => {
-    let stop = false
-    const check = () =>
-      fetchSystemStatus(token)
-        .then((s) => {
-          const bad = s.services.filter((x) => x.status !== 'ready').length
-          if (!stop) setHealth(bad === 0 ? 'all systems healthy' : `${bad} services need attention`)
-        })
-        .catch((e) => {
-          if (e instanceof NotAuthorizedError) onExpired()
-          else if (!stop) setHealth('gateway unreachable')
-        })
-    void check()
-    const id = window.setInterval(check, 10_000)
-    return () => {
-      stop = true
-      window.clearInterval(id)
-    }
-  }, [token, onExpired])
-  return health
-}
-
 export function Dashboard() {
-  const [token, setToken] = useState<string | null>(loadAdminToken)
-  const expired = useCallback(() => {
-    saveAdminToken(null)
-    setToken(null)
-  }, [])
-  if (!token)
-    return (
-      <main className="gate">
-        <h1 className="masthead">
-          CircuitBreaker <em>Markets</em>
-        </h1>
-        <AdminLogin
-          purpose="The projector dashboard is for the presenter. Sign in with the presenter passcode."
-          onToken={(t) => {
-            saveAdminToken(t)
-            setToken(t)
-          }}
-        />
-      </main>
-    )
-  return <Board token={token} onExpired={expired} />
+  return (
+    <PresenterGate purpose="The projector dashboard is for the presenter. Sign in with the presenter passcode.">
+      {(token, onExpired) => <Board token={token} onExpired={onExpired} />}
+    </PresenterGate>
+  )
 }
 
 function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
@@ -142,9 +70,12 @@ function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
   return (
     <div className="dash">
       <header className="dash-head">
-        <h1 className="masthead paper-only">
-          CircuitBreaker <em>Markets</em>
-        </h1>
+        <div className="title paper-only">
+          <h1 className="masthead">
+            CircuitBreaker <em>Markets</em>
+          </h1>
+          <Sections active="market" />
+        </div>
         <span className="dateline paper-only">{dateline(now)} · live from the classroom floor</span>
         <div className="command terminal-only" aria-label="Command line">
           <span className="badge">CIRCUITBREAKER</span>
@@ -160,23 +91,7 @@ function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
           <ThemeToggle />
         </div>
       </header>
-      <nav className="fkeys terminal-only" aria-label="Function keys">
-        <span className="on">
-          <b>F1</b>MARKET
-        </span>
-        <span>
-          <b>F2</b>DEPTH
-        </span>
-        <span>
-          <b>F3</b>TRADES
-        </span>
-        <span>
-          <b>F8</b>JOIN
-        </span>
-        <a href="/status">
-          <b>F12</b>SYSTEM
-        </a>
-      </nav>
+      <FKeys active="market" />
 
       <section className="panel watch" aria-label="Watchlist">
         <h2 className="terminal-only">
