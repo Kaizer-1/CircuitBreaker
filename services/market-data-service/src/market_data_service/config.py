@@ -25,6 +25,7 @@ class Settings(BaseServiceSettings):
     rebuild_slots: int = 4
     replay_slots: int = 4
     admin_reserved_slots: int = 1
+    replay_pause_limit_seconds: float = 300.0  # a replay paused longer than this is closed
 
     ws_ping_seconds: float = 15.0  # api/README.md heartbeat
     ws_pong_timeout_seconds: float = 45.0

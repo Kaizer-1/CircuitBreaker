@@ -43,7 +43,7 @@ def trade_view(t: Trade) -> dict[str, Any]:
 def depth_view(market: TickerMarket, levels: int, now_ms: int) -> dict[str, Any]:
     bids, asks = market.depth_levels(levels)
     as_of = iso(market.as_of_ms if market.as_of_ms is not None else now_ms)
-    return _order_book(market.ticker, market.sequence, as_of, bids, asks)
+    return order_book_view(market.ticker, market.sequence, as_of, bids, asks)
 
 
 def time_travel_view(market: MarketAt, levels: int) -> dict[str, Any]:
@@ -56,7 +56,7 @@ def time_travel_view(market: MarketAt, levels: int) -> dict[str, Any]:
         "at": iso(market.at_ms),
         "as_of_sequence": book.sequence,
         "last_price_paise": market.last_price_paise,
-        "order_book": _order_book(market.ticker, book.sequence, as_of, bids, asks),
+        "order_book": order_book_view(market.ticker, book.sequence, as_of, bids, asks),
         "candles": [candle_view(c) for c in market.candles],
         "recent_trades": [trade_view(t) for t in market.recent_trades],
         "state_hash": market.state_hash,
@@ -64,7 +64,7 @@ def time_travel_view(market: MarketAt, levels: int) -> dict[str, Any]:
     }
 
 
-def _order_book(
+def order_book_view(
     ticker: str, sequence: int, as_of: str, bids: list[Level], asks: list[Level]
 ) -> dict[str, Any]:
     """OrderBookDepth."""

@@ -43,8 +43,8 @@ so the token comes as `?access_token=`. Q-06 market, Q-13 replay and Q-19 incide
 `trader` or `bot` (an admin gets `4403`). A missing, expired or forged token closes with `4401`; an unreachable upstream
 with `1011`. The upstream gets `X-Trader-Id` / `X-Role` / `X-Nickname` built from the token (a client's own copies are
 never forwarded, so a trader can only open their own portfolio stream) and every query parameter except the token. From
-then on the gateway is a pipe: messages go both ways unchanged and the upstream's close code (e.g. `4404`) reaches the
-client. The token is never logged: the access log has the path only, and uvicorn's own line for each WebSocket is
+then on the gateway is a pipe: messages go both ways unchanged and the upstream's close code reaches the client when it
+is `1000`, `1013` (a full replay replica: try again later) or any `4xxx` (e.g. `4404`); any other becomes `1011`. The token is never logged: the access log has the path only, and uvicorn's own line for each WebSocket is
 redacted. Connections are not rate-limited (they are long-lived; the services' heartbeat closes dead ones).
 
 ## Owned data

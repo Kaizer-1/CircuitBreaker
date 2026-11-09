@@ -16,6 +16,7 @@ from market_data_service.adapters.cassandra_store import CassandraMarketStore, c
 from market_data_service.adapters.engine_http import HttpEventStore
 from market_data_service.adapters.matching_feed import MatchingFeed
 from market_data_service.api import market as market_api
+from market_data_service.api import replay as replay_api
 from market_data_service.api import stubs
 from market_data_service.api import time_travel as time_travel_api
 from market_data_service.application.hub import MarketHub
@@ -180,5 +181,6 @@ def create_app(
     app.include_router(metrics_router(metrics))
     app.include_router(market_api.router)
     app.include_router(time_travel_api.router)
+    app.include_router(replay_api.router)
     app.include_router(stubs.router)
     return app

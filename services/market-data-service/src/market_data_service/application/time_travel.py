@@ -89,6 +89,14 @@ class TimeTravel:
         self._store = store
         self._live = live
 
+    @property
+    def events(self) -> EventStore:
+        return self._events
+
+    @property
+    def store(self) -> MarketStore:
+        return self._store
+
     async def rebuild(
         self, ticker: str, at_ms: int, *, until_sequence: int | None = None
     ) -> ReplayBook:
