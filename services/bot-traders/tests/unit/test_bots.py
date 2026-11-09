@@ -347,3 +347,47 @@ async def test_after_the_stream_drops_the_next_refresh_lists_open_orders_again()
     await bot.refresh()
     assert exchange.order_lists == 2
     listening.cancel()
+
+
+class SlowListing(SimExchange):
+    """Q-07 times out (order-service saturated) until `healthy` is set."""
+
+    def __init__(self) -> None:
+        super().__init__(VirtualTime())
+        self.healthy = False
+        self.listings_tried = 0
+
+    async def open_orders(self, session: Session) -> list[dict[str, Any]]:
+        self.listings_tried += 1
+        if not self.healthy:
+            raise TimeoutError("ReadTimeout")
+        return await super().open_orders(session)
+
+
+async def test_a_failing_bot_backs_off_instead_of_retrying_every_candle() -> None:
+    from bot_traders.application.bot import STEP_BACKOFF_MAX_SECONDS, Bot, MarketState
+
+    exchange = SlowListing()
+    bot = Bot(roster()[0], exchange, seeded(), clock=exchange.time.clock, sleep=exchange.time.sleep)
+    await bot.login()
+    market = MarketState([24550])
+    tried_at: list[float] = []
+    for second in range(0, 120, 5):  # a candle every 5 s for two minutes
+        exchange.time.now = float(second)
+        before = exchange.listings_tried
+        await bot.act("CHAIWALA", market)
+        if exchange.listings_tried > before:
+            tried_at.append(exchange.time.now)
+    # 1 s, 2 s, 4 s ... between tries, rounded up to the next candle, never more than 30 s apart.
+    assert tried_at[:5] == [0.0, 5.0, 10.0, 15.0, 25.0]
+    gaps = [b - a for a, b in zip(tried_at, tried_at[1:], strict=False)]
+    assert gaps == sorted(gaps) and max(gaps) <= STEP_BACKOFF_MAX_SECONDS + 5
+    assert len(tried_at) < 24 / 2  # far fewer than one try per candle
+
+    exchange.healthy = True  # order-service recovered
+    tries = exchange.listings_tried
+    exchange.time.now = 1_000.0
+    acting = asyncio.create_task(bot.act("CHAIWALA", market))
+    await exchange.time.run_until(1_005.0)  # the step's orders go out over the interval
+    await acting
+    assert exchange.listings_tried == tries + 1 and bot._backoff == 0.0  # the pause is reset

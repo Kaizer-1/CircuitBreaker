@@ -45,6 +45,12 @@ say at once when an order traded or finished. It lists its open orders (Q-07) on
 reconnects. That query reads one row per order in the trader's history, and polling it from 20 bots slowed order
 placement for everyone (p95 above 1 s; now about 30 ms).
 
+**Backing off after a failure.** A step that fails (a timeout, a 5xx) pauses that bot for 1 s, then 2, 4 … up to
+30 s; a step that works resets the pause. Found in Phase 4 after two hours of trading: a gateway restart made every bot
+list its open orders at once, each listing read up to 1,000 rows, the bots timed out and retried every candle, and the
+abandoned listings piled up in order-service until it ran out of memory (192 MiB) and restarted, again and again. With
+the back-off, the same restart costs about 45 seconds of failed steps and order-service's memory stays flat.
+
 **Timing (an implementation detail).** Bots act on `CandleClosed` (policy P-09), on the 5s candles only. If every bot
 sent its orders the moment a candle closed, trades would come in a burst every 5 s. So each bot spreads that candle's
 orders over the following interval at random offsets (5% to 95% of it). The offsets come from the bot's own random

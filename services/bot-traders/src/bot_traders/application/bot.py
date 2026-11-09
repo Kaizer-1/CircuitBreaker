@@ -29,6 +29,11 @@ from bot_traders.ports.exchange import Exchange, OrderRefusedError, Session
 logger = logging.getLogger("bot")
 
 REFRESH_AFTER_SECONDS = 4.0  # a portfolio read is reused for this long
+# After a failed step the bot pauses, doubling each time (1 s, 2 s, 4 s ... 30 s), like the
+# stream's reconnect. Without it, 20 bots retrying a slow listing every candle kept order-service
+# saturated after a gateway restart (Phase 4: the abandoned listings piled up until it ran out of
+# memory). A step that works resets the pause.
+STEP_BACKOFF_MAX_SECONDS = 30.0
 CLOSED_REMEMBERED = 2_000  # finished order IDs kept, for a close that overtakes its A-05 answer
 SPREAD = (0.05, 0.95)  # orders go out between 5% and 95% of the interval
 
@@ -82,6 +87,8 @@ class Bot:
         self._refreshing = asyncio.Lock()
         self._closed: dict[str, None] = {}  # recently finished order IDs, oldest first
         self.busy: set[str] = set()  # tickers this bot is still acting on
+        self._backoff = 0.0  # seconds; 0 while steps work
+        self._resume_at = 0.0  # no step before this time after a failure
 
     @property
     def strategy_name(self) -> str:
@@ -185,6 +192,8 @@ class Bot:
         """Refresh, decide, and send this ticker's orders through the next interval."""
         if ticker in self.busy:
             return  # still busy with the previous candle: skip this one
+        if self._clock() < self._resume_at:
+            return  # backing off after a failure: give the exchange room to recover
         self.busy.add(ticker)
         try:
             await self.refresh()
@@ -193,8 +202,14 @@ class Bot:
                 await self._sleep(offset - elapsed)
                 elapsed = offset
                 await self.execute(intent, market)
+            self._backoff = 0.0
         except Exception as exc:
-            logger.warning("bot step failed", extra={"bot": self.name, "error": repr(exc)})
+            self._backoff = min(self._backoff * 2 or 1.0, STEP_BACKOFF_MAX_SECONDS)
+            self._resume_at = self._clock() + self._backoff
+            logger.warning(
+                "bot step failed",
+                extra={"bot": self.name, "error": repr(exc), "retry_in_seconds": self._backoff},
+            )
         finally:
             self.busy.discard(ticker)
 
