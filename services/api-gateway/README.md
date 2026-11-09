@@ -47,6 +47,30 @@ then on the gateway is a pipe: messages go both ways unchanged and the upstream'
 is `1000`, `1013` (a full replay replica: try again later) or any `4xxx` (e.g. `4404`); any other becomes `1011`. The token is never logged: the access log has the path only, and uvicorn's own line for each WebSocket is
 redacted. Connections are not rate-limited (they are long-lived; the services' heartbeat closes dead ones).
 
+### Nickname blocklist (projector safety)
+
+Nicknames appear on the projector and the leaderboard, so A-01 refuses a few offensive words in English and
+Hindi/Hinglish before any account is opened: `422 VALIDATION_FAILED` with the polite detail "That nickname can't be
+shown on the big screen. Please choose another one." (the phone shows it as is). The words are data, not code:
+[`src/api_gateway/domain/nickname_blocklist.txt`](src/api_gateway/domain/nickname_blocklist.txt), one per line, in a
+`[blocked]` and an `[allowed]` section; `domain/nicknames.py` applies them. A refused name is not logged.
+
+How a nickname is checked: lowercase; leetspeak mapped (0→o, 1→i, 3→e, 4→a, @→a, $→s, 5→s, 7→t); underscores and
+digits removed; repeated letters collapsed (`fuuuck` → `fuck`); then a blocked word anywhere inside refuses it, unless
+that occurrence lies entirely inside an allowed word. List entries are normalised the same way.
+
+**Why the `[allowed]` section.** Substring matching on its own would refuse ordinary names that contain a short
+blocked word, and the audience is mostly Indian: Harshit, Ishita, Akshita, Kshitij and Dikshit contain "shit"; Nigam
+and Nigar contain "nigga" once its double g collapses; Nazim and Nazia contain "nazi"; Randip contains "randi". Those
+words and name fragments are listed as allowed, and `tests/unit/domain/test_nicknames.py` keeps a list of 47 ordinary
+names that must always pass next to the obvious, leetspeak and padded variants that must be refused. Blocked entries
+are at least four letters long, and very short or very common words (*ass*, *sala*, *kutta*) are left out on purpose.
+
+**Limits, accepted.** A determined person can always find a spelling no list catches; this stops the obvious and the
+lazily disguised. An allowed word can shelter a blocked one inside it (a slur plus one letter can spell an allowed
+name), and a blocked word can also be a real place name ("Niger" is refused). To change the list, edit the file and add
+the case to the tests.
+
 ## Owned data
 
 None (stateless). Sessions are self-contained signed JWTs (`JWT_SECRET`). Secrets `JWT_SECRET`, `BOT_SECRET` and

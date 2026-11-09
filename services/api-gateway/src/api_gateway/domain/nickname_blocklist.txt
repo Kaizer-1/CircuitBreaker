@@ -1,0 +1,119 @@
+# Nickname blocklist for A-01 (join): projector safety. Nicknames appear on the big screen and on the
+# leaderboard, so a few offensive words are refused at join with a polite 422 VALIDATION_FAILED.
+# Rules and trade-offs: services/api-gateway/README.md ("Nickname blocklist").
+#
+# How a nickname is checked (domain/nicknames.py): lowercase; leetspeak mapped (0→o 1→i 3→e 4→a
+# @→a $→s 5→s 7→t); underscores and digits removed; repeated letters collapsed (fuuuck → fuck);
+# then a [blocked] word anywhere inside means refused, unless that occurrence lies entirely inside
+# an [allowed] word. The entries here go through the same steps, so write them as usually spelt.
+#
+# One entry per line. Lines starting with # are comments. Keep entries at least four letters long:
+# a shorter one matches inside too many ordinary names.
+
+[blocked]
+# English
+fuck
+shit
+bitch
+bastard
+cunt
+dick
+cock
+asshole
+dumbass
+jackass
+whore
+slut
+wanker
+twat
+pussy
+penis
+vagina
+porn
+sexy
+nigger
+nigga
+faggot
+retard
+rape
+rapist
+nazi
+hitler
+
+# Hindi and Hinglish
+madarchod
+maderchod
+behenchod
+bhenchod
+benchod
+chutiya
+chutiye
+chootiya
+bhosdike
+bhosadike
+bhosda
+bhosdi
+bsdk
+gandu
+gaandu
+lund
+lauda
+lavda
+lawda
+loda
+lodu
+randi
+harami
+haramkhor
+kamina
+kameena
+chinal
+chhinal
+bhadwa
+bhadwe
+bhadva
+jhaant
+jhantu
+jhaatu
+kuttiya
+chodu
+
+[allowed]
+# Ordinary names and words that contain a blocked word. A blocked word inside one of these is
+# excused, so "Harshit" and "Nigam" pass while "Harshit_Shit" still does not. Name fragments
+# (ashit, ishit, rshit, kshit) cover many names at once: Ashit, Harshit, Darshit, Ishita, Nishita,
+# Rishit, Akshita, Kshitij, Dikshit, Lakshit.
+ashit
+ishit
+rshit
+kshit
+shital
+shitan
+shitij
+nigam
+nigar
+nazim
+nazia
+nazir
+nazish
+randip
+brandi
+grandi
+pornima
+lodaya
+pusya
+dickens
+dickson
+dickinson
+peacock
+hitchcock
+hancock
+cockpit
+cockroach
+cockatoo
+grape
+drape
+scrape
+trapez
+therapist
+plunder

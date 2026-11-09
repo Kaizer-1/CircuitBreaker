@@ -92,6 +92,28 @@ def test_a_taken_nickname_is_409_and_a_bad_one_is_422(with_portfolio: Settings) 
     assert (bad.status_code, bad.json()["code"]) == (422, "VALIDATION_FAILED")
 
 
+def test_an_offensive_nickname_is_refused_politely_before_any_account_exists(
+    with_portfolio: Settings,
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return portfolio()(request)
+
+    with _client(with_portfolio, handler) as client:
+        refused = client.post("/v1/sessions", json={"nickname": "B1tch_99"})
+        ordinary = client.post("/v1/sessions", json={"nickname": "Harshit"})
+    body = refused.json()
+    assert (refused.status_code, body["code"]) == (422, "VALIDATION_FAILED")
+    assert body["detail"] == (
+        "That nickname can't be shown on the big screen. Please choose another one."
+    )
+    assert body["errors"] == [{"field": "nickname", "message": "Please choose another nickname."}]
+    assert ordinary.status_code == 201
+    assert [json.loads(r.content)["nickname"] for r in seen] == ["Harshit"]  # only one account
+
+
 def test_joining_while_portfolio_is_down_is_503(with_portfolio: Settings) -> None:
     def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")

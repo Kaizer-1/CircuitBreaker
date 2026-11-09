@@ -10,9 +10,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from api_gateway.api.auth import ANY_ROLE, ApiProblemError, limit_by_ip
+from api_gateway.domain.nicknames import NicknameBlocklist
 from api_gateway.domain.sessions import Principal, Role, Sessions
 from api_gateway.runtime.events import format_timestamp
 from api_gateway.runtime.jsonlog import correlation_id_var
+from api_gateway.runtime.problem import FieldError, problem_response
 
 logger = logging.getLogger("sessions")
 
@@ -98,6 +100,18 @@ async def _open_account(request: Request, nickname: str, kind: str) -> dict[str,
     dependencies=[Depends(limit_by_ip)],
 )
 async def join_market(request: Request, body: JoinRequest) -> JSONResponse:
+    blocklist: NicknameBlocklist = request.app.state.nickname_blocklist
+    if blocklist.refuses(body.nickname):
+        # Projector safety: refused before any account exists. The name itself is not logged.
+        logger.info("nickname refused by the blocklist")
+        return problem_response(
+            422,
+            "VALIDATION_FAILED",
+            "Please choose another nickname",
+            detail="That nickname can't be shown on the big screen. Please choose another one.",
+            instance=request.url.path,
+            errors=[FieldError(field="nickname", message="Please choose another nickname.")],
+        )
     account = await _open_account(request, body.nickname, "HUMAN")
     return _session(request, account["trader_id"], Role.TRADER, body.nickname, account["trader_id"])
 
