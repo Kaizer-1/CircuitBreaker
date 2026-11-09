@@ -19,6 +19,9 @@ from market_data_service.application.views import time_travel_view
 from market_data_service.runtime.problem import problem_response
 
 logger = logging.getLogger("time-travel")
+# A viewer's clock may run slightly ahead of this service's: a moment up to this far ahead counts
+# as now (so "rewind to now" always lands after the latest event and can be verified).
+CLOCK_SKEW_MS = 2_000
 
 router = APIRouter()
 
@@ -63,7 +66,8 @@ async def get_market_at(
             detail="`at` must be an ISO-8601 time with a UTC offset, e.g. 2026-11-20T10:42:15Z.",
             instance=request.url.path,
         )
-    if moment > projection.now_ms():
+    now = projection.now_ms()
+    if moment > now + CLOCK_SKEW_MS:
         return problem_response(
             422,
             "TIME_IN_FUTURE",
@@ -71,6 +75,7 @@ async def get_market_at(
             detail=f"at={at} is in the future.",
             instance=request.url.path,
         )
+    moment = min(moment, now)
     slots: Slots = request.app.state.rebuild_slots
     if not slots.try_acquire(admin=is_admin(request.headers.get("x-role"))):
         return problem_response(

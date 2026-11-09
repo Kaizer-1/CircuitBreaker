@@ -285,7 +285,9 @@ paths:
                 state_hash: 7d1c0b5e3a9f8e2d4c6b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d
                 verification: null
         '422':
-          description: Invalid request, or `at` is in the future.
+          description: |
+            Invalid request, or `at` is in the future. A moment up to 2 seconds ahead of the service's clock counts as now
+            (viewers' clocks differ slightly), so "rewind to now" always lands after the latest event.
           content:
             application/problem+json:
               schema:

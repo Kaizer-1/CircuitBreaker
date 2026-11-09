@@ -1,6 +1,7 @@
 """Q-12 over HTTP: answers, errors, and the places kept for the presenter (application/slots.py)."""
 
 from collections.abc import AsyncIterator, Iterator
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,6 +19,13 @@ from tests.contract.test_response_schemas import check
 from tests.fakes import Exchange, FakeEventStore, InMemoryMarketStore, ms
 
 ADMIN = {"X-Role": "admin"}
+
+
+def stamp(at_ms: int) -> str:
+    moment = datetime.fromtimestamp(at_ms / 1000, UTC)
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 TRADER = {"X-Role": "trader"}
 
 
@@ -139,6 +147,10 @@ def test_a_moment_in_the_future_or_without_an_offset_is_refused(
 ) -> None:
     future = get(client, "2099-01-01T00:00:00Z")
     assert (future.status_code, future.json()["code"]) == (422, "TIME_IN_FUTURE")
+    now = ms(exchange.as_of or "") + 60_000  # the fixture's server clock
+    just_ahead = get(client, stamp(now + 1_500))  # a viewer's clock slightly ahead: counts as now
+    assert (just_ahead.status_code, just_ahead.json()["at"]) == (200, stamp(now))
+    assert get(client, stamp(now + 2_500)).json()["code"] == "TIME_IN_FUTURE"
     naive = get(client, "2026-11-20T10:42:00")
     assert (naive.status_code, naive.json()["code"]) == (422, "VALIDATION_FAILED")
     assert get(client, "yesterday").status_code == 422
