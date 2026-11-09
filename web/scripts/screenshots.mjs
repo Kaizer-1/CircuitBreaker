@@ -1,5 +1,7 @@
 // Screenshots of the real screens, in both themes, against the running stack (make up && make bots):
-// the dashboard at 1920×1080 (plus a 25% copy, the back-of-the-room test) and the phone at 390×844.
+// the dashboard at 1920×1080 (with the leaderboard, and with it hidden), the time-travel screen in
+// its three faces (live with the proof, paused at a marked move, replaying at 10×), and the phone
+// at 390×844.
 // A trader joins through the real join page (as RajuTrader; the page adds a suffix only if that
 // name is taken), buys some CHAIWALA and leaves a resting order, so the phone has something to show.
 //
@@ -56,6 +58,7 @@ async function assertNothingOverflows(page, what) {
     const bad = []
     for (const e of document.querySelectorAll('body *')) {
       if (e.closest('.chart') && !e.matches('.chart')) continue // the chart library's own canvases
+      if (e.getAnimations().length > 0) continue // mid-motion (a new trade sliding in): not layout
       const style = getComputedStyle(e)
       if (style.display === 'none' || style.visibility === 'hidden') continue
       const r = e.getBoundingClientRect()
@@ -181,25 +184,68 @@ async function phonePage(theme, trader) {
   return page
 }
 
-async function dashboard(theme, url, file) {
+async function presenterContext(url) {
   const desk = await browser.newContext({ viewport: { width: 1920, height: 1080 } })
   await publicBaseUrl(desk, url)
   await desk.addInitScript(
     (t) => sessionStorage.setItem('circuitbreaker.admin_token', t),
     admin.access_token,
   )
+  return desk
+}
+
+/** Time travel: paused at the most recent marked move, replaying from there at 10×, then back to
+ * live with the proof ("Verified: hashes match"). Every face must show its mode. */
+async function timeTravel(theme) {
+  const desk = await presenterContext(lan)
+  const page = await desk.newPage()
+  await page.goto(`${base}/time-travel?theme=${theme}`)
+  await page.waitForTimeout(4000)
+  const markers = page.getByRole('button', { name: /^Jump to / })
+  if ((await markers.count()) === 0) throw new Error(`${theme} time travel: no marked moves yet`)
+  await markers.last().click()
+  await page.getByText(/Paused · sequence/).waitFor()
+  await page.waitForTimeout(800)
+  await assertNothingOverflows(page, `${theme} time travel, paused`)
+  await page.screenshot({ path: `${out}/time-travel-${theme}-historical.png` })
+
+  await page.getByRole('button', { name: '10×' }).click()
+  await page.getByRole('button', { name: /Play/ }).click()
+  await page.getByText(/Replaying at 10×/).waitFor()
+  await page.waitForTimeout(4000)
+  await assertNothingOverflows(page, `${theme} time travel, replaying`)
+  await page.screenshot({ path: `${out}/time-travel-${theme}-playing.png` })
+
+  await page.getByRole('button', { name: /Back to live/ }).click()
+  await page.getByText('Verified: hashes match', { exact: false }).waitFor({ timeout: 10_000 })
+  await page.waitForTimeout(800)
+  await assertNothingOverflows(page, `${theme} time travel, live`)
+  await page.screenshot({ path: `${out}/time-travel-${theme}-live.png` })
+  await desk.close()
+}
+
+async function dashboard(theme, url, file) {
+  const desk = await presenterContext(url)
   const page = await desk.newPage()
   await page.goto(`${base}/dashboard?theme=${theme}`)
   await page.waitForTimeout(7000) // the streams' snapshots, a few trades and book updates
   await assertNothingOverflows(page, `${theme} dashboard`)
   await page.screenshot({ path: `${out}/${file}` })
   await assertHeroSettles(page, `${theme} dashboard`)
+  if (url === lan) {
+    // Projector safety: the presenter takes the leaderboard off the screen.
+    await page.getByRole('button', { name: 'Leaderboard on' }).click()
+    await page.waitForTimeout(500)
+    await assertNothingOverflows(page, `${theme} dashboard, leaderboard hidden`)
+    await page.screenshot({ path: `${out}/dashboard-${theme}-leaderboard-off.png` })
+  }
   await desk.close()
 }
 
 for (const theme of ['paper', 'terminal']) {
   await dashboard(theme, lan, `dashboard-${theme}-1920x1080.png`)
   await dashboard(theme, 'http://localhost:5173', `dashboard-${theme}-qr-warning.png`)
+  await timeTravel(theme)
 
   const trade = await phonePage(theme, session)
   await assertNothingOverflows(trade, `${theme} phone`)

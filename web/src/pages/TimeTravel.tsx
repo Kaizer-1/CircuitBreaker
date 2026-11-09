@@ -37,6 +37,7 @@ import { useTimeTravel } from '../timetravel/useTimeTravel'
 import { useHealth, useNow, useRowsThatFit } from './presenterHooks'
 
 const DEPTH_ROWS = 6
+const NBSP = '\u00a0' // an empty level keeps its row's height, so the panels below never jump
 const TAPE_ROWS = 12
 const SESSION_MS = 500 * 60_000 // the timeline: the last 500 one-minute candles (Q-03's limit)
 
@@ -339,13 +340,13 @@ function Screen({ token, onExpired }: { token: string; onExpired: () => void }) 
                     <tr key={n}>
                       <td className="num bar bid-bar">
                         {b && <i style={{ width: `${(b.quantity / maxQty) * 100}%` }} />}
-                        <span>{b ? quantity(b.quantity) : ''}</span>
+                        <span>{b ? quantity(b.quantity) : NBSP}</span>
                       </td>
-                      <td className="num up">{b ? rupees(b.price_paise) : ''}</td>
-                      <td className="num down">{a ? rupees(a.price_paise) : ''}</td>
+                      <td className="num up">{b ? rupees(b.price_paise) : NBSP}</td>
+                      <td className="num down">{a ? rupees(a.price_paise) : NBSP}</td>
                       <td className="num bar ask-bar">
                         {a && <i style={{ width: `${(a.quantity / maxQty) * 100}%` }} />}
-                        <span>{a ? quantity(a.quantity) : ''}</span>
+                        <span>{a ? quantity(a.quantity) : NBSP}</span>
                       </td>
                     </tr>
                   )

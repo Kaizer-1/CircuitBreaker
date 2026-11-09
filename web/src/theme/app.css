@@ -311,8 +311,37 @@ td:first-child {
 .watch tr[aria-selected='true'] td {
   background: var(--row-select);
 }
-:root[data-theme='terminal'] .watch {
+/* The top row: the watchlist, and beside it the leaderboard when the presenter shows it, in the
+   same columns as the chart and the order book below. */
+.dash-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--gap);
+}
+.dash-top.with-board {
+  grid-template-columns: minmax(0, 1fr) 33em;
+}
+:root[data-theme='terminal'] .dash-top {
   margin: 0 calc(var(--gap) * 1);
+}
+.watch.compact .nm,
+.watch.compact .hl {
+  display: none; /* the hero names the stock; high and low make room for the leaderboard */
+}
+.leaderboard td {
+  font-size: 1.2em;
+  padding: calc(var(--cell-y) + 1px) 0.6em;
+}
+.leaderboard td.rank {
+  width: 2.2em;
+  text-align: right;
+  color: var(--text-3);
+}
+.leaderboard td.who {
+  max-width: 11em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .dash-main {
   flex: 1;

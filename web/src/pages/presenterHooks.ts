@@ -24,7 +24,10 @@ export function useRowsThatFit(
     if (!box || !hasRows) return
     const measure = () => {
       const body = box.querySelector('tbody')
-      const row = body?.querySelector('tr')?.getBoundingClientRect().height
+      const count = body?.children.length ?? 0
+      // The average row, borders included: the first row alone can be a fraction of a pixel short,
+      // and at an exact fit that fraction made the last row stick out.
+      const row = body && count ? body.getBoundingClientRect().height / count : 0
       if (!body || !row) return
       const room = box.getBoundingClientRect().bottom - body.getBoundingClientRect().top - 2
       setRows(Math.max(1, Math.min(max, Math.floor(room / row))))

@@ -50,3 +50,22 @@ export function saveAdminToken(token: string | null): void {
     // not remembered across reloads
   }
 }
+
+const LEADERBOARD_KEY = 'circuitbreaker.leaderboard'
+
+/** The presenter's choice to show the leaderboard on the projector (remembered on this device). */
+export function loadLeaderboardShown(): boolean {
+  try {
+    return localStorage.getItem(LEADERBOARD_KEY) !== 'hidden'
+  } catch {
+    return true
+  }
+}
+
+export function saveLeaderboardShown(shown: boolean): void {
+  try {
+    localStorage.setItem(LEADERBOARD_KEY, shown ? 'shown' : 'hidden')
+  } catch {
+    // not remembered across reloads
+  }
+}

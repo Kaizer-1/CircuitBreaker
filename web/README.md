@@ -2,8 +2,7 @@
 
 > **Status:** Phase 4 (in progress). Five screens: **System Status**, the **presenter dashboard** and **time travel**
 > for the projector, and the phone's **Join** and **Trade** pages. Each has two skins, Pink Paper (light) and Terminal
-> (dark), on one layout. The leaderboard arrives on the dashboard in Phase 4. The chaos panel, agent controls and
-> incident feed arrive in Phase 7.
+> (dark), on one layout. The chaos panel, agent controls and incident feed arrive in Phase 7.
 
 |                 |                                                  |
 | --------------- | ------------------------------------------------ |
@@ -15,18 +14,20 @@
 
 React + Vite + TypeScript single-page app with TradingView Lightweight Charts. Every call goes through api-gateway.
 
-| Page                    | URL                         | Who                   | Sign-in               | Uses                                     |
-| ----------------------- | --------------------------- | --------------------- | --------------------- | ---------------------------------------- |
-| **System Status**       | `/` (also `/status`)        | Presenter, developers | Admin passcode (A-04) | `GET /v1/system/status`                  |
-| **Presenter dashboard** | `/dashboard`                | Presenter (projector) | Admin passcode (A-04) | Q-02, Q-06 (all five tickers), QR        |
-| **Time travel**         | `/time-travel`              | Presenter (projector) | Admin passcode (A-04) | Q-03, Q-06, Q-12, Q-13                   |
-| **Join**                | `/join` (the QR's target)   | Trader (phone)        | None: a nickname      | A-01                                     |
-| **Trade**               | `/trade`                    | Trader (phone)        | The session from Join | Q-02, Q-06, Q-07, Q-09, Q-10, A-05, A-07 |
-| Leaderboard             | (Phase 4, on the dashboard) | Presenter             |                       | Q-11                                     |
-| Chaos panel, agent      | (Phase 7)                   | Admin                 |                       | Q-19–Q-23, A-10, A-11, A-14, A-15        |
+| Page                    | URL                       | Who                   | Sign-in               | Uses                                     |
+| ----------------------- | ------------------------- | --------------------- | --------------------- | ---------------------------------------- |
+| **System Status**       | `/` (also `/status`)      | Presenter, developers | Admin passcode (A-04) | `GET /v1/system/status`                  |
+| **Presenter dashboard** | `/dashboard`              | Presenter (projector) | Admin passcode (A-04) | Q-02, Q-06 (all five tickers), Q-11, QR  |
+| **Time travel**         | `/time-travel`            | Presenter (projector) | Admin passcode (A-04) | Q-03, Q-06, Q-12, Q-13                   |
+| **Join**                | `/join` (the QR's target) | Trader (phone)        | None: a nickname      | A-01                                     |
+| **Trade**               | `/trade`                  | Trader (phone)        | The session from Join | Q-02, Q-06, Q-07, Q-09, Q-10, A-05, A-07 |
+| Chaos panel, agent      | (Phase 7)                 | Admin                 |                       | Q-19–Q-23, A-10, A-11, A-14, A-15        |
 
 - **Presenter dashboard:** the five tickers in a watchlist, the selected one big (keys 1–5 choose it), 5-second candles,
   the order book (best 6 levels), the trades tape, the join QR code, and a status bar (health, live streams, volume).
+  Beside the watchlist, the **leaderboard**: the top five human traders by net worth (Q-11, polled every 2 s; ties share
+  a rank). Projector safety: the header's **Leaderboard on/off** button (or key B) takes it off the screen, the choice
+  is remembered on this device, and a hidden leaderboard is not polled.
 - **Trade:** net worth and P&L (live over Q-10), one stock's price and chart, the order ticket (LIMIT or MARKET, BUY or
   SELL; it applies the exchange's rules before sending: tick 5 paise, quantity 1–10,000, available cash or shares),
   open orders with cancel, and holdings. Every touch target is at least 44 px, for one-handed use.
