@@ -186,7 +186,9 @@ paths:
       x-seeds-id: Q-16
       description: |
         **Q-16** — Full live book (every resting order, in priority order) straight from the engine's memory. For
-        debugging and for checking that market-data-service's depth read model agrees with the source of truth.
+        debugging and for checking that market-data-service's depth read model agrees with the source of truth. Also
+        read by market-data-service when a time-travel request (Q-12) reaches "now", to prove its rebuild equals the
+        live book (Q-12 `verification`).
         Includes `state_hash`, so two books (before and after a restart, or rebuilt elsewhere) can be compared in
         one line. 404 while the engine is still rebuilding its books.
       parameters:

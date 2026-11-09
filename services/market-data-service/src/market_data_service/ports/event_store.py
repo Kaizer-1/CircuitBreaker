@@ -1,4 +1,4 @@
-"""matching-engine's event store, read through its internal API (Q-14, Q-15).
+"""matching-engine's event store and live books, read through its internal API (Q-14 to Q-16).
 
 market-data never reads the engine's keyspace: the owner decides how its data is exposed.
 """
@@ -19,6 +19,15 @@ class BookSnapshot:
     closed: list[dict[str, Any]] = field(default_factory=list)  # finished and expired orders
 
 
+@dataclass(frozen=True)
+class LiveBook:
+    """The engine's live book right now (Q-16): its last event and its state hash."""
+
+    sequence: int
+    as_of: str
+    state_hash: str
+
+
 class EventStore(Protocol):
     async def snapshot(self, ticker: str, at_ms: int) -> BookSnapshot:
         """Q-15: the latest snapshot at or before `at_ms` (sequence 0 and empty if none)."""
@@ -29,4 +38,10 @@ class EventStore(Protocol):
     ) -> AsyncIterator[EventEnvelope]:
         """Q-14: every stored event after `after_sequence` (and at or before `until_ms`, if
         given), in sequence order, page by page."""
+        ...
+
+
+class LiveBooks(Protocol):
+    async def live_book(self, ticker: str) -> LiveBook | None:
+        """Q-16: the engine's live book (None while the engine is still rebuilding it)."""
         ...

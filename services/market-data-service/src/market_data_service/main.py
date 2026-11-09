@@ -113,7 +113,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
         app.state.store, app.state.projection, app.state.hub = store, projection, hub
         app.state.feed = feed
         # Time travel reads the event store with its own private books: never the live ones.
-        app.state.time_travel = TimeTravel(engine, store)
+        app.state.time_travel = TimeTravel(engine, store, live=engine)
         tasks = [
             asyncio.create_task(projection.run_clock()),
             asyncio.create_task(hub.run()),

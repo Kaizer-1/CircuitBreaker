@@ -81,7 +81,9 @@ async def get_market_at(
             instance=request.url.path,
         )
     try:
-        market = await time_travel.market_at(ticker, moment)
+        # A moment at or after the live market's last event is "now": prove the rebuild exact.
+        live = projection.markets[ticker].as_of_ms
+        market = await time_travel.market_at(ticker, moment, verify=live is None or moment >= live)
     except httpx.HTTPError as exc:
         logger.warning("event store unavailable", extra={"error": repr(exc)})
         return problem_response(

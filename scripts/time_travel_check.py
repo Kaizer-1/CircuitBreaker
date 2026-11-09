@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Measure time travel on the running stack (make up, ideally with make bots for a while).
 
-Seek: for every ticker, `samples` random moments in the last `minutes`, each fetched through the
-gateway as the presenter (Q-12 GET /v1/time-travel/{ticker}?at=). Prints how long the seeks took
-(p50, p95, slowest) and how many events each rebuild applied after its snapshot (from the engine's
-Q-15, dev host port only). Fails if p95 is 2 s or more: the Phase 4 target for "scrub anywhere in
-the last hour".
+1. Seek: for every ticker, `samples` random moments in the last `minutes`, each fetched through
+   the gateway as the presenter (Q-12 GET /v1/time-travel/{ticker}?at=). Prints how long the seeks
+   took (p50, p95, slowest) and how many events each rebuild applied after its snapshot (from the
+   engine's Q-15, dev host port only). Fails if p95 is 2 s or more: the Phase 4 target for "scrub
+   anywhere in the last hour".
+2. Proof: rewind every ticker to now. market-data reads the engine's live book (Q-16), rebuilds to
+   that exact sequence and compares hashes (`verification`). Fails unless all five match. Works
+   while the bots trade: both sides are compared at one sequence.
 
 Usage: python3 scripts/time_travel_check.py [minutes] [samples]   (default 60 and 20)
 """
@@ -68,6 +71,18 @@ def main() -> int:
     )
     ok = p95 < TARGET_SECONDS
     print("  OK" if ok else "  TOO SLOW")
+
+    print("Rewind to now (rebuild vs the live engine book, same sequence):")
+    for ticker in TICKERS:
+        query = urllib.parse.urlencode({"at": iso(datetime.now(UTC))})
+        view = http("GET", f"{GATEWAY}/v1/time-travel/{ticker}?{query}", headers=auth)
+        check = view["verification"]
+        matched = check is not None and check["matches"]
+        ok = ok and matched
+        print(
+            f"  {ticker:9} sequence {view['as_of_sequence']:>6}  "
+            f"{view['state_hash'][:12]}…  {'hashes match' if matched else f'NO MATCH: {check}'}"
+        )
     return 0 if ok else 1
 
 

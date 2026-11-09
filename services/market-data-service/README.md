@@ -76,6 +76,9 @@ start-up catch-up is done the queries answer `503 DEPENDENCY_UNAVAILABLE` and th
 (Q-15, with its finished and expired orders) plus the events after it up to `at` (Q-14), applied to a fresh
 `ReplayBook` (`domain/replay_book.py`, apply only, this service's own code). The answer carries the book's
 `state_hash`, computed by the engine's rule (a contract test checks the hash the engine's spec states for its example).
+**The proof:** when `at` is at or after the ticker's latest event, the engine's live book (Q-16) is read first, the
+rebuild stops at exactly its sequence, and `verification` says whether the hashes match. One sequence on both sides
+means the check works while bots trade.
 The 1-minute candles and recent trades come from this service's tables; the candle holding `at` is recomputed from the
 trades up to `at`. Each replica rebuilds at most 4 books at once and keeps one of those places for the admin role, so
 the presenter is never refused; beyond that, `503 OVERLOADED`. The book is a private copy: the live projection is never
@@ -90,7 +93,8 @@ Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards 
 ## Synchronous dependencies
 
 `matching-engine` `GET /internal/v1/snapshots/{ticker}` (Q-15) and `GET /internal/v1/events` (Q-14): the start-up
-catch-up, gap filling, time travel and (Phase 4) replay. If the engine is down at start-up, the service retries and is
+catch-up, gap filling, time travel and (Phase 4) replay; `GET /internal/v1/books/{ticker}` (Q-16) when a time-travel
+request reaches "now" (the proof below). If the engine is down at start-up, the service retries and is
 not ready; trading is not affected.
 
 ## Scaling and operations

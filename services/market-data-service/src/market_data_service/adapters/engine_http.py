@@ -1,4 +1,5 @@
-"""The EventStore port over matching-engine's internal API (Q-14 events, Q-15 snapshots)."""
+"""The EventStore and LiveBooks ports over matching-engine's internal API (Q-14 events, Q-15
+snapshots, Q-16 the live book and its hash)."""
 
 import asyncio
 import json
@@ -8,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from market_data_service.ports.event_store import BookSnapshot
+from market_data_service.ports.event_store import BookSnapshot, LiveBook
 from market_data_service.runtime.events import EventEnvelope, format_timestamp
 
 PAGE = 1_000  # the largest page Q-14 allows
@@ -39,6 +40,16 @@ class HttpEventStore:
             as_of=body.get("as_of"),
             closed=body.get("closed", []),
         )
+
+    async def live_book(self, ticker: str) -> LiveBook | None:
+        response = await self._client.get(
+            f"{self._base}/internal/v1/books/{ticker}", timeout=self._timeout
+        )
+        if response.status_code == 404:  # still rebuilding its books
+            return None
+        response.raise_for_status()
+        body = response.json()
+        return LiveBook(int(body["sequence"]), body["as_of"], body["state_hash"])
 
     async def events_after(
         self, ticker: str, after_sequence: int, *, until_ms: int | None = None

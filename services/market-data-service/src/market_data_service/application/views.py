@@ -60,6 +60,7 @@ def time_travel_view(market: MarketAt, levels: int) -> dict[str, Any]:
         "candles": [candle_view(c) for c in market.candles],
         "recent_trades": [trade_view(t) for t in market.recent_trades],
         "state_hash": market.state_hash,
+        "verification": vars(market.verification) if market.verification else None,
     }
 
 
