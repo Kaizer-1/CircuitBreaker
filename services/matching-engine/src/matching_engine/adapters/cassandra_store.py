@@ -3,6 +3,11 @@
 A command's events and its command_id are written in one LOGGED batch, so after a crash either all
 of them are stored or none (the batch log replays a half-written batch). The driver is synchronous,
 so every call runs in a worker thread.
+
+Reads stay cheap however long the market has traded. Event reads carry a CQL `LIMIT` and stop at
+the page size or the `until` cut, and the rows are parsed in the worker thread, so a long Q-14 page
+never holds up the command loop. Picking a snapshot reads only each snapshot's (sequence, as_of),
+then loads the one state it needs.
 """
 
 import asyncio
@@ -50,6 +55,9 @@ def migration_statements() -> list[str]:
     return statements
 
 
+_NO_LIMIT = 2**31 - 1  # CQL LIMIT is an int; recovery reads everything after the snapshot
+
+
 def _day(occurred_at: str) -> date:
     return parse_timestamp(occurred_at).date()
 
@@ -78,8 +86,10 @@ class CassandraEventStore:
             "select_command": "SELECT command_id FROM processed_commands WHERE command_id = ?",
             "select_days": "SELECT day, first_sequence FROM ticker_days WHERE ticker = ?",
             "select_events": "SELECT payload FROM market_events WHERE ticker = ? AND day = ? "
-            "AND sequence > ?",
-            "select_snapshots": "SELECT as_of, state FROM book_snapshots WHERE ticker = ?",
+            "AND sequence > ? LIMIT ?",
+            "select_snapshot_times": "SELECT sequence, as_of FROM book_snapshots WHERE ticker = ?",
+            "select_snapshot": "SELECT state FROM book_snapshots WHERE ticker = ? AND sequence = ?",
+            "select_newest_snapshot": "SELECT state FROM book_snapshots WHERE ticker = ? LIMIT 1",
             "insert_snapshot": "INSERT INTO book_snapshots (ticker, sequence, as_of, state) "
             "VALUES (?, ?, ?, ?)",
             "select_cursor": "SELECT sequence FROM publish_cursor WHERE ticker = ?",
@@ -139,25 +149,44 @@ class CassandraEventStore:
         # Start at the last day whose first event is not after the one we want.
         start = max([i for i, (_, first) in enumerate(days) if first <= after_sequence + 1] or [0])
         cut = parse_timestamp(until) if until is not None else None
-        found: list[EventEnvelope] = []
-        for day, _ in days[start:]:
-            rows = await self._run(self._prepared("select_events"), (ticker, day, after_sequence))
-            for row in rows:
-                event = EventEnvelope.from_json(row.payload.encode())
-                if cut is not None and parse_timestamp(event.occurred_at) > cut:
-                    return found  # sequence order is time order: nothing later can qualify
-                found.append(event)
-                if limit is not None and len(found) >= limit:
-                    return found
-        return found
+        wanted = limit if limit is not None else _NO_LIMIT
+        query = self._prepared("select_events")
+
+        def read() -> list[EventEnvelope]:
+            # One worker thread reads and parses the rows in clustering (sequence) order, day after
+            # day, into one list, so the order is the store's order. The driver fetches pages
+            # lazily: reading stops at the limit or at the first event after the cut.
+            found: list[EventEnvelope] = []
+            for day, _ in days[start:]:
+                rows = self._session.execute(
+                    query, (ticker, day, after_sequence, wanted - len(found))
+                )
+                for row in rows:
+                    event = EventEnvelope.from_json(row.payload.encode())
+                    if cut is not None and parse_timestamp(event.occurred_at) > cut:
+                        return found  # sequence order is time order: nothing later can qualify
+                    found.append(event)
+                if len(found) >= wanted:
+                    break
+            return found
+
+        return await asyncio.to_thread(read)
 
     async def latest_snapshot(self, ticker: str, at: str | None = None) -> dict[str, Any] | None:
-        cut = parse_timestamp(at) if at is not None else None
-        for row in await self._run(self._prepared("select_snapshots"), (ticker,)):  # newest first
-            if cut is None or _as_utc(row.as_of) <= cut:
-                snapshot: dict[str, Any] = json.loads(row.state)
-                return snapshot
-        return None
+        if at is None:
+            rows = await self._run(self._prepared("select_newest_snapshot"), (ticker,))
+        else:
+            cut = parse_timestamp(at)
+            # Newest first; only (sequence, as_of), not every snapshot's whole book.
+            times = await self._run(self._prepared("select_snapshot_times"), (ticker,))
+            sequence = next((r.sequence for r in times if _as_utc(r.as_of) <= cut), None)
+            if sequence is None:
+                return None
+            rows = await self._run(self._prepared("select_snapshot"), (ticker, sequence))
+        if not rows:
+            return None
+        snapshot: dict[str, Any] = json.loads(rows[0].state)
+        return snapshot
 
     async def save_snapshot(self, ticker: str, snapshot: dict[str, Any]) -> None:
         await self._run(

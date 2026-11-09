@@ -3,8 +3,11 @@
 Run with `uv run pytest -m integration` (Docker needed). Not part of the default `pytest` run.
 """
 
+import asyncio
+import random
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from itertools import count
 from typing import Any
 
 import pytest
@@ -12,6 +15,9 @@ from testcontainers.community.cassandra import CassandraContainer
 
 from matching_engine.adapters.cassandra_store import CassandraEventStore
 from matching_engine.application.engine import MatchingEngine
+from matching_engine.domain.book import OrderBook
+from matching_engine.domain.model import BookSnapshot
+from matching_engine.events.market import from_envelope
 from matching_engine.runtime.events import build_event
 from tests.builders import ALICE, BOB, CARA, cancel, expire, id_source, limit, market
 from tests.fakes import RecordingPublisher
@@ -157,3 +163,121 @@ async def test_an_engine_restarted_against_real_cassandra_rebuilds_the_same_book
     restarted = make()
     await restarted.recover()
     assert restarted.books_hash() == before
+
+
+def stamp(at: datetime) -> str:
+    return at.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+async def test_reads_under_load_return_every_event_once_in_order_and_rebuild_exactly(
+    store: CassandraEventStore,
+) -> None:
+    """Rows are parsed in a worker thread (Phase 4): the order must still be the store's exactly.
+
+    The engine appends a random workload on two tickers while eight readers page through Q-14's
+    store call at the same time. Every reader must see sequences 1, 2, 3 ... with no gap, no repeat
+    and no swap, and the same events the engine published, in the same order. Then the engine's way
+    of rebuilding a past moment (nearest snapshot at or before T, plus the events up to T) must give
+    the hash the live book had at T, for many T.
+    """
+    rng = random.Random(4)
+    tickers = ("CHAIWALA", "JUGAAD")
+    clock = iter(DAY1 - timedelta(hours=1) + timedelta(milliseconds=10 * n) for n in count())
+    publisher = RecordingPublisher()
+    engine = MatchingEngine(
+        store,
+        publisher,
+        environment="dev",
+        snapshot_every=40,
+        clock=lambda: next(clock),
+        new_id=id_source(),
+    )
+    await engine.recover()
+    traders = (ALICE, BOB, CARA)
+    resting: list[tuple[int, str, str]] = []
+    history: dict[str, list[tuple[str, str]]] = {
+        t: [] for t in tickers
+    }  # (as_of, hash) per command
+    appending = True
+
+    async def append_workload() -> None:
+        nonlocal appending
+        for n in range(1, 701):
+            ticker = rng.choice(tickers)
+            if resting and rng.random() < 0.2:
+                number, trader, on = resting.pop(rng.randrange(len(resting)))
+                command: Any = cancel(number, trader, ticker=on)
+                ticker = on
+            else:
+                trader, side = rng.choice(traders), rng.choice(("BUY", "SELL"))
+                price = 24500 + 5 * rng.randint(-8, 8)
+                command = limit(n, trader, side, rng.randint(1, 30), price, ticker=ticker)
+                resting.append((n, trader, ticker))
+            await engine.handle(command)
+            book = engine.book(ticker)
+            if book.as_of is not None:
+                history[ticker].append((book.as_of, book.state_hash()))
+            await asyncio.sleep(0)  # let the readers in between commands
+        appending = False
+
+    async def read_all(ticker: str, page: int) -> list[str]:
+        seen: list[str] = []
+        after = 0
+        while True:
+            batch = await store.events_after(ticker, after, limit=page)
+            sequences = [e.data["sequence"] for e in batch]
+            assert sequences == list(range(after + 1, after + 1 + len(batch))), sequences
+            seen += [e.event_id for e in batch]
+            if batch:
+                after = sequences[-1]
+            elif not appending:
+                return seen
+            else:
+                await asyncio.sleep(0.005)
+
+    readers = [read_all(tickers[i % 2], page) for i, page in enumerate((1, 7, 50, 500) * 2)]
+    _, *results = await asyncio.gather(append_workload(), *readers)
+    for i, seen in enumerate(results):
+        published = [e.event_id for e in publisher.first_copies(tickers[i % 2])]
+        assert seen == published
+
+    # Rebuild at T = snapshot at or before T + events up to T, as time travel does (Q-15 + Q-14).
+    for ticker in tickers:
+        assert len(await store.events_after(ticker, 0)) > 120  # several snapshots were taken
+        for as_of, live_hash in rng.sample(history[ticker], 25):
+            raw = await store.latest_snapshot(ticker, as_of)
+            book = (
+                OrderBook.from_snapshot(BookSnapshot.from_dict(raw)) if raw else OrderBook(ticker)
+            )
+            for envelope in await store.events_after(ticker, book.sequence, until=as_of):
+                book.apply(from_envelope(envelope))
+            assert book.state_hash() == live_hash, f"{ticker} at {as_of}"
+
+    restarted = MatchingEngine(store, RecordingPublisher(), environment="dev", new_id=id_source())
+    await restarted.recover()
+    assert restarted.books_hash() == engine.books_hash()
+
+
+async def test_the_snapshot_pick_reads_the_right_one_among_many(store: CassandraEventStore) -> None:
+    for n in range(1, 31):  # a snapshot every minute for half an hour
+        at = DAY1 - timedelta(minutes=31 - n)
+        await store.save_snapshot(
+            "CHAIWALA",
+            {
+                "ticker": "CHAIWALA",
+                "sequence": 100 * n,
+                "as_of": stamp(at),
+                "bids": [],
+                "asks": [],
+                "closed": [],
+            },
+        )
+    newest = await store.latest_snapshot("CHAIWALA")
+    assert newest is not None and newest["sequence"] == 3000
+    exact = await store.latest_snapshot("CHAIWALA", stamp(DAY1 - timedelta(minutes=21)))
+    assert exact is not None and exact["sequence"] == 1000  # taken exactly at T counts
+    between = await store.latest_snapshot(
+        "CHAIWALA", stamp(DAY1 - timedelta(minutes=20, seconds=1))
+    )
+    assert between is not None and between["sequence"] == 1000
+    assert await store.latest_snapshot("CHAIWALA", stamp(DAY1 - timedelta(hours=2))) is None

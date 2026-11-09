@@ -115,6 +115,7 @@ async def get_book_snapshot(request: Request, ticker: Ticker, at: datetime) -> A
             "as_of": format_timestamp(at),
             "bids": [],
             "asks": [],
+            "closed": [],
         }
     return {
         "ticker": ticker,
@@ -122,6 +123,12 @@ async def get_book_snapshot(request: Request, ticker: Ticker, at: datetime) -> A
         "as_of": snapshot["as_of"],
         "bids": _levels_from_snapshot(snapshot["bids"]),
         "asks": _levels_from_snapshot(snapshot["asks"]),
+        # Finished and expired orders: Q-16's state_hash covers them, so a rebuild elsewhere
+        # (time travel) needs them to reproduce the same hash.
+        "closed": [
+            {"order_id": order_id, "state": state, "trader_id": trader_id}
+            for order_id, state, trader_id in snapshot["closed"]
+        ],
     }
 
 

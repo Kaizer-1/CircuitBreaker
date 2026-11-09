@@ -67,8 +67,14 @@ Internal only ([`api/matching-engine.yaml`](../../api/matching-engine.yaml)):
 | ID | Endpoint | Answers |
 |---|---|---|
 | Q-14 | `GET /internal/v1/events?ticker=&after_sequence=&until=&limit=` | Stored events in sequence order, paged |
-| Q-15 | `GET /internal/v1/snapshots/{ticker}?at=` | The latest snapshot at or before `at` (or an empty book at sequence 0) |
-| Q-16 | `GET /internal/v1/books/{ticker}` | The live book in priority order, with `state_hash` (SHA-256 of the canonical book) |
+| Q-15 | `GET /internal/v1/snapshots/{ticker}?at=` | The latest snapshot at or before `at` (or an empty book at sequence 0), with `closed`: every finished or expired order ID, so a rebuild elsewhere reproduces `state_hash` |
+| Q-16 | `GET /internal/v1/books/{ticker}` | The live book in priority order, with `state_hash` (SHA-256 of the canonical book; the exact form is in the spec, which also states the hash of its own example) |
+
+**Reads stay cheap as history grows.** Event reads carry a CQL `LIMIT` and stop at the page size or the `until` cut;
+picking a snapshot reads only each snapshot's `(sequence, as_of)`, then the one state it needs. Rows are parsed in a
+worker thread, not on the command loop, in the store's sequence order: an integration test runs eight concurrent Q-14
+readers while the engine appends and checks that each sees 1, 2, 3 … with no gap, repeat or swap, and that "snapshot at
+or before T plus the events up to T" gives the hash the live book had at T.
 
 The main work (A-08) is event-driven. Every service also exposes `/healthz`, `/readyz`, `/metrics`
 ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
