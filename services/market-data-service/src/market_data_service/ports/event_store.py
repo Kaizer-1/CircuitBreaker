@@ -4,7 +4,7 @@ market-data never reads the engine's keyspace: the owner decides how its data is
 """
 
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from market_data_service.runtime.events import EventEnvelope
@@ -15,6 +15,8 @@ class BookSnapshot:
     sequence: int
     bids: list[dict[str, Any]]  # BookState price levels with their resting orders
     asks: list[dict[str, Any]]
+    as_of: str | None = None
+    closed: list[dict[str, Any]] = field(default_factory=list)  # finished and expired orders
 
 
 class EventStore(Protocol):
@@ -22,6 +24,9 @@ class EventStore(Protocol):
         """Q-15: the latest snapshot at or before `at_ms` (sequence 0 and empty if none)."""
         ...
 
-    def events_after(self, ticker: str, after_sequence: int) -> AsyncIterator[EventEnvelope]:
-        """Q-14: every stored event after `after_sequence`, in sequence order, page by page."""
+    def events_after(
+        self, ticker: str, after_sequence: int, *, until_ms: int | None = None
+    ) -> AsyncIterator[EventEnvelope]:
+        """Q-14: every stored event after `after_sequence` (and at or before `until_ms`, if
+        given), in sequence order, page by page."""
         ...

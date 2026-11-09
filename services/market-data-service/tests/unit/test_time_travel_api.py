@@ -1,0 +1,126 @@
+"""Q-12 over HTTP: answers, errors, and the places kept for the presenter (application/slots.py)."""
+
+from collections.abc import AsyncIterator, Iterator
+from types import SimpleNamespace
+from typing import Any
+
+import httpx
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from market_data_service.application.slots import Slots
+from market_data_service.application.time_travel import TimeTravel
+from market_data_service.config import Settings
+from market_data_service.main import create_app
+from market_data_service.ports.event_store import BookSnapshot
+from tests.contract.test_response_schemas import check
+from tests.fakes import Exchange, FakeEventStore, InMemoryMarketStore, ms
+
+ADMIN = {"X-Role": "admin"}
+TRADER = {"X-Role": "trader"}
+
+
+@pytest.fixture
+def exchange() -> Exchange:
+    exchange = Exchange()
+    exchange.place("a", "SELL", 20, 500)
+    exchange.advance(1)
+    exchange.place("b", "BUY", 5, 500)  # trades 5
+    exchange.advance(1)
+    exchange.place("b", "BUY", 3, 495)
+    return exchange
+
+
+@pytest.fixture
+def app(settings: Settings, exchange: Exchange) -> FastAPI:
+    app = create_app(settings, readiness_checks=[])
+    events = FakeEventStore()
+    events.events["CHAIWALA"] = exchange.log
+    now = ms(exchange.as_of or "") + 60_000
+    app.state.projection = SimpleNamespace(ready=True, now_ms=lambda: now)
+    app.state.time_travel = TimeTravel(events, InMemoryMarketStore())
+    return app
+
+
+@pytest.fixture
+def client(app: FastAPI) -> Iterator[TestClient]:
+    with TestClient(app) as c:
+        yield c
+
+
+def get(client: TestClient, at: str, headers: dict[str, str] | None = None) -> Any:
+    return client.get("/v1/time-travel/CHAIWALA", params={"at": at}, headers=headers or TRADER)
+
+
+def test_the_answer_is_the_book_at_t_with_its_hash(client: TestClient, exchange: Exchange) -> None:
+    body = get(client, exchange.as_of or "").json()
+    check("TimeTravelView", body)
+    assert body["as_of_sequence"] == exchange.sequence
+    assert body["state_hash"] == exchange.state_hash()
+    assert body["order_book"]["bids"] == [{"price_paise": 495, "quantity": 3, "order_count": 1}]
+    assert body["order_book"]["asks"] == [{"price_paise": 500, "quantity": 15, "order_count": 1}]
+    earlier = get(client, exchange.log[0].occurred_at).json()  # after the first command only
+    assert earlier["as_of_sequence"] == 1
+    assert earlier["order_book"]["asks"][0]["quantity"] == 20
+
+
+def test_a_moment_in_the_future_or_without_an_offset_is_refused(
+    client: TestClient, exchange: Exchange
+) -> None:
+    future = get(client, "2099-01-01T00:00:00Z")
+    assert (future.status_code, future.json()["code"]) == (422, "TIME_IN_FUTURE")
+    naive = get(client, "2026-11-20T10:42:00")
+    assert (naive.status_code, naive.json()["code"]) == (422, "VALIDATION_FAILED")
+    assert get(client, "yesterday").status_code == 422
+    unknown = client.get("/v1/time-travel/NOPE", params={"at": exchange.as_of})
+    assert unknown.status_code == 422
+
+
+def test_a_full_replica_refuses_traders_but_keeps_a_place_for_the_presenter(
+    client: TestClient, app: FastAPI, exchange: Exchange
+) -> None:
+    slots: Slots = app.state.rebuild_slots
+    assert (slots.capacity, slots.reserved_for_admin) == (4, 1)
+    for _ in range(3):  # three traders are time-travelling right now
+        assert slots.try_acquire(admin=False)
+    busy = get(client, exchange.as_of or "", TRADER)
+    assert (busy.status_code, busy.json()["code"]) == (503, "OVERLOADED")
+    assert get(client, exchange.as_of or "", ADMIN).status_code == 200  # the reserved place
+    assert slots.in_use == 3  # every request gives its place back
+    assert slots.try_acquire(admin=True)  # now even the presenter's place is taken
+    full = get(client, exchange.as_of or "", ADMIN)
+    assert (full.status_code, full.json()["code"]) == (503, "OVERLOADED")
+
+
+def test_without_the_engine_the_answer_is_503(app: FastAPI, exchange: Exchange) -> None:
+    class Down(FakeEventStore):
+        async def snapshot(self, ticker: str, at_ms: int) -> BookSnapshot:
+            raise httpx.ConnectError("matching-engine is down")
+
+        async def events_after(
+            self, ticker: str, after_sequence: int, *, until_ms: int | None = None
+        ) -> AsyncIterator[Any]:
+            raise httpx.ConnectError("matching-engine is down")
+            yield  # pragma: no cover
+
+    app.state.time_travel = TimeTravel(Down(), InMemoryMarketStore())
+    with TestClient(app) as client:
+        down = get(client, exchange.as_of or "")
+    assert (down.status_code, down.json()["code"]) == (503, "DEPENDENCY_UNAVAILABLE")
+    assert app.state.rebuild_slots.in_use == 0
+
+
+def test_while_starting_the_answer_is_503(settings: Settings) -> None:
+    with TestClient(create_app(settings, readiness_checks=[])) as client:
+        starting = get(client, "2026-11-20T10:42:00Z")
+    assert (starting.status_code, starting.json()["code"]) == (503, "DEPENDENCY_UNAVAILABLE")
+
+
+def test_a_slot_count_that_leaves_no_place_for_everyone_is_refused() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        Slots(1, 1)
+    slots = Slots(2, 1)
+    slots.release()  # releasing with nothing taken is harmless
+    assert slots.in_use == 0
+    assert slots.try_acquire(admin=False) and not slots.try_acquire(admin=False)

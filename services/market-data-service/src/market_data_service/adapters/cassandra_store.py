@@ -32,6 +32,10 @@ QUERIES = {
     "insert_trade": "INSERT INTO trades_by_ticker (ticker, day, executed_at, trade_id, sequence,"
     " price_paise, quantity, aggressor_side) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     "select_trades": "SELECT * FROM trades_by_ticker WHERE ticker = ? AND day = ? LIMIT ?",
+    "select_trades_until": "SELECT * FROM trades_by_ticker WHERE ticker = ? AND day = ?"
+    " AND executed_at <= ? LIMIT ?",
+    "select_trades_between": "SELECT * FROM trades_by_ticker WHERE ticker = ? AND day = ?"
+    " AND executed_at >= ? AND executed_at <= ?",
 }
 
 
@@ -202,6 +206,30 @@ class CassandraMarketStore:
         rows = await self._run("select_market", ticker)
         last = rows[0].last_trade_at if rows else None
         return await self._recent(ticker, limit, to_ms(last) if last is not None else None)
+
+    async def trades_until(self, ticker: str, until_ms: int, limit: int) -> list[Trade]:
+        found: list[Trade] = []
+        day = utc_day(until_ms)
+        for _ in range(TRADE_DAYS_BACK):
+            rows = await self._run(
+                "select_trades_until", ticker, day, to_dt(until_ms), limit - len(found)
+            )
+            found += sorted((_trade(r) for r in rows), key=lambda t: -t.sequence)
+            if len(found) >= limit:
+                break
+            day -= timedelta(days=1)
+        return found
+
+    async def trades_between(self, ticker: str, from_ms: int, to_ms: int) -> list[Trade]:
+        found: list[Trade] = []
+        day, last = utc_day(from_ms), utc_day(to_ms)
+        while day <= last:  # a candle never spans more than two days
+            rows = await self._run(
+                "select_trades_between", ticker, day, to_dt(from_ms), to_dt(to_ms)
+            )
+            found += [_trade(r) for r in rows]
+            day += timedelta(days=1)
+        return sorted(found, key=lambda t: t.sequence)
 
     async def _recent(self, ticker: str, limit: int, last_trade_at_ms: int | None) -> list[Trade]:
         if last_trade_at_ms is None:

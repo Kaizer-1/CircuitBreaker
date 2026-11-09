@@ -117,3 +117,21 @@ async def test_a_projection_restarted_from_cassandra_shows_the_same_market(
     assert a.series is not None and b.series is not None
     end = a.series["5s"].forming_start_ms
     assert b.series["5s"].candles(0, end) == a.series["5s"].candles(0, end)
+
+
+async def test_trades_up_to_a_moment_and_within_a_window_for_time_travel(
+    store: CassandraMarketStore,
+) -> None:
+    midnight = T - T % 86_400_000 + 86_400_000  # trades on both sides of a UTC day boundary
+    times = [midnight - 3_000, midnight - 1_000, midnight, midnight + 1_000, midnight + 4_000]
+    trades = [trade(n, at) for n, at in enumerate(times, start=1)]
+    await store.save(Changes("MONSOON", 5, times[-1], 1, times[-1], None, {}, trades))
+
+    up_to = await store.trades_until("MONSOON", midnight + 1_000, 3)
+    assert [t.sequence for t in up_to] == [4, 3, 2]  # newest first, crossing back a day
+    assert [t.sequence for t in await store.trades_until("MONSOON", midnight - 1, 10)] == [2, 1]
+    assert await store.trades_until("MONSOON", midnight - 10_000, 10) == []
+
+    window = await store.trades_between("MONSOON", midnight - 1_000, midnight + 1_000)
+    assert [t.sequence for t in window] == [2, 3, 4]  # oldest first, both ends included
+    assert await store.trades_between("MONSOON", midnight + 2_000, midnight + 3_000) == []

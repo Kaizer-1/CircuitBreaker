@@ -1,7 +1,12 @@
 """In-memory stand-ins for the ports, and a small reference exchange that produces matching.v1
 event streams like the real engine (price-time priority, trade at the resting price, MARKET
-orders that never rest, self-trade prevention by cancelling the incoming order)."""
+orders that never rest, self-trade prevention by cancelling the incoming order, expiry
+tombstones and cancel rejections). The exchange also keeps the engine's whole state (finished
+orders included) and hashes it by the rule in api/matching-engine.yaml, written here
+independently of the service's ReplayBook, so time-travel tests compare two implementations."""
 
+import hashlib
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -12,7 +17,12 @@ from market_data_service.domain.candles import Candle
 from market_data_service.domain.market import Trade
 from market_data_service.ports.event_store import BookSnapshot
 from market_data_service.ports.market_store import Changes, StoredMarket
-from market_data_service.runtime.events import EventEnvelope, build_event, format_timestamp
+from market_data_service.runtime.events import (
+    EventEnvelope,
+    build_event,
+    format_timestamp,
+    parse_timestamp,
+)
 
 T0 = datetime(2026, 11, 20, 10, 42, 0, tzinfo=UTC)
 
@@ -82,6 +92,14 @@ class InMemoryMarketStore:
     async def trades(self, ticker: str, limit: int) -> list[Trade]:
         return sorted(self.trade_rows.get(ticker, []), key=lambda t: -t.sequence)[:limit]
 
+    async def trades_until(self, ticker: str, until_ms: int, limit: int) -> list[Trade]:
+        found = [t for t in self.trade_rows.get(ticker, []) if t.executed_at_ms <= until_ms]
+        return sorted(found, key=lambda t: -t.sequence)[:limit]
+
+    async def trades_between(self, ticker: str, from_ms: int, to_ms: int) -> list[Trade]:
+        found = [t for t in self.trade_rows.get(ticker, []) if from_ms <= t.executed_at_ms <= to_ms]
+        return sorted(found, key=lambda t: t.sequence)
+
     def series(self, ticker: str, interval: str) -> list[Candle]:
         return sorted(
             (c for (t, i, _), c in self.candle_rows.items() if t == ticker and i == interval),
@@ -90,26 +108,44 @@ class InMemoryMarketStore:
 
 
 class FakeEventStore:
-    """matching-engine's Q-14/Q-15: every event the exchange produced, plus snapshots."""
+    """matching-engine's Q-14/Q-15: every event the exchange produced, plus snapshots.
+
+    `snapshots` holds one snapshot per ticker (always returned, like a recent one); `history`
+    holds several, and Q-15's rule picks the newest taken at or before the time asked.
+    """
 
     def __init__(self) -> None:
         self.events: dict[str, list[EventEnvelope]] = {}
         self.snapshots: dict[str, BookSnapshot] = {}
+        self.history: dict[str, list[BookSnapshot]] = {}
         self.down = False
         self.reads = 0
 
     async def snapshot(self, ticker: str, at_ms: int) -> BookSnapshot:
         if self.down:
             raise ConnectionError("matching-engine is down")
-        return self.snapshots.get(ticker, BookSnapshot(0, [], []))
+        taken = [
+            s for s in self.history.get(ticker, []) if s.as_of is not None and ms(s.as_of) <= at_ms
+        ]
+        if taken:
+            return max(taken, key=lambda s: s.sequence)
+        return self.snapshots.get(ticker, BookSnapshot(0, [], [], as_of=None))
 
-    async def events_after(self, ticker: str, after_sequence: int) -> AsyncIterator[EventEnvelope]:
+    async def events_after(
+        self, ticker: str, after_sequence: int, *, until_ms: int | None = None
+    ) -> AsyncIterator[EventEnvelope]:
         if self.down:
             raise ConnectionError("matching-engine is down")
         self.reads += 1
         for event in list(self.events.get(ticker, [])):
+            if until_ms is not None and ms(event.occurred_at) > until_ms:
+                return
             if int(event.data["sequence"]) > after_sequence:
                 yield event
+
+
+def ms(stamp: str) -> int:
+    return int(parse_timestamp(stamp).timestamp() * 1000)
 
 
 class RecordingPublisher:
@@ -144,6 +180,7 @@ class _Resting:
     side: str
     price: int
     remaining: int
+    accepted_sequence: int = 0
 
 
 @dataclass
@@ -155,6 +192,7 @@ class Exchange:
     bids: list[_Resting] = field(default_factory=list)  # best first, then time
     asks: list[_Resting] = field(default_factory=list)
     log: list[EventEnvelope] = field(default_factory=list)
+    closed: dict[str, tuple[str, str]] = field(default_factory=dict)  # order_id -> state, trader
     _seq: Any = field(default_factory=lambda: count(1))
     _ids: Any = field(default_factory=lambda: count(1))
 
@@ -164,6 +202,8 @@ class Exchange:
             "OrderAccepted": "accepted_at",
             "TradeExecuted": "executed_at",
             "OrderCancelled": "cancelled_at",
+            "OrderCancelRejected": "rejected_at",
+            "OrderExpired": "expired_at",
         }[event_type]
         event = build_event(
             event_type,
@@ -199,6 +239,7 @@ class Exchange:
             },
             command,
         )
+        accepted = int(self.log[-1].data["sequence"])
         book = self.asks if side == "BUY" else self.bids
         remaining = quantity
         while remaining and book:
@@ -206,6 +247,7 @@ class Exchange:
             if price is not None and (best.price > price if side == "BUY" else best.price < price):
                 break
             if best.trader == trader:
+                self.closed[order_id] = ("CANCELLED", trader)
                 self._event(
                     "OrderCancelled",
                     {
@@ -240,8 +282,12 @@ class Exchange:
                 command,
             )
             if best.remaining == 0:
+                self.closed[best.order_id] = ("FILLED", best.trader)
                 book.pop(0)
-        if remaining and price is None:
+        if remaining == 0:
+            self.closed[order_id] = ("FILLED", trader)
+        elif price is None:
+            self.closed[order_id] = ("CANCELLED", trader)
             self._event(
                 "OrderCancelled",
                 {
@@ -253,9 +299,9 @@ class Exchange:
                 },
                 command,
             )
-        elif remaining:
+        if remaining and price is not None:
             own = self.bids if side == "BUY" else self.asks
-            own.append(_Resting(order_id, trader, side, price, remaining))  # type: ignore[arg-type]
+            own.append(_Resting(order_id, trader, side, price, remaining, accepted))
             own.sort(key=lambda o: -o.price if side == "BUY" else o.price)  # stable: time kept
         return self.log[start:]
 
@@ -264,6 +310,7 @@ class Exchange:
         if not book:
             return []
         order = book.pop(0)
+        self.closed[order.order_id] = ("CANCELLED", order.trader)
         start = len(self.log)
         self._event(
             "OrderCancelled",
@@ -274,6 +321,24 @@ class Exchange:
                 "cancelled_quantity": order.remaining,
                 "reason": "USER_REQUESTED",
             },
+            self._id(),
+        )
+        return self.log[start:]
+
+    def expire_unseen(self, trader: str) -> list[EventEnvelope]:
+        """An expiry for an order the engine never saw: an OrderExpired tombstone (ADR-0017)."""
+        order_id = self._id()
+        self.closed[order_id] = ("EXPIRED", trader)
+        start = len(self.log)
+        self._event("OrderExpired", {"order_id": order_id, "trader_id": trader}, self._id())
+        return self.log[start:]
+
+    def reject_cancel(self, trader: str) -> list[EventEnvelope]:
+        """A cancel for an unknown order: OrderCancelRejected, which changes nothing."""
+        start = len(self.log)
+        self._event(
+            "OrderCancelRejected",
+            {"order_id": self._id(), "trader_id": trader, "reason": "UNKNOWN_ORDER"},
             self._id(),
         )
         return self.log[start:]
@@ -292,16 +357,61 @@ class Exchange:
         return levels(self.bids), levels(self.asks)
 
     def snapshot(self) -> BookSnapshot:
+        """The whole book as matching-engine's Q-15 would answer now (BookState)."""
+
         def levels(book: list[_Resting]) -> list[dict[str, Any]]:
             out: dict[int, list[dict[str, Any]]] = {}
             for o in book:
                 out.setdefault(o.price, []).append(
-                    {"order_id": o.order_id, "remaining_quantity": o.remaining}
+                    {
+                        "order_id": o.order_id,
+                        "trader_id": o.trader,
+                        "remaining_quantity": o.remaining,
+                        "accepted_sequence": o.accepted_sequence,
+                    }
                 )
             return [{"price_paise": p, "orders": orders} for p, orders in out.items()]
 
-        sequence = int(self.log[-1].data["sequence"]) if self.log else 0
-        return BookSnapshot(sequence, levels(self.bids), levels(self.asks))
+        return BookSnapshot(
+            self.sequence,
+            levels(self.bids),
+            levels(self.asks),
+            as_of=self.as_of,
+            closed=[
+                {"order_id": o, "state": state, "trader_id": t}
+                for o, (state, t) in sorted(self.closed.items())
+            ],
+        )
+
+    @property
+    def sequence(self) -> int:
+        return int(self.log[-1].data["sequence"]) if self.log else 0
+
+    @property
+    def as_of(self) -> str | None:
+        return self.log[-1].occurred_at if self.log else None
+
+    def state_hash(self) -> str:
+        """The engine's Q-16 hash of this book (api/matching-engine.yaml, BookState.state_hash)."""
+
+        def levels(book: list[_Resting]) -> list[Any]:
+            out: dict[int, list[Any]] = {}  # the book is best price first, then time
+            for o in book:
+                out.setdefault(o.price, []).append(
+                    [o.order_id, o.trader, o.remaining, o.accepted_sequence]
+                )
+            return [[price, orders] for price, orders in out.items()]
+
+        canonical = {
+            "as_of": self.as_of,
+            "asks": levels(self.asks),
+            "bids": levels(self.bids),
+            "closed": [[o, state, t] for o, (state, t) in sorted(self.closed.items())],
+            "sequence": self.sequence,
+            "ticker": self.ticker,
+        }
+        text = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(text.encode()).hexdigest()
 
     def advance(self, seconds: float) -> None:
         self.clock.now += timedelta(seconds=seconds)

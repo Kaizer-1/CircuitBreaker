@@ -1,8 +1,8 @@
 # market-data-service
 
-> **Status:** Phase 3 — candles (5s, 1m, 5m), order-book depth, recent trades, last prices, `CandleClosed` and the live
-> market WebSocket (Q-06) are built. Time travel (Q-12) and replay (Q-13) are Phase 4; the chaos hooks (A-12, A-13)
-> Phase 7, and answer `501` until then. Layout:
+> **Status:** Phase 4 (in progress) — candles (5s, 1m, 5m), order-book depth, recent trades, last prices,
+> `CandleClosed`, the live market WebSocket (Q-06) and time travel (Q-12) are built; replay (Q-13) is being built. The
+> chaos hooks (A-12, A-13) are Phase 7, and answer `501` until then. Layout:
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service) (package
 > `market_data_service`).
 
@@ -66,11 +66,21 @@ Schemas: [event catalog](../../docs/03-architecture/03-event-catalog.md). `tests
 
 Q-02 `GET /v1/instruments`, Q-03 `GET /v1/market/{ticker}/candles`, Q-04 `GET /v1/market/{ticker}/order-book`, Q-05
 `GET /v1/market/{ticker}/trades`; WebSocket Q-06 `/v1/ws/market/{ticker}` (messages in
-[api/README.md](../../api/README.md#q-06--v1wsmarketticker-market-data-service-any-role)). Phase 4: Q-12
-`GET /v1/time-travel/{ticker}`, Q-13 `/v1/ws/replay/{ticker}`. Phase 7: internal A-12 `POST /internal/v1/faults`, A-13
+[api/README.md](../../api/README.md#q-06--v1wsmarketticker-market-data-service-any-role)); Q-12
+`GET /v1/time-travel/{ticker}?at=` (time travel, below). Phase 4: Q-13 `/v1/ws/replay/{ticker}`. Phase 7: internal A-12 `POST /internal/v1/faults`, A-13
 `DELETE /internal/v1/faults`. Spec: [`api/market-data-service.yaml`](../../api/market-data-service.yaml);
 `tests/contract/test_response_schemas.py` validates the answers and the WebSocket messages against it. Until the
 start-up catch-up is done the queries answer `503 DEPENDENCY_UNAVAILABLE` and the WebSocket closes with `1011`.
+
+**Time travel (Q-12)** rebuilds the whole book as it was at `at`: matching-engine's nearest snapshot at or before `at`
+(Q-15, with its finished and expired orders) plus the events after it up to `at` (Q-14), applied to a fresh
+`ReplayBook` (`domain/replay_book.py`, apply only, this service's own code). The answer carries the book's
+`state_hash`, computed by the engine's rule (a contract test checks the hash the engine's spec states for its example).
+The 1-minute candles and recent trades come from this service's tables; the candle holding `at` is recomputed from the
+trades up to `at`. Each replica rebuilds at most 4 books at once and keeps one of those places for the admin role, so
+the presenter is never refused; beyond that, `503 OVERLOADED`. The book is a private copy: the live projection is never
+touched. `scripts/time_travel_check.py` measures seeks on the running stack (first run, 12 minutes of bot trading:
+p50 36 ms, p95 63 ms; at most 495 events applied after a snapshot).
 
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
@@ -80,7 +90,7 @@ Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards 
 ## Synchronous dependencies
 
 `matching-engine` `GET /internal/v1/snapshots/{ticker}` (Q-15) and `GET /internal/v1/events` (Q-14): the start-up
-catch-up, gap filling, and (Phase 4) time travel and replay. If the engine is down at start-up, the service retries and is
+catch-up, gap filling, time travel and (Phase 4) replay. If the engine is down at start-up, the service retries and is
 not ready; trading is not affected.
 
 ## Scaling and operations

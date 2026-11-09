@@ -51,3 +51,11 @@ class MarketStore(Protocol):
     async def trades(self, ticker: str, limit: int) -> list[Trade]:
         """The newest `limit` trades, newest first."""
         ...
+
+    async def trades_until(self, ticker: str, until_ms: int, limit: int) -> list[Trade]:
+        """The newest `limit` trades executed at or before `until_ms`, newest first (Q-12)."""
+        ...
+
+    async def trades_between(self, ticker: str, from_ms: int, to_ms: int) -> list[Trade]:
+        """Every trade executed in [from_ms, to_ms], oldest first (one candle's worth, Q-12)."""
+        ...
