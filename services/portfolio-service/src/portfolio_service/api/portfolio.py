@@ -1,4 +1,4 @@
-"""Q-09 and the internal operations A-02 and A-06 (api/portfolio-service.yaml), and the Q-10
+"""Q-09, Q-11 and the internal operations A-02 and A-06 (api/portfolio-service.yaml), and the Q-10
 WebSocket (api/README.md). Thin: parse, call a use case, map its errors to Problem Details."""
 
 import asyncio
@@ -8,7 +8,7 @@ import time
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Header, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -104,6 +104,23 @@ async def get_my_portfolio(request: Request, x_trader_id: Annotated[UUID, Header
         return problem_response(
             404, "NOT_FOUND", "Not found", detail="No such account.", instance=request.url.path
         )
+
+
+@router.get(
+    "/v1/leaderboard",
+    operation_id="getLeaderboard",
+    summary="Get the leaderboard",
+    openapi_extra={"x-seeds-id": "Q-11"},
+)
+async def get_leaderboard(
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    include_bots: bool = False,
+) -> Any:
+    service = _service(request)
+    if service is None:
+        return _starting(request)
+    return await service.leaderboard.get(include_bots=include_bots, limit=limit)
 
 
 @router.post(

@@ -146,3 +146,29 @@ async def test_every_replica_hears_a_change_only_after_it_commits(
     finally:
         for task in tasks:
             task.cancel()
+
+
+async def test_the_leaderboard_reads_humans_with_their_shares_and_marks_them_to_market(
+    store: PostgresPortfolioStore,
+) -> None:
+    service = PortfolioService(store)
+    await service.seed_accounts()  # 20 bots with shares, 10 load accounts with cash only
+    meera = (await service.open_account("Meera", AccountKind.HUMAN))[0].trader_id
+    await service.open_account("Raju", AccountKind.HUMAN)
+    bot = seeded_trader_id("bot-03")
+    await service.create_reservation(buy(1, meera, 40, 24600))
+    await service.create_reservation(sell(2, bot, 40, 24550))
+    await service.apply_event(accepted(1, meera))
+    await service.apply_event(trade(1, meera, 2, bot, 40, 24550, 0, 0))
+
+    async with store.transaction() as tx:
+        humans = await tx.standings([AccountKind.HUMAN])
+        everyone = await tx.standings([AccountKind.HUMAN, AccountKind.BOT])
+    assert sorted(a.nickname for a, _ in humans) == ["Meera", "Raju"]
+    held = {a.nickname: [(h.ticker, h.quantity) for h in hs] for a, hs in humans}
+    assert held == {"Meera": [("CHAIWALA", 40)], "Raju": []}
+    assert sum(a.kind is AccountKind.BOT for a, _ in everyone) == 20
+    assert all(a.kind is not AccountKind.LOAD for a, _ in everyone)
+
+    board = await service.leaderboard.get(include_bots=False, limit=20)
+    assert [(e["rank"], e["nickname"]) for e in board["entries"]] == [(1, "Meera"), (1, "Raju")]

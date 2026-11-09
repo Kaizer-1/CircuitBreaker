@@ -2,13 +2,14 @@
 exception inside it rolls back, as in Postgres. Uniqueness rules match the real schema."""
 
 import copy
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any
 
 from portfolio_service.domain.model import (
     Account,
+    AccountKind,
     Holding,
     NicknameTakenError,
     Reservation,
@@ -85,6 +86,20 @@ class InMemoryTx:
             and not r.confirmed
             and r.expiry_requested_at is None
             and parse_timestamp(r.created_at) <= cut
+        ]
+
+    async def standings(self, kinds: Sequence[AccountKind]) -> list[tuple[Account, list[Holding]]]:
+        return [
+            (
+                copy.deepcopy(a),
+                [
+                    copy.deepcopy(h)
+                    for (t, _), h in self.s.holdings.items()
+                    if t == a.trader_id and h.quantity > 0
+                ],
+            )
+            for a in self.s.accounts.values()
+            if a.kind in kinds
         ]
 
     async def last_prices(self) -> dict[str, int]:

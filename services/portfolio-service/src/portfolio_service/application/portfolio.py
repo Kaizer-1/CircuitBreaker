@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from portfolio_service.application.leaderboard import Leaderboard
 from portfolio_service.application.live import Change, fill_message, order_closed_message
 from portfolio_service.domain.model import (
     BOT_STARTING_CASH,
@@ -62,6 +63,7 @@ class PortfolioService:
         self._store = store
         self._clock = clock
         self._new_id = new_id
+        self.leaderboard = Leaderboard(store, clock=clock)  # Q-11
 
     def _now(self) -> str:
         return format_timestamp(self._clock())

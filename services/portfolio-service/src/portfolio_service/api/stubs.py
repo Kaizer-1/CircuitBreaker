@@ -1,23 +1,10 @@
-"""Stub routes for the operations in api/portfolio-service.yaml that are not built yet.
+"""Stub routes for every operation in api/portfolio-service.yaml.
 
 Generated once by tools/gen_stubs.py (contract first). From now on edit this file by hand:
 replace a stub with the real route when the operation is built. tests/contract/ fails if this
-file and the spec disagree. Q-11 (leaderboard) is built in Phase 4.
+file and the spec disagree. Every operation is built now (Q-11 in Phase 4), so none is left.
 """
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
-
-from portfolio_service.runtime.problem import not_implemented
+from fastapi import APIRouter
 
 router = APIRouter()
-
-
-@router.get(
-    "/v1/leaderboard",
-    operation_id="getLeaderboard",
-    summary="Get the leaderboard",
-    openapi_extra={"x-seeds-id": "Q-11"},
-)
-async def get_leaderboard(request: Request) -> JSONResponse:
-    return not_implemented(request, "Q-11")
