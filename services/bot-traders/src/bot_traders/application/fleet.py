@@ -23,13 +23,14 @@ from typing import Any
 from bot_traders.application.bot import Bot, MarketState, OrderListener
 from bot_traders.domain.market import REFERENCE_PRICES, TICKERS
 from bot_traders.domain.strategies import BotPlan, MarketMaker, roster
-from bot_traders.ports.exchange import Exchange
+from bot_traders.ports.exchange import Exchange, SessionExpiredError
 from bot_traders.runtime.events import EventEnvelope, parse_timestamp
 
 logger = logging.getLogger("fleet")
 
 HISTORY = 120  # 5s closes kept per ticker (10 minutes)
 SEEN_EVENTS = 5_000
+LISTINGS_AT_ONCE = 2  # bots listing their open orders (Q-07) at the same moment
 
 
 def bot_rng(seed: int | None, name: str) -> Random:
@@ -55,6 +56,9 @@ class Fleet:
         self._exchange = exchange
         self._interval = interval_seconds
         self._wall_clock = wall_clock
+        # Listing open orders (Q-07) reads a bot's whole order history; after a gateway restart all
+        # 20 bots list at once. A few at a time keeps order-service answering everyone else.
+        listing_slots = asyncio.Semaphore(LISTINGS_AT_ONCE)
         self.bots = [
             Bot(
                 plan,
@@ -65,6 +69,7 @@ class Fleet:
                 clock=clock,
                 sleep=sleep,
                 on_order=on_order,
+                listing_slots=listing_slots,
             )
             for plan in (plans if plans is not None else roster())
         ]
@@ -117,8 +122,13 @@ class Fleet:
         return True
 
     async def _read_depth(self, ticker: str) -> None:
+        reader = self.bots[0]
         try:
-            book = await self._exchange.depth(self.bots[0].signed_in(), ticker)
+            await reader.ensure_session()
+            book = await self._exchange.depth(reader.signed_in(), ticker)
+        except SessionExpiredError:
+            reader.session = None  # signs in again on the next read
+            return
         except Exception as exc:
             logger.warning("depth not read", extra={"ticker": ticker, "error": repr(exc)})
             return

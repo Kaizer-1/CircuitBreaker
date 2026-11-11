@@ -30,6 +30,7 @@ from bot_traders.domain.market import (
     Intent,
     OpenOrder,
     Place,
+    Requote,
     ceil_tick,
     floor_tick,
 )
@@ -103,10 +104,12 @@ class MarketMaker:
                 for o in mine
                 if o.limit_price_paise == price and view.candle - o.placed_candle < 6
             ]
-            intents += [Cancel(o.order_id, o.ticker) for o in mine if o not in keep]
-            if not keep:
+            replaced = tuple(Cancel(o.order_id, o.ticker) for o in mine if o not in keep)
+            if keep:
+                intents += replaced  # a good quote stays; anything else on this side goes
+            else:
                 size = size_for(self.notional_rupees, price, rng, view.activity)
-                intents.append(Place(view.ticker, side, size, price))
+                intents.append(Requote(Place(view.ticker, side, size, price), replaced))
         return intents
 
 

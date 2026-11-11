@@ -17,6 +17,7 @@ from bot_traders.domain.market import (
     Cancel,
     OpenOrder,
     Place,
+    Requote,
     buy_protection,
     ceil_tick,
     floor_tick,
@@ -101,11 +102,14 @@ def view(**fields: Any) -> TickerView:
     return TickerView(**(base | fields))
 
 
+def quotes(intents: list[Any]) -> list[Place]:
+    """The new quotes in a market maker's intents (each sent with what it replaces)."""
+    return [i.place for i in intents if isinstance(i, Requote)]
+
+
 def test_a_market_maker_quotes_both_sides_on_ticks_around_the_price() -> None:
     intents = MarketMaker(half_spread_bps=10).decide(view(), seeded())
-    bid, ask = (
-        next(i for i in intents if isinstance(i, Place) and i.side == s) for s in ("BUY", "SELL")
-    )
+    bid, ask = (next(q for q in quotes(intents) if q.side == s) for s in ("BUY", "SELL"))
     assert bid.limit_price_paise is not None and ask.limit_price_paise is not None
     assert bid.limit_price_paise < 24550 < ask.limit_price_paise
     assert (ask.limit_price_paise - bid.limit_price_paise) / 24550 < 0.003
@@ -114,15 +118,17 @@ def test_a_market_maker_quotes_both_sides_on_ticks_around_the_price() -> None:
 
 def test_a_market_maker_keeps_a_good_quote_and_replaces_a_stale_one() -> None:
     mm = MarketMaker(half_spread_bps=10)
-    first = [i for i in mm.decide(view(), seeded()) if isinstance(i, Place)]
-    bid = next(i for i in first if i.side == "BUY")
+    bid = next(q for q in quotes(mm.decide(view(), seeded())) if q.side == "BUY")
     resting = OpenOrder(
         "o1", "CHAIWALA", "BUY", bid.limit_price_paise, bid.quantity, placed_candle=9
     )
     again = mm.decide(view(open_orders=[resting]), seeded())
-    assert not any(isinstance(i, Place) and i.side == "BUY" for i in again)  # keeps it
+    assert not any(q.side == "BUY" for q in quotes(again))  # keeps it
     moved = mm.decide(view(open_orders=[resting], closes=deque([25000] * 30)), seeded())
-    assert Cancel("o1", "CHAIWALA") in moved  # the price moved: requote
+    [requote] = [i for i in moved if isinstance(i, Requote) and i.place.side == "BUY"]
+    # The price moved: a new bid, sent together with the cancel of the old one (no gap).
+    assert requote.cancels == (Cancel("o1", "CHAIWALA"),)
+    assert not any(isinstance(i, Cancel) for i in moved)
 
 
 def test_a_market_maker_long_on_shares_quotes_lower_to_sell_them() -> None:
@@ -131,9 +137,7 @@ def test_a_market_maker_long_on_shares_quotes_lower_to_sell_them() -> None:
     long = mm.decide(view(shares_held=1_800), seeded())
 
     def ask(intents: list[Any]) -> int:
-        [price] = [
-            i.limit_price_paise for i in intents if isinstance(i, Place) and i.side == "SELL"
-        ]
+        [price] = [q.limit_price_paise for q in quotes(intents) if q.side == "SELL"]
         assert price is not None
         return price
 
@@ -391,3 +395,105 @@ async def test_a_failing_bot_backs_off_instead_of_retrying_every_candle() -> Non
     await exchange.time.run_until(1_005.0)  # the step's orders go out over the interval
     await acting
     assert exchange.listings_tried == tries + 1 and bot._backoff == 0.0  # the pause is reset
+
+
+class Expiring(SimExchange):
+    """Sessions that end: after `expire()`, every call with an old token is refused (401)."""
+
+    def __init__(self) -> None:
+        super().__init__(VirtualTime())
+        self.logins = 0
+        self.valid: set[str] = set()
+
+    async def login(self, account: str) -> Session:
+        self.logins += 1
+        base = await super().login(account)  # opens the account the first time
+        session = Session(base.account, base.trader_id, f"token-{account}-{self.logins}")
+        self.valid.add(session.token)
+        return session
+
+    def expire(self) -> None:
+        self.valid.clear()
+
+    async def portfolio(self, session: Session) -> dict[str, Any]:
+        from bot_traders.ports.exchange import SessionExpiredError
+
+        if session.token not in self.valid:
+            raise SessionExpiredError("401")
+        return await super().portfolio(session)
+
+
+async def test_a_bot_whose_session_expired_signs_in_again_and_carries_on() -> None:
+    from bot_traders.application.bot import Bot, MarketState
+
+    exchange = Expiring()
+    bot = Bot(roster()[0], exchange, seeded(), clock=exchange.time.clock, sleep=exchange.time.sleep)
+    await bot.login()
+    market = MarketState([24550])
+
+    async def step(at: float) -> None:
+        exchange.time.now = at
+        acting = asyncio.create_task(bot.act("CHAIWALA", market))
+        await exchange.time.run_until(at + 5)
+        await acting
+
+    await step(0)
+    assert exchange.logins == 1 and bot.session is not None and exchange.placed
+    exchange.expire()  # twelve hours later
+    await step(100)
+    assert bot.session is None  # refused: dropped, to sign in on the next step
+    lists = exchange.order_lists
+    await step(110)
+    assert exchange.logins == 2 and bot.session is not None and bot._backoff == 0.0
+    assert exchange.order_lists == lists + 1  # what finished while signed out: listed again
+
+
+async def test_a_requote_places_the_new_quote_before_it_cancels_the_old_one() -> None:
+    """The README's promise: a market maker always has a bid and an ask. Replacing a quote never
+    leaves its side empty, not even for the moment between the two requests."""
+    from bot_traders.application.bot import Bot, MarketState
+
+    exchange = SimExchange(VirtualTime())
+    bot = Bot(roster()[0], exchange, seeded())
+    await bot.login()
+    await bot.refresh()
+    market = MarketState([24550])
+    await bot.execute(Place("CHAIWALA", "BUY", 5, 24500), market)
+    [old] = list(bot.open_orders)
+    calls: list[str] = []
+    real_place, real_cancel = exchange.place, exchange.cancel
+
+    async def place(session: Session, order: Place) -> dict[str, Any]:
+        calls.append("place")
+        return await real_place(session, order)
+
+    async def cancel(session: Session, order_id: str) -> None:
+        calls.append("cancel")
+        await real_cancel(session, order_id)
+
+    exchange.place, exchange.cancel = place, cancel  # type: ignore[method-assign,assignment]
+    await bot.execute(
+        Requote(Place("CHAIWALA", "BUY", 5, 24510), (Cancel(old, "CHAIWALA"),)), market
+    )
+    assert calls == ["place", "cancel"]
+    assert old not in bot.open_orders and len(bot.open_orders) == 1
+
+
+async def test_a_lost_answer_is_asked_again_with_the_same_key_so_no_order_is_orphaned() -> None:
+    tries: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        tries.append(request.headers["Idempotency-Key"])
+        if len(tries) == 1:
+            raise httpx.ReadTimeout("the answer was lost", request=request)
+        return httpx.Response(202, json={"order_id": "o7", "status": "PENDING"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+        gateway = GatewayExchange("http://gateway/", "s3cret", client)
+        placed = await gateway.place(
+            Session("bot-01", "b0b0", "tok"), Place("JUGAAD", "SELL", 3, 118000)
+        )
+    assert placed["order_id"] == "o7"
+    assert (
+        len(tries) == 2 and tries[0] == tries[1]
+    )  # the same key: order-service returns the same order

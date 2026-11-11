@@ -49,7 +49,21 @@ placement for everyone (p95 above 1 s; now about 30 ms).
 30 s; a step that works resets the pause. Found in Phase 4 after two hours of trading: a gateway restart made every bot
 list its open orders at once, each listing read up to 1,000 rows, the bots timed out and retried every candle, and the
 abandoned listings piled up in order-service until it ran out of memory (192 MiB) and restarted, again and again. With
-the back-off, the same restart costs about 45 seconds of failed steps and order-service's memory stays flat.
+the back-off, the same restart costs about 45 seconds of failed steps and order-service's memory stays flat. On top of
+it, the fleet lets at most two bots list their open orders at once, and that one heavy call gets a 30-second timeout
+instead of the 5 seconds every other call gets, so the listings after a restart finish instead of timing out.
+
+**Sessions run out.** A bot session lasts 12 hours (A-03). When a call is refused (401) or the portfolio stream closes
+with `4401`, the bot drops its session and signs in again on its next step, then lists its open orders (it cannot know
+what finished meanwhile). Found in Phase 4: a stack left running for two days had every bot refused for ever.
+
+**Quoting both sides, always.** A market maker replaces a quote with one `Requote`: the new quote is placed first and
+the old one cancelled right after, at the same moment, so its side is never empty in between (before Phase 4 the
+cancel and the new quote went out at different moments of the interval: on average 3.4 of the 4 makers' quotes were
+on each side; now 3.8 to 4.0). A placement whose answer is lost (a timeout, a dropped connection) is asked again with
+the same `Idempotency-Key`, so order-service returns the order that may already exist and the bot keeps track of it
+instead of leaving a quote it never cancels. `scripts/bots_check.py` fails if a side holds fewer than 3.5 or more than
+4.5 maker quotes on average, or the two sides differ by more than one level.
 
 **Timing (an implementation detail).** Bots act on `CandleClosed` (policy P-09), on the 5s candles only. If every bot
 sent its orders the moment a candle closed, trades would come in a burst every 5 s. So each bot spreads that candle's

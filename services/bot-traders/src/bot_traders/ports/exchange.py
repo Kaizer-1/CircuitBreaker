@@ -15,6 +15,10 @@ class Session:
     token: str
 
 
+class SessionExpiredError(Exception):
+    """The token was refused (401, or the stream closed with 4401): sign in again (A-03)."""
+
+
 class OrderRefusedError(Exception):
     """The exchange answered 422: the order broke a rule (should never happen: see Ledger)."""
 

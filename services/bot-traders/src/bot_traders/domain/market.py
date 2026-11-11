@@ -50,7 +50,20 @@ class Cancel:
     ticker: str
 
 
-Intent = Place | Cancel
+@dataclass(frozen=True)
+class Requote:
+    """A market maker's new quote and the old quotes it replaces, sent at one moment: the new
+    one first, then the cancels, so the side is never left without a quote in between."""
+
+    place: Place
+    cancels: tuple[Cancel, ...]
+
+    @property
+    def ticker(self) -> str:
+        return self.place.ticker
+
+
+Intent = Place | Cancel | Requote
 
 
 @dataclass
