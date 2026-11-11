@@ -16,7 +16,11 @@
   their four quotes on each side and no more than MAX_MAKER_QUOTES (more means orphaned quotes no
   bot knows about). The makers' quotes are the symmetry test. The level counts per side are
   printed but not judged: mean reversion and noise lean one way for a minute or two by design
-  (measured: up to two levels either way within a minute, bids on one ticker while asks on another).
+  (measured: up to two levels either way within a minute, bids on one ticker while asks on another);
+- every ticker's price stays within BAND (±10%) of its reference price for the whole run, read
+  from the 1m candles' highs and lows (Phase 4: MONSOON once ran 13 to 15% above its reference
+  within an hour; bot-traders README, "Phase 4 rebalance"). Its drift (first to last price) is
+  printed. Run it for 30 minutes to check the band: `python3 scripts/bots_check.py 1800`.
 
 Usage: python3 scripts/bots_check.py [seconds]   (default 60). Prints a summary; exit 1 on failure.
 """
@@ -31,10 +35,11 @@ import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
-from stack import ENGINE, http
+from stack import ENGINE, http, rupees
 
 MARKET = "http://localhost:8003"  # market-data-service, dev host port
 TRADES_PER_MINUTE_FLOOR = 5  # per ticker
+BAND = 0.10  # every price within ±10% of its ticker's reference price
 DEPTH_SHOWN = 6  # levels per side on the dashboard
 MIN_LEVELS = 2.0
 MIN_MAKER_QUOTES = 3.5
@@ -113,9 +118,34 @@ class Sides:
         return what[side] / max(self.samples, 1)
 
 
+def band(ticker: str, reference: int, candles: list[dict[str, Any]]) -> list[str]:
+    """Print the ticker's drift and range; a failure if it left the band."""
+    traded = [c for c in candles if c["trade_count"] > 0]
+    if not traded:
+        return []
+    low, high = min(c["low_paise"] for c in traded), max(c["high_paise"] for c in traded)
+    first, last = traded[0]["open_paise"], traded[-1]["close_paise"]
+
+    def pct(price: int) -> str:
+        return f"{(price - reference) / reference * 100:+.1f}%"
+
+    print(
+        f"  {'':<9} price {rupees(first)} -> {rupees(last)} ({(last - first) / first * 100:+.1f}%),"
+        f" range {pct(low)} to {pct(high)} of the reference {rupees(reference)}"
+        f" (band ±{BAND:.0%})"
+    )
+    if low < reference * (1 - BAND) or high > reference * (1 + BAND):
+        return [f"{ticker}: price left the ±{BAND:.0%} band ({pct(low)} to {pct(high)})"]
+    return []
+
+
 def main() -> int:
     seconds = float(sys.argv[1]) if len(sys.argv) > 1 else 60
     started = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    references = {
+        i["ticker"]: int(i["reference_price_paise"])
+        for i in http("GET", f"{MARKET}/v1/instruments")["instruments"]
+    }
     refused_before = refused()
     first = {
         t: http("GET", f"{MARKET}/v1/market/{t}/order-book")["as_of_sequence"] for t in TICKERS
@@ -137,13 +167,15 @@ def main() -> int:
             samples += 1
         time.sleep(1)
 
-    window = int(seconds // 5)
+    window = min(int(seconds // 5), 500)  # Q-03 returns at most 500 candles
+    minutes = max(1, round(seconds / 60))
     for ticker in TICKERS:
         candles = http("GET", f"{MARKET}/v1/market/{ticker}/candles?interval=5s&limit={window}")
         traded = [c for c in candles["candles"] if c["trade_count"] > 0]
         prices = {c["close_paise"] for c in traded}
         last = http("GET", f"{MARKET}/v1/market/{ticker}/order-book")["as_of_sequence"]
-        per_minute = sum(c["trade_count"] for c in candles["candles"]) * 60 / seconds
+        ones = http("GET", f"{MARKET}/v1/market/{ticker}/candles?interval=1m&limit={minutes}")
+        per_minute = sum(c["trade_count"] for c in ones["candles"]) / minutes
         s = sides[ticker]
         bids, asks = s.mean(s.levels, "bids"), s.mean(s.levels, "asks")
         maker_bids, maker_asks = s.mean(s.makers, "bids"), s.mean(s.makers, "asks")
@@ -154,6 +186,7 @@ def main() -> int:
             f" maker quotes bid {maker_bids:.1f} ask {maker_asks:.1f}"
         )
         rates.append(per_minute)
+        failures += band(ticker, references[ticker], ones["candles"])
         if min(bids, asks) < MIN_LEVELS:
             failures.append(f"{ticker}: one-sided book (levels bid {bids:.1f}, ask {asks:.1f})")
         if max(maker_bids, maker_asks) > MAX_MAKER_QUOTES:

@@ -28,8 +28,8 @@ Runs 20 bots in one process (asyncio): 4 market makers (always quote bids and as
 
 | Bots | Strategy | Tickers | What it does |
 |---|---|---|---|
-| `bot-01`…`bot-04` | Market maker | all 5 | Always one bid and one ask per ticker, 8 / 12 / 16 / 20 basis points from a fair price (the last close, leaning 2% towards the reference price and away from inventory it holds too much of). Re-quotes when the price moves or a quote is 6 candles old |
-| `bot-05`…`bot-10` | Momentum | 3 each | After a move of 8+ bp over 6 candles, a small MARKET order the same way |
+| `bot-01`…`bot-04` | Market maker | all 5 | Always one bid and one ask per ticker, 8 / 12 / 16 / 20 basis points from a fair price (the last close, leaning 5% towards the reference price every candle, and away from inventory it holds too much of by at most 15 basis points). Re-quotes when the price moves or a quote is 6 candles old |
+| `bot-05`…`bot-10` | Momentum | 3 each | After a move of 8+ bp and at least 3 ticks over 6 candles, a small MARKET order the same way |
 | `bot-11`…`bot-15` | Mean reversion | 3 each | When the price is 20+ bp away from its moving average (pulled 20% towards the reference), a LIMIT order against the move at the touch |
 | `bot-16`…`bot-20` | Noise | 2 each | Small random orders (half MARKET, half LIMIT within 0.3%) |
 
@@ -90,7 +90,15 @@ fleet reads each ticker's best bid and ask (Q-04) once per candle for all bots.
 | `GATEWAY_URL`, `BOT_SECRET` | | The public API and the A-03 bot secret (Compose: `http://api-gateway:8000`, the dev placeholder) |
 
 At the default activity, the simulated hour in the tests gives about 8 orders/s, 2.7 trades/s, spreads of 10–12 basis
-points and prices within a few percent of their reference. Through the gateway that is about 23 requests/s, well under
+points and prices within a few percent of their reference (the test fails outside ±10%; `scripts/bots_check.py` checks
+the same band live).
+
+**Phase 4 rebalance (prices ran away).** MONSOON (₹88.20, where one tick is 5.7 basis points) climbed 13–15% above its
+reference within a simulated hour in 3 of 5 runs. A market maker that had sold shares bid up to 30 basis points above
+its fair price to buy them back, the last price followed, and momentum took a two-tick wiggle for a trend. Three changes,
+none of them a price limit: the makers' fair price leans 5% (was 2%) towards the reference every candle, their inventory
+lean is at most 15 basis points (was 30), and momentum needs a move of at least 3 ticks. Over 12 simulated hours the
+worst excursion is now 5.3%, most stay within 2.6%. Through the gateway that is about 23 requests/s, well under
 the 50/s per bot token.
 
 ## Owned data

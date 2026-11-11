@@ -144,6 +144,37 @@ def test_a_market_maker_long_on_shares_quotes_lower_to_sell_them() -> None:
     assert ask(long) < ask(flat)
 
 
+def test_a_market_maker_short_of_shares_never_bids_far_above_its_fair_price() -> None:
+    # Phase 4: bidding up to 30 bp above fair to buy back shares fed a run-away price on MONSOON.
+    mm = MarketMaker(half_spread_bps=8)
+    short = mm.decide(view(shares_held=0), seeded())
+    [bid] = [q.limit_price_paise for q in quotes(short) if q.side == "BUY"]
+    assert bid is not None
+    fair = 24550  # last == reference here, so the lean changes nothing
+    assert (bid - fair) / fair * 10_000 <= 15 - 8
+
+
+def test_a_market_makers_fair_price_leans_towards_the_reference() -> None:
+    above = view(closes=deque([27000] * 30), best_bid=26990, best_ask=27010)
+    [bid, ask] = sorted(
+        q.limit_price_paise or 0
+        for q in quotes(MarketMaker(half_spread_bps=8).decide(above, seeded()))
+    )
+    fair = 27000 - 0.05 * (27000 - 24550)  # 26877.5: 5% of the gap every candle
+    assert bid < fair < ask < 27000
+
+
+def test_momentum_needs_three_ticks_on_a_cheap_ticker() -> None:
+    # MONSOON is 8820 paise: 8 basis points is 7 paise, under 2 ticks of 5 paise.
+    always = Momentum(chance=1.0)
+    wiggle = view(
+        ticker="MONSOON", closes=deque([8820] * 10 + [8830]), best_bid=8815, best_ask=8835
+    )
+    trend = view(ticker="MONSOON", closes=deque([8820] * 10 + [8835]), best_bid=8830, best_ask=8840)
+    assert always.decide(wiggle, seeded()) == []
+    assert [i.side for i in always.decide(trend, seeded()) if isinstance(i, Place)] == ["BUY"]
+
+
 def test_momentum_follows_the_move() -> None:
     rising = view(closes=deque([24000] * 10 + [24550]))
     falling = view(closes=deque([25000] * 10 + [24550]))

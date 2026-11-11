@@ -10,10 +10,18 @@ assignment in `roster()`; nothing else changes.
 Why the market stays realistic:
 
 - **Market makers** always quote both sides around a fair price, each at a different distance
-  (8 to 20 basis points), so the spread stays tight. The fair price leans 2% towards the
-  reference price every candle and away from inventory they hold too much of, so prices drift
-  but do not run away.
+  (8 to 20 basis points), so the spread stays tight. The fair price leans 5% towards the
+  reference price every candle and away from inventory they hold too much of (at most 15 basis
+  points), so prices drift but do not run away.
 - **Momentum** buys after a rise and sells after a fall (small MARKET orders): short trends.
+  A move must be 8 basis points and at least 3 ticks.
+
+Phase 4 rebalance: with a 2% lean, an inventory lean of up to 30 basis points and an 8 basis
+point momentum trigger, MONSOON (₹88.20, where one tick is 5.7 basis points) ran 13 to 15% above
+its reference within an hour in 3 of 5 simulated runs. A market maker that had sold shares bid
+above its fair price to buy them back, the last price followed, and momentum chased a two-tick
+wiggle as a trend. Now the worst of 12 simulated hours is 5.3% (most stay within 2.6%), and
+`scripts/bots_check.py` holds every ticker within ±10% of its reference.
 - **Mean reversion** sells above and buys below its moving average (LIMIT orders): pulls back.
 - **Noise** places small random orders: keeps trades flowing when nothing else does.
 """
@@ -84,13 +92,17 @@ def stale(view: TickerView, older_than: int) -> list[Intent]:
 class MarketMaker:
     half_spread_bps: float
     notional_rupees: float = 6_000
+    reference_lean: float = 0.05  # of the gap to the reference price, every candle
+    max_inventory_skew_bps: float = 15
     name: str = "market_maker"
 
     def decide(self, view: TickerView, rng: Random) -> list[Intent]:
-        fair = view.last + 0.02 * (view.reference - view.last)
-        # Holding more than it started with: quote lower to sell some (and the reverse).
+        fair = view.last + self.reference_lean * (view.reference - view.last)
+        # Holding more than it started with: quote lower to sell some (and the reverse), but
+        # never so far that it chases the price to get its shares back.
         excess = (view.shares_held - STARTING_SHARES) / STARTING_SHARES
-        skew = max(-30.0, min(30.0, excess * 40))
+        cap = self.max_inventory_skew_bps
+        skew = max(-cap, min(cap, excess * 40))
         bid = floor_tick(fair * (1 - (self.half_spread_bps + skew) / 10_000))
         ask = ceil_tick(fair * (1 + (self.half_spread_bps - skew) / 10_000))
         if ask - bid < 2 * TICK_SIZE_PAISE:
@@ -117,6 +129,7 @@ class MarketMaker:
 class Momentum:
     lookback: int = 6
     threshold_bps: float = 8
+    min_ticks: int = 3  # on a cheap ticker 8 basis points is under 2 ticks: noise, not a trend
     chance: float = 0.5
     notional_rupees: float = 4_000
     name: str = "momentum"
@@ -124,8 +137,9 @@ class Momentum:
     def decide(self, view: TickerView, rng: Random) -> list[Intent]:
         if len(view.closes) <= self.lookback or rng.random() > self.chance * view.activity:
             return []
-        move = (view.last - view.closes[-1 - self.lookback]) / view.closes[-1 - self.lookback]
-        if abs(move) * 10_000 < self.threshold_bps:
+        before = view.closes[-1 - self.lookback]
+        move = view.last - before
+        if abs(move) < max(self.threshold_bps * before / 10_000, self.min_ticks * TICK_SIZE_PAISE):
             return []
         side = "BUY" if move > 0 else "SELL"
         return [
