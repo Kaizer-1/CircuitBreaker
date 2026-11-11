@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """make test-e2e: the Phase 2 "done when" checks against the running Compose stack (make up first).
 
-1. join -> place -> match -> settle through the gateway, with exact balances.
+1. place -> match -> settle through the gateway, with exact balances. Every trader a script
+   makes is a load-test account (stack.tester): never on the leaderboard.
 2. Crash recovery: the matching engine is killed (SIGKILL) in the middle of a workload and
    restarted; afterwards the rebuilt book has the same hash as before an idle kill, every order
    agrees with the engine's trades, and cash and shares are conserved.
@@ -10,7 +11,9 @@
    never stored, stays reserved while the engine cannot answer, and is released only after it
    does; a late copy of an expired order is refused.
 4. Phase 3: the 20 bots trade for 60 s (make bots): candles for all 5 tickers, the book never
-   crossed, no refused bot order, no 5xx.
+   crossed, no refused bot order, no 5xx, the trade-rate floor and a two-sided book.
+5. Phase 4: no trader a test made is ever ranked on the leaderboard (Q-11), and A-01 refuses a
+   nickname on the blocklist without opening an account.
 
 Takes about 7 minutes (the orphan rule waits for real 60 s and 120 s timers; the bots run 60 s).
 """
@@ -31,18 +34,20 @@ from typing import Any
 
 from stack import (
     ENGINE,
+    GATEWAY,
     PORTFOLIO,
+    ApiError,
     Trader,
     bot,
     compose,
     engine_events,
     free_price,
     http,
-    join,
     live_book,
     now_iso,
     produce,
     settled,
+    tester,
     wait_for,
     wait_until_ready,
 )
@@ -71,8 +76,10 @@ def restart_engine(signal: str = "SIGKILL") -> None:
 # ------------------------------------------------------------------ 1
 
 
-def test_join_trade_settle() -> None:
-    a, b, seller = join("E2eA"), join("E2eB"), bot("bot-01")
+def test_place_trade_settle() -> None:
+    a, b, seller = tester(11), tester(12), bot("bot-01")
+    cancel_everything([a, b])  # orders left by an earlier, interrupted run
+    a0, b0 = a.portfolio(), b.portfolio()
     p = free_price("CHAIWALA", 24550)  # nobody else's resting order can take part
     sell = seller.place("SELL", 20, p)
     buy = a.place("BUY", 20, p + 5)  # willing to pay 5 paise more: pays the resting price
@@ -85,9 +92,11 @@ def test_join_trade_settle() -> None:
     settled(a, a_sell["order_id"])
     settled(b, b_buy["order_id"])
     pa, pb = a.portfolio(), b.portfolio()
-    assert (pa["cash_paise"], pa["reserved_cash_paise"]) == (10_000_000 - 20 * p + 10 * q, 0)
-    assert (pb["cash_paise"], pb["reserved_cash_paise"]) == (10_000_000 - 10 * q, 0)
-    assert pa["holdings"][0]["quantity"] == pb["holdings"][0]["quantity"] == 10
+    assert (pa["cash_paise"], pa["reserved_cash_paise"]) == (a0["cash_paise"] - 20 * p + 10 * q, 0)
+    assert (pb["cash_paise"], pb["reserved_cash_paise"]) == (b0["cash_paise"] - 10 * q, 0)
+    assert held(pa, "CHAIWALA") == held(a0, "CHAIWALA") + 10
+    assert held(pb, "CHAIWALA") == held(b0, "CHAIWALA") + 10
+    TESTERS.update({a.trader_id, b.trader_id})
 
 
 # ------------------------------------------------------------------ 2
@@ -96,9 +105,10 @@ def test_join_trade_settle() -> None:
 def test_crash_recovery_by_hash() -> None:
     ticker = "DABBA"
     rng = random.Random(42)  # noqa: S311 (a reproducible workload, not cryptography)
-    humans = [join(f"Crash{n}") for n in range(3)]
+    testers = [tester(13 + n) for n in range(3)]
     bots = [bot("bot-11"), bot("bot-12")]
-    everyone = humans + bots
+    everyone = testers + bots
+    TESTERS.update(t.trader_id for t in testers)
     cancel_everything(everyone)  # orders left by an earlier, interrupted run
     start = {t.trader_id: t.portfolio() for t in everyone}
     sequence_before = live_book(ticker)["sequence"]
@@ -185,7 +195,10 @@ def held(portfolio: dict[str, Any], ticker: str) -> int:
 
 
 def test_orphan_rule_is_fail_closed() -> None:
-    c = join("Orphan")
+    c = tester(16)
+    TESTERS.add(c.trader_id)
+    cancel_everything([c])
+    start_cash = c.portfolio()["cash_paise"]
     # (a) order-service "died" after reserving and before storing: only the reservation exists.
     lost_order = str(uuid.uuid4())
     http(
@@ -284,7 +297,7 @@ def test_orphan_rule_is_fail_closed() -> None:
         if e["data"].get("order_id") == lost_order
     ]
     assert kinds == ["OrderExpired"], kinds
-    assert c.portfolio()["cash_paise"] == 10_000_000
+    assert c.portfolio()["cash_paise"] == start_cash
 
 
 def test_bots_keep_a_sound_market() -> None:
@@ -302,11 +315,33 @@ def test_bots_keep_a_sound_market() -> None:
         subprocess.run(["make", "-s", "bots-stop"], cwd=root, check=True)  # noqa: S603, S607
 
 
+def test_test_traders_are_never_ranked() -> None:
+    """Phase 4, projector safety: what the tests did never shows on the leaderboard, and A-01
+    refuses a nickname on the blocklist before any account exists."""
+    viewer = bot("bot-20")
+    everyone = http(
+        "GET", f"{GATEWAY}/v1/leaderboard?limit=100&include_bots=true", headers=viewer.auth
+    )["entries"]
+    ranked = {e["trader_id"] for e in everyone}
+    assert TESTERS, "the earlier tests made their traders"
+    assert not ranked & TESTERS, "a test trader is on the leaderboard"
+    assert {e["kind"] for e in everyone} <= {"HUMAN", "BOT"}
+    try:
+        http("POST", f"{GATEWAY}/v1/sessions", {"nickname": "B1tch_e2e"})
+        raise AssertionError("a blocklisted nickname joined")
+    except ApiError as refused:
+        assert (refused.status, refused.body["code"]) == (422, "VALIDATION_FAILED")
+    print(f"     {len(TESTERS)} test traders, none of {len(everyone)} ranked traders")
+
+
+TESTERS: set[str] = set()  # trader IDs the tests made
+
 TESTS: list[Callable[[], None]] = [
-    test_join_trade_settle,
+    test_place_trade_settle,
     test_crash_recovery_by_hash,
     test_orphan_rule_is_fail_closed,
     test_bots_keep_a_sound_market,
+    test_test_traders_are_never_ranked,
 ]
 
 

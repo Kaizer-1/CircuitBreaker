@@ -118,6 +118,16 @@ def join(prefix: str) -> Trader:
     return Trader(http("POST", f"{GATEWAY}/v1/sessions", {"nickname": nickname}))
 
 
+def tester(n: int) -> Trader:
+    """A trader for scripts and tests: load-test account `load-NN` (A-03, kind LOAD), never ranked
+    on the leaderboard (Q-11), so test traders never reach the projector. load-01 ... load-10 are
+    chaos-service's; tests use 11 and up. These accounts carry over between runs (until make
+    demo-reset), so checks compare with each one's own portfolio at the start."""
+    if not 11 <= n <= 99:
+        raise ValueError("test traders are load-11 ... load-99")
+    return bot(f"load-{n:02d}")
+
+
 def bot(name: str) -> Trader:
     return Trader(
         http(

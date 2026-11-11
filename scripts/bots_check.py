@@ -5,7 +5,13 @@
   market-data shows (Q-04): best bid < best ask whenever both exist;
 - every ticker has 5s candles with trades in the window, and its last price keeps moving;
 - not one bot order was refused by the exchange (bot_orders_total{result="refused"} stays 0);
-- no service answered a 5xx meanwhile (counted from the containers' JSON access logs).
+- no service answered a 5xx meanwhile (counted from the containers' JSON access logs);
+- every ticker trades at least TRADES_PER_MINUTE_FLOOR times a minute (steady state with the 20
+  bots is about 30 to 45: Phase 3's simulated hour and the Phase 4 event store agree);
+- the book is two-sided (Phase 4): of the best DEPTH_SHOWN levels the dashboard shows, each side
+  has at least MIN_LEVELS on average, the two sides differ by at most MAX_LEVEL_GAP on average,
+  and the four market makers keep at least MIN_MAKER_QUOTES of their four quotes on each side
+  and no more than MAX_MAKER_QUOTES (more means orphaned quotes no bot knows about).
 
 Usage: python3 scripts/bots_check.py [seconds]   (default 60). Prints a summary; exit 1 on failure.
 """
@@ -23,6 +29,13 @@ from typing import Any
 from stack import ENGINE, http
 
 MARKET = "http://localhost:8003"  # market-data-service, dev host port
+TRADES_PER_MINUTE_FLOOR = 10  # per ticker
+DEPTH_SHOWN = 6  # levels per side on the dashboard
+MIN_LEVELS = 3.0
+MAX_LEVEL_GAP = 1.0
+MIN_MAKER_QUOTES = 3.5
+MAX_MAKER_QUOTES = 4.5  # a requote briefly shows the new quote and the old one
+MAKERS = {f"b0b0b0b0-{n:04d}-4000-8000-{n:012d}" for n in range(1, 5)}  # bot-01..04 (roster)
 BOTS = "http://localhost:8005"
 TICKERS = ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY")
 SERVICES = (
@@ -76,6 +89,26 @@ def best_of(book: dict[str, Any], side: str) -> int | None:
     return int(levels[0]["price_paise"]) if levels else None
 
 
+class Sides:
+    """Per ticker: levels and market-maker quotes on each side, summed over the samples."""
+
+    def __init__(self) -> None:
+        self.samples = 0
+        self.levels = {"bids": 0, "asks": 0}
+        self.makers = {"bids": 0, "asks": 0}
+
+    def add(self, book: dict[str, Any]) -> None:
+        self.samples += 1
+        for side in ("bids", "asks"):
+            self.levels[side] += min(len(book[side]), DEPTH_SHOWN)
+            self.makers[side] += sum(
+                o["trader_id"] in MAKERS for lv in book[side] for o in lv["orders"]
+            )
+
+    def mean(self, what: dict[str, int], side: str) -> float:
+        return what[side] / max(self.samples, 1)
+
+
 def main() -> int:
     seconds = float(sys.argv[1]) if len(sys.argv) > 1 else 60
     started = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -85,11 +118,13 @@ def main() -> int:
     }
     samples = problems = 0
     failures: list[str] = []
+    sides = {t: Sides() for t in TICKERS}
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         for ticker in TICKERS:
             engine = http("GET", f"{ENGINE}/internal/v1/books/{ticker}")
             depth = http("GET", f"{MARKET}/v1/market/{ticker}/order-book")
+            sides[ticker].add(engine)
             if crossed(best_of(engine, "bids"), best_of(engine, "asks")):
                 failures.append(f"engine book crossed: {ticker} at sequence {engine['sequence']}")
             if crossed(depth["best_bid_paise"], depth["best_ask_paise"]):
@@ -103,12 +138,32 @@ def main() -> int:
         traded = [c for c in candles["candles"] if c["trade_count"] > 0]
         prices = {c["close_paise"] for c in traded}
         last = http("GET", f"{MARKET}/v1/market/{ticker}/order-book")["as_of_sequence"]
+        per_minute = sum(c["trade_count"] for c in candles["candles"]) * 60 / seconds
+        s = sides[ticker]
+        bids, asks = s.mean(s.levels, "bids"), s.mean(s.levels, "asks")
+        maker_bids, maker_asks = s.mean(s.makers, "bids"), s.mean(s.makers, "asks")
         print(
-            f"  {ticker:<9} {len(traded):>3} of the last {len(candles['candles'])} 5s candles"
-            f" traded, {len(prices)} different closes, {last - first[ticker]} events"
+            f"  {ticker:<9} {per_minute:5.1f} trades/min, {len(traded):>3} of"
+            f" {len(candles['candles'])} 5s candles traded, {len(prices)} closes,"
+            f" {last - first[ticker]} events | levels bid {bids:.1f} ask {asks:.1f},"
+            f" maker quotes bid {maker_bids:.1f} ask {maker_asks:.1f}"
         )
-        if not traded:
-            failures.append(f"{ticker}: no candle with trades in the last {seconds:.0f} s")
+        if per_minute < TRADES_PER_MINUTE_FLOOR:
+            failures.append(
+                f"{ticker}: {per_minute:.1f} trades/min, below {TRADES_PER_MINUTE_FLOOR}"
+            )
+        if min(bids, asks) < MIN_LEVELS or abs(bids - asks) > MAX_LEVEL_GAP:
+            failures.append(f"{ticker}: one-sided book (levels bid {bids:.1f}, ask {asks:.1f})")
+        if max(maker_bids, maker_asks) > MAX_MAKER_QUOTES:
+            failures.append(
+                f"{ticker}: orphaned market-maker quotes"
+                f" (bid {maker_bids:.1f}, ask {maker_asks:.1f} for 4 makers)"
+            )
+        if min(maker_bids, maker_asks) < MIN_MAKER_QUOTES:
+            failures.append(
+                f"{ticker}: market makers not on both sides"
+                f" (bid {maker_bids:.1f}, ask {maker_asks:.1f} of 4)"
+            )
     newly_refused = refused() - refused_before
     if newly_refused:
         failures.append(f"{newly_refused:.0f} bot orders refused by the exchange")
