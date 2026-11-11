@@ -135,3 +135,22 @@ async def test_trades_up_to_a_moment_and_within_a_window_for_time_travel(
     window = await store.trades_between("MONSOON", midnight - 1_000, midnight + 1_000)
     assert [t.sequence for t in window] == [2, 3, 4]  # oldest first, both ends included
     assert await store.trades_between("MONSOON", midnight + 2_000, midnight + 3_000) == []
+
+
+async def test_a_save_too_big_for_one_batch_is_split_with_the_sequence_last(
+    store: CassandraMarketStore, session: Any
+) -> None:
+    """The laptop slept: closing every 5-second bucket since makes thousands of flat candles.
+    Cassandra refuses a batch over 50 KiB (its default); the save must still go through."""
+    hours = 3
+    candles = {
+        ("5s", T + i * 5_000): Candle(T + i * 5_000, 24500, 24500, 24500, 24500, 0, 0)
+        for i in range(hours * 720)
+    }
+    await store.save(Changes("FILMY", 99, T + hours * 3_600_000, 24500, T, None, candles, []))
+    rows = session.execute(
+        "SELECT count(*) FROM candles WHERE ticker = 'FILMY' AND interval = '5s'"
+    ).one()
+    assert rows.count == hours * 720
+    loaded = await store.load("FILMY")
+    assert loaded is not None and loaded.sequence == 99
