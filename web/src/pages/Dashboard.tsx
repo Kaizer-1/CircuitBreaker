@@ -283,7 +283,7 @@ function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
           Volume today <b>{quantity(volume)}</b>
         </span>
         <span className="end">
-          {selected} sequence <b>{quantity(view.seenTrade)}</b>
+          {selected} sequence <b>{quantity(view.book?.as_of_sequence ?? view.seenTrade)}</b>
         </span>
         <span className="attribution">
           Charts by{' '}
