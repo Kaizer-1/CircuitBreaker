@@ -1,6 +1,6 @@
 # web
 
-> **Status:** Phase 4 (in progress). Five screens: **System Status**, the **presenter dashboard** and **time travel**
+> **Status:** Phase 4. Five screens: **System Status**, the **presenter dashboard** and **time travel**
 > for the projector, and the phone's **Join** and **Trade** pages. Each has two skins, Pink Paper (light) and Terminal
 > (dark), on one layout. The chaos panel, agent controls and incident feed arrive in Phase 7.
 

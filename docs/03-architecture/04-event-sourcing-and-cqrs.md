@@ -119,25 +119,102 @@ partition as the order, so the engine answers only after any `OrderPlaced` alrea
 
 Sequence diagram: [01-seeds/03-sequence-diagrams.md §5](../01-seeds/03-sequence-diagrams.md#5-time-travel-and-replay-j-20--q-12-q-13-q-14-q-15).
 
-**Snapshot at time T** (`GET /v1/time-travel/{ticker}?at=T`, Q-12):
+> **Time travel:** showing the market exactly as it was at any past moment, rebuilt from the stored events.
+> **Replay:** playing a stretch of the past forward at a chosen speed, event group by event group.
+> **State hash:** a fingerprint of a whole order book (SHA-256 of a fixed text form of it). Two books with the same
+> hash are identical, order by order; one changed order or quantity gives a completely different hash.
 
-```text
-snapshot   = matching-engine GET /internal/v1/snapshots/{ticker}?at=T     # nearest snapshot ≤ T
-events     = matching-engine GET /internal/v1/events?ticker=…&after_sequence=snapshot.sequence&until=T  (paged)
-book       = OrderBook.from_snapshot(snapshot)
-for e in events: book.apply(e)                                              # apply only, never decide
-candles    = market_data.candles where bucket_start ≤ T
-trades     = market_data.trades_by_ticker where executed_at ≤ T (latest 50)
-return { as_of: T, as_of_sequence: last(events).sequence, book: book.depth(), candles, trades }
+### Rebuilding the market at a moment T (Q-12)
+
+`GET /v1/time-travel/{ticker}?at=T` is answered by market-data-service in five steps:
+
+1. **The nearest snapshot at or before T** (matching-engine Q-15). The engine stores one every 500 events per ticker
+   (policy P-03): the whole book, plus `closed`, every order it had finished or expired by then.
+2. **The events after that snapshot, up to T** (Q-14, `after_sequence` = the snapshot's sequence, `until` = T).
+3. **Apply them to a fresh book, never decide.** `OrderAccepted` adds an order, `TradeExecuted` reduces both orders,
+   `OrderCancelled` removes what is left, `OrderExpired` records a tombstone. There is no matching code in
+   market-data-service (`domain/replay_book.py`), so the past comes out exactly as it was recorded, even if the
+   engine's rules change later.
+4. **Candles and trades up to T** from market-data's own tables: the last 60 one-minute candles (the minute T falls in
+   is recomputed from the trades before T, so it is not "from the future"), the latest 50 trades at or before T, and the
+   last price (the newest trade at or before T, or the reference price before the first trade).
+5. **The state hash** of the rebuilt book, in the canonical form of `api/matching-engine.yaml` (`BookState.state_hash`):
+   the JSON object `{as_of, asks, bids, closed, sequence, ticker}` with sorted keys and no spaces, hashed with SHA-256.
+   The live engine computes the same hash for its own book (Q-16).
+
+### A worked example
+
+CHAIWALA, rebuilt at T = 10:42:15. Shortened order and trader IDs, to keep it readable.
+
+| Step | Sequence | Time | What it says | Book afterwards |
+|---|---|---|---|---|
+| Snapshot (Q-15) | 4000 | 10:41:50.120 | — | bid ₹245.00 × 30 (Raju, `o-1`); ask ₹246.00 × 20 (Meera, `o-2`) |
+| Event | 4001 | 10:42:01.248 | `OrderAccepted` `o-3`: Asha buys 50 at ₹245.50 | bids ₹245.50 × 50, ₹245.00 × 30 |
+| Event | 4002 | 10:42:01.263 | `OrderAccepted` `o-4`: bot-01 sells 20 at ₹245.50 | (it is matching) |
+| Event | 4003 | 10:42:01.263 | `TradeExecuted` 20 at ₹245.50, `o-3` has 30 left, `o-4` has 0 | `o-4` FILLED; bid ₹245.50 × 30 |
+| Event | 4004 | 10:42:09.870 | `OrderCancelled` `o-1` (30) | `o-1` CANCELLED; bid ₹245.50 × 30 only |
+| Not applied | 4005 | 10:42:16.002 | after T | — |
+
+The rebuilt book in canonical form (what is hashed):
+
+```json
+{"as_of":"2026-11-20T10:42:09.870Z","asks":[[24600,[["o-2","meera",20,3996]]]],"bids":[[24550,[["o-3","asha",30,4001]]]],"closed":[["o-1","CANCELLED","raju"],["o-4","FILLED","bot-01"]],"sequence":4004,"ticker":"CHAIWALA"}
 ```
 
-**Replay stream** (`WS /v1/ws/replay/{ticker}?from=…&to=…&speed=…`, Q-13): rebuild the book at `from` as above, then
-walk the events up to `to`, sleeping `(next.occurred_at − current.occurred_at) / speed` between them, and push a
-`frame` after each group of events with the same `causation_id` (one command's effects), so viewers never see a
-half-applied match. Allowed speeds: 1, 2, 5, 10, 60.
+Its SHA-256 is `6e0cb1787948f3c0f9312f73baf60adf70962160eb05f29030bc055461157ea5` (computed by market-data's own
+`ReplayBook` from exactly these inputs; the snapshot alone hashes to `f4811f98…`). If the live engine's book at sequence
+4004 had any difference, even one share or the order of two orders at a price, its hash would not match.
 
-**Time travel never touches live state.** It builds a private copy of the book in memory for that request. Ten people
-can time-travel to ten different moments while the live market keeps trading.
+### Proving it is exact
+
+- **At "now"** (T at or after market-data's latest event for the ticker): market-data first reads the live book from
+  the engine (Q-16: sequence S and its hash), then rebuilds to **exactly** sequence S (`until_sequence`) and compares.
+  The answer carries `verification {live_sequence, live_state_hash, matches}`, and the presenter's screen shows
+  "Verified at sequence S: hashes match". Trading never has to stop: the rebuild stops at S, whatever the bots do next.
+  A `T` up to 2 seconds ahead counts as now, because the browser's clock and the server's are never quite equal.
+- **In the past:** a property test rebuilds at random moments of a random trading history and compares with the live
+  book's hash at that moment; the end-to-end test records the live engine book at three moments while the bots trade
+  and rebuilds each one later from snapshot plus events: same sequence, same hash.
+- **Replays:** the `end` message carries the hash of the book at `to`, equal to Q-12's at `to`; and the frames carry
+  every fill (`trades`), equal to the engine's `TradeExecuted` events in that window, in order (end-to-end test).
+
+### Why snapshots make it fast
+
+Without snapshots a seek near the end of an hour of bot trading would replay every event since the start, about 6,000
+per ticker. With a snapshot every 500 events, a seek never applies more than about 500. Measured on the dev stack over a
+full hour of bot trading (`scripts/time_travel_check.py`): 100 seeks to random moments, **p50 41 ms, p95 70 ms**, the
+slowest 143 ms, never more than 498 events after a snapshot. The brief's target was under 2 seconds.
+
+### Replay (Q-13)
+
+`WS /v1/ws/replay/{ticker}?from=…&to=…&speed=…` rebuilds the book at `from` as above and sends it as the first frame.
+Then it walks the events up to `to` and sends one `frame` per **command**: all events with the same `causation_id`
+(an order's acceptance and its fills), so a viewer never sees half a match. Between frames it waits for the market
+time that passed, divided by the speed (1, 2, 5, 10 or 60). The client can pause, resume and change speed. At the end
+it sends `end` with the state hash at `to`. A replay window is at most 30 minutes; seeking (Q-12) has no such limit.
+
+### Why replay can never affect live trading
+
+1. **It only reads.** market-data-service asks the engine for snapshots, events and the live book with GET requests
+   (Q-14, Q-15, Q-16). It never sends a command, never writes to `orders.v1`, and cannot reach the engine's keyspace.
+2. **A private copy.** Every rebuild and every replay builds its own book in memory, for that one request. The live
+   projection (candles, depth, trades) is a different object that a replay never touches.
+3. **A different process.** Replays run in market-data-service. The single-writer engine only answers reads, which
+   use their own worker thread.
+4. **Bounded cost.** Each market-data replica plays at most 4 replays and runs at most 4 rebuilds at once, one of each
+   kept for the presenter (role admin), so the demo is never refused. Beyond that: `503 OVERLOADED` or close `1013`. A
+   disconnect ends a replay at once; one paused for over 5 minutes is closed.
+5. **Measured.** The end-to-end test plays four replays at once while the bots trade: a fifth viewer is told to come
+   back later, the presenter is not, every live book still verifies, and placing an order stays fast
+   (95th percentile of placing an order: 24 ms without replays, 20 ms during four, on the dev laptop).
+
+### Time travel is not a database backup
+
+A **backup** is a copy of the whole state at the moments it was taken (say, nightly). Restoring one replaces the live
+data and loses everything since. **Time travel** derives any moment, to the exact event, from the history the system
+already keeps, reads it next to the live market without changing it, and proves its result with the hash. They answer
+different questions: "what did the market look like at 10:42:15?" versus "how do we get our data back if the disk
+dies?". Time travel does not replace backups: if the event store itself were lost, so would be the history it reads.
 
 **Rebuilding a read model from scratch** (e.g. after a bug in candle calculation): drop the projection tables and
 re-read the full history from matching-engine's events API — not from Redpanda, whose retention is only 7 days. How each
@@ -176,15 +253,15 @@ A: Separating the model that handles commands from the models that answer querie
 matching-engine with its event store; our read side is market-data-service and portfolio-service, built from
 `matching.v1` events.
 
-**Q: How does time travel work?**
-A: Load the nearest snapshot before time T from matching-engine, fetch the events between that snapshot and T, apply
-them to a fresh in-memory book, and return it along with candles and trades up to T. Live state is never touched.
+**Q: How does time travel work, and how do you know it is exact?**
+A: Take the nearest snapshot at or before T, apply only the stored events up to T to a fresh in-memory book, and hash
+the result. At "now", market-data reads the live engine's sequence and hash first, rebuilds to exactly that sequence and
+compares: "hashes match" on the screen is that comparison.
 
 **Q: Why snapshots?**
-A: Without them, rebuilding a book means replaying every event since the start. A snapshot every 500 events limits any
-rebuild to at most about 500 events.
+A: Without them, every seek replays every event since the start (about 6,000 per ticker after an hour of bot trading).
+A snapshot every 500 events caps that at about 500: seeks measured p50 41 ms, p95 70 ms.
 
-**Q: Why is there only one matching-engine replica — isn't that a single point of failure?**
-A: It's a deliberate trade-off: correctness of price-time priority needs a single writer per ticker. Availability comes
-from fast recovery: Kubernetes restarts it, and it rebuilds from snapshot + events in seconds, while orders wait safely
-in Redpanda.
+**Q: Why can't a replay affect live trading?**
+A: It only reads (GET requests to the engine), on its own copy of the book, in a different service, with at most 4 at a
+time per replica. The end-to-end test runs four at once while the bots trade and checks the live books still verify.

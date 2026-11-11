@@ -1,6 +1,6 @@
 # market-data-service
 
-> **Status:** Phase 4 (in progress) — candles (5s, 1m, 5m), order-book depth, recent trades, last prices,
+> **Status:** Phase 4 — candles (5s, 1m, 5m), order-book depth, recent trades, last prices,
 > `CandleClosed`, the live market WebSocket (Q-06), time travel (Q-12) and replay (Q-13) are built. The chaos hooks
 > (A-12, A-13) are Phase 7, and answer `501` until then. Layout:
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service) (package
@@ -82,8 +82,8 @@ means the check works while bots trade.
 The 1-minute candles and recent trades come from this service's tables; the candle holding `at` is recomputed from the
 trades up to `at`. Each replica rebuilds at most 4 books at once and keeps one of those places for the admin role, so
 the presenter is never refused; beyond that, `503 OVERLOADED`. The book is a private copy: the live projection is never
-touched. `scripts/time_travel_check.py` measures seeks on the running stack (first run, 12 minutes of bot trading:
-p50 36 ms, p95 63 ms; at most 495 events applied after a snapshot).
+touched. `scripts/time_travel_check.py` measures seeks on the running stack (over a full hour of bot trading: 100
+seeks, p50 41 ms, p95 70 ms, slowest 143 ms; never more than 498 events applied after a snapshot).
 
 **Replay (Q-13)** (`application/replay.py`) rebuilds the book at `from` like time travel and sends it as the first
 frame, then walks the stored events up to `to`: one frame per command (same `causation_id`), after waiting the original
@@ -92,6 +92,12 @@ that runs at speed × the wall clock and reacts at once. When market time reache
 book at `to` (equal to Q-12's at `to`). At most 4 replays per replica, one place kept for the admin role (`1013` when
 full); a disconnect or more than 5 minutes paused ends the replay and frees its place. Checked on the running stack: 2
 minutes of bot trading at 60× gave 344 frames in 2.06 s, and the `end` hash equalled Q-12's at `to`.
+
+**Isolation, measured** (`make test-e2e`, 2026-11-12): four replays at once while the 20 bots trade (three traders and
+the presenter; a fourth trader is refused with `1013`, the presenter is not). Placing an order: p95 **24 ms** without
+replays, **20 ms** during the four, so the replays cost the live market nothing visible. Every live book still verified
+afterwards, and each replay ended on the hash Q-12 rebuilds at its `to`. The e2e bound is 500 ms, for slower CI
+runners.
 
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
