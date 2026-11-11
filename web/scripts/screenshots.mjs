@@ -217,7 +217,10 @@ async function timeTravel(theme) {
   await page.screenshot({ path: `${out}/time-travel-${theme}-playing.png` })
 
   await page.getByRole('button', { name: /Back to live/ }).click()
-  await page.getByText('Verified: hashes match', { exact: false }).waitFor({ timeout: 10_000 })
+  await page
+    .getByText(/Verified at sequence [\d,]+: hashes match/)
+    .first()
+    .waitFor({ timeout: 10_000 })
   await page.waitForTimeout(800)
   await assertNothingOverflows(page, `${theme} time travel, live`)
   await page.screenshot({ path: `${out}/time-travel-${theme}-live.png` })
@@ -234,7 +237,7 @@ async function dashboard(theme, url, file) {
   await assertHeroSettles(page, `${theme} dashboard`)
   if (url === lan) {
     // Projector safety: the presenter takes the leaderboard off the screen.
-    await page.getByRole('button', { name: 'Leaderboard on' }).click()
+    await page.getByRole('button', { name: 'Hide leaderboard' }).click()
     await page.waitForTimeout(500)
     await assertNothingOverflows(page, `${theme} dashboard, leaderboard hidden`)
     await page.screenshot({ path: `${out}/dashboard-${theme}-leaderboard-off.png` })

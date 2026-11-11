@@ -72,6 +72,25 @@ function useSession(token: string, ticker: Ticker, everyMs = 30_000): Candle[] {
   return candles
 }
 
+/** The hero's state-hash fact, always saying which sequence a hash belongs to. */
+function hashFact(state: TimeTravelState, stateHash: string | null): string {
+  const short = (hash: string) => `${hash.slice(0, 12)}…`
+  switch (state.mode) {
+    case 'live': {
+      const v = state.verification
+      return v?.matches
+        ? `verified at ${quantity(v.live_sequence)} · ${short(v.live_state_hash)}`
+        : 'not verified yet'
+    }
+    case 'seeking':
+      return 'rebuilding…'
+    case 'playing':
+      return 'computed when paused'
+    default:
+      return stateHash ? short(stateHash) : 'computing…'
+  }
+}
+
 function statusText(state: TimeTravelState): string {
   const v = state.view
   const seq = v ? `sequence ${quantity(v.sequence)}` : ''
@@ -93,16 +112,14 @@ function statusText(state: TimeTravelState): string {
   }
 }
 
-/** The proof: the rebuilt market against the live engine's book, at the same sequence. */
+/** The proof: the rebuilt market against the live engine's book, at the same sequence (which
+ * it names, so it is never confused with the sequence shown elsewhere). */
 function Proof({ verification }: { verification: Verification | null }) {
   if (!verification) return null
   return verification.matches ? (
     <span className="proof up" data-testid="proof">
-      ● Verified: hashes match{' '}
-      <span className="dim">
-        · sequence {quantity(verification.live_sequence)} ·{' '}
-        {verification.live_state_hash.slice(0, 12)}…
-      </span>
+      ● Verified at sequence {quantity(verification.live_sequence)}: hashes match{' '}
+      <span className="dim">· {verification.live_state_hash.slice(0, 12)}…</span>
     </span>
   ) : (
     <span className="proof down" data-testid="proof">
@@ -141,7 +158,7 @@ function Screen({ token, onExpired }: { token: string; onExpired: () => void }) 
         candles: live.candles['5s'],
         book: live.book,
         trades: live.trades,
-        sequence: live.seenTrade,
+        sequence: live.book?.as_of_sequence ?? live.seenTrade, // the book's last event
         stateHash: null,
       }
   const info: Instrument | undefined = instruments.find((i) => i.ticker === ticker)
@@ -261,8 +278,8 @@ function Screen({ token, onExpired }: { token: string; onExpired: () => void }) 
               </button>
             ))}
           </span>
-          <button type="button" onClick={tt.seekNow} disabled={state.mode === 'seeking'}>
-            Rewind to now
+          <button type="button" onClick={tt.verify} disabled={state.mode === 'seeking'}>
+            Verify against live
           </button>
           {past && <Proof verification={state.verification} />}
           {state.error && (
@@ -296,9 +313,11 @@ function Screen({ token, onExpired }: { token: string; onExpired: () => void }) 
             </div>
             <dl className="facts">
               <dt>Sequence</dt>
-              <dd className="num">{quantity(shown.sequence)}</dd>
+              <dd className="num">{state.mode === 'seeking' ? '…' : quantity(shown.sequence)}</dd>
               <dt>State hash</dt>
-              <dd className="num">{shown.stateHash ? `${shown.stateHash.slice(0, 12)}…` : '—'}</dd>
+              <dd className="num" data-testid="state-hash">
+                {hashFact(state, shown.stateHash)}
+              </dd>
             </dl>
           </div>
           <div className="chart-box">

@@ -67,14 +67,10 @@ describe.each(BOTH)('the dashboard leaderboard (%s theme)', (theme) => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       render(<Dashboard />)
-      const toggle = screen.getByRole('button', { name: 'Leaderboard on' })
-      expect(toggle).toHaveAttribute('aria-pressed', 'true')
-      fireEvent.click(toggle)
+      // The label says what the button does (like the theme toggle).
+      fireEvent.click(screen.getByRole('button', { name: 'Hide leaderboard' }))
       expect(screen.queryByRole('region', { name: 'Leaderboard' })).toBeNull()
-      expect(screen.getByRole('button', { name: 'Leaderboard off' })).toHaveAttribute(
-        'aria-pressed',
-        'false',
-      )
+      expect(screen.getByRole('button', { name: 'Show leaderboard' })).toBeInTheDocument()
       expect(localStorage.getItem(KEY)).toBe('hidden')
       expect(screen.getByRole('region', { name: 'Watchlist' })).not.toHaveClass('compact')
       const polls = vi.mocked(api.leaderboard).mock.calls.length

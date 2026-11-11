@@ -23,6 +23,7 @@ export interface TimeTravel {
   state: TimeTravelState
   seek: (at: number) => void
   seekNow: () => void
+  verify: () => void
   play: () => void
   pause: () => void
   setSpeed: (speed: Speed) => void
@@ -133,7 +134,25 @@ export function useTimeTravel(
   const pause = useCallback(() => {
     replay.current?.pause()
     dispatch({ kind: 'pause' })
-  }, [])
+    // The paused book's hash: Q-12 at the same moment rebuilds the same sequence.
+    const view = latest.current.view
+    if (!view) return
+    api
+      .timeTravel(token, ticker, iso(view.at))
+      .then((v) =>
+        dispatch({ kind: 'hashed', sequence: v.as_of_sequence, stateHash: v.state_hash }),
+      )
+      .catch(() => {})
+  }, [ticker, token])
+
+  /** The proof, without leaving what is shown: the market rebuilt at now against the live
+   * engine's book at the same sequence (Q-12 `verification`). */
+  const verify = useCallback(() => {
+    api
+      .timeTravel(token, ticker, iso(now() + NOW_AHEAD_MS))
+      .then((v) => dispatch({ kind: 'verified', verification: v.verification }))
+      .catch((e: unknown) => dispatch({ kind: 'error', message: describe(e) }))
+  }, [now, ticker, token])
 
   const setSpeed = useCallback((speed: Speed) => {
     replay.current?.setSpeed(speed)
@@ -162,5 +181,5 @@ export function useTimeTravel(
 
   useEffect(() => stopReplay, [stopReplay]) // leaving the screen ends the replay at once
 
-  return { state, seek, seekNow, play, pause, setSpeed, backToLive }
+  return { state, seek, seekNow, verify, play, pause, setSpeed, backToLive }
 }

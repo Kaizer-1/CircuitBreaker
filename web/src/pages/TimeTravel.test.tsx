@@ -54,6 +54,7 @@ function show(mode: Mode) {
   const actions = {
     seek: vi.fn(),
     seekNow: vi.fn(),
+    verify: vi.fn(),
     play: vi.fn(),
     pause: vi.fn(),
     setSpeed: vi.fn(),
@@ -109,17 +110,41 @@ describe.each(BOTH)('time travel (%s theme)', (theme) => {
     expect(screen.queryAllByTestId('history-tag')).toEqual([])
     const strip = screen.getByRole('status', { name: 'Live' })
     expect(within(strip).getByTestId('proof')).toHaveTextContent(
-      /Verified: hashes match.*8,794.*ffffffffffff/,
+      /Verified at sequence 8,794: hashes match.*ffffffffffff/,
     )
+    // The hero names the sequence its hash belongs to: never a bare hash beside another number.
+    expect(screen.getByTestId('state-hash')).toHaveTextContent('verified at 8,794 · ffffffffffff…')
   })
 
   it('a rewind to now shows the proof next to the controls; a mismatch would say so', () => {
     show('paused')
-    expect(screen.getByTestId('proof')).toHaveTextContent('Verified: hashes match')
+    expect(screen.getByTestId('proof')).toHaveTextContent(
+      'Verified at sequence 8,794: hashes match',
+    )
     cleanup()
     fake.state = { ...stateIn('paused'), verification: { ...proof, matches: false } }
     render(<TimeTravel />)
     expect(screen.getByTestId('proof')).toHaveTextContent('Hashes differ at sequence 8,794')
+  })
+
+  it.each<[Mode, string]>([
+    ['seeking', 'rebuilding…'],
+    ['paused', 'ffffffffffff…'],
+    ['playing', 'computed when paused'],
+    ['ended', 'ffffffffffff…'],
+  ])('%s: the state hash says what it is', (mode, text) => {
+    show(mode)
+    expect(screen.getByTestId('state-hash')).toHaveTextContent(text)
+    expect(screen.getByRole('status', { name: 'Historical mode' })).toHaveTextContent(
+      mode === 'seeking' ? 'Rebuilding' : '8,794',
+    )
+  })
+
+  it('Verify against live checks without leaving what is shown', () => {
+    const actions = show('paused')
+    fireEvent.click(screen.getByRole('button', { name: 'Verify against live' }))
+    expect(actions.verify).toHaveBeenCalledTimes(1)
+    expect(actions.seekNow).not.toHaveBeenCalled()
   })
 
   it('Space plays and pauses, L goes back to live', () => {

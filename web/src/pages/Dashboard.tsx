@@ -102,14 +102,8 @@ function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
           <span>
             Market open · <b>{clock(now)}</b> IST
           </span>
-          <button
-            type="button"
-            className="theme-toggle"
-            aria-pressed={boardShown}
-            onClick={toggleBoard}
-            title="Key B"
-          >
-            Leaderboard {boardShown ? 'on' : 'off'}
+          <button type="button" className="theme-toggle" onClick={toggleBoard} title="Key B">
+            {boardShown ? 'Hide leaderboard' : 'Show leaderboard'}
           </button>
           <ThemeToggle />
         </div>

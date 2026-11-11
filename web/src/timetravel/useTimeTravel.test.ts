@@ -100,6 +100,7 @@ describe('useTimeTravel', () => {
     expect(replay.options).toMatchObject({ from: iso(T), to: iso(NOW - 1_000), speed: 60 })
 
     act(() => hook.result.current.pause())
+    await waitFor(() => expect(timeTravel).toHaveBeenLastCalledWith('token', 'CHAIWALA', iso(T)))
     act(() => hook.result.current.play()) // resumes the same replay
     act(() => hook.result.current.setSpeed(10))
     expect(replay.sent).toEqual(['pause', 'resume', 'speed 10'])
@@ -162,6 +163,19 @@ describe('useTimeTravel', () => {
     act(() => hook.result.current.play())
     hook.unmount()
     expect(replay.sent).toEqual(['close'])
+  })
+
+  it('verify against live proves the rebuild without changing what is shown', async () => {
+    const { hook } = setup()
+    act(() => hook.result.current.seek(T))
+    await waitFor(() => expect(hook.result.current.state.mode).toBe('paused'))
+    act(() => hook.result.current.verify())
+    await waitFor(() => expect(hook.result.current.state.verification?.matches).toBe(true))
+    expect(timeTravel).toHaveBeenLastCalledWith('token', 'CHAIWALA', iso(NOW + 1_000))
+    expect([hook.result.current.state.mode, hook.result.current.state.view?.at]).toEqual([
+      'paused',
+      T,
+    ])
   })
 
   it('nothing to replay at now', async () => {

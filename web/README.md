@@ -26,8 +26,8 @@ React + Vite + TypeScript single-page app with TradingView Lightweight Charts. E
 - **Presenter dashboard:** the five tickers in a watchlist, the selected one big (keys 1–5 choose it), 5-second candles,
   the order book (best 6 levels), the trades tape, the join QR code, and a status bar (health, live streams, volume).
   Beside the watchlist, the **leaderboard**: the top five human traders by net worth (Q-11, polled every 2 s; ties share
-  a rank). Projector safety: the header's **Leaderboard on/off** button (or key B) takes it off the screen, the choice
-  is remembered on this device, and a hidden leaderboard is not polled.
+  a rank). Projector safety: the header's **Hide leaderboard** / **Show leaderboard** button (or key B) takes it off
+  the screen, the choice is remembered on this device, and a hidden leaderboard is not polled.
 - **Trade:** net worth and P&L (live over Q-10), one stock's price and chart, the order ticket (LIMIT or MARKET, BUY or
   SELL; it applies the exchange's rules before sending: tick 5 paise, quantity 1–10,000, available cash or shares),
   open orders with cancel, and holdings. Every touch target is at least 44 px, for one-handed use.
@@ -69,10 +69,15 @@ stays the browser's reload).
 - **Seek** (Q-12): the book, last price, trades and state hash at that moment. The chart's 5-second candles come from
   Q-03 up to that moment, the one holding it rebuilt from the trades so far (`candlesUpTo`).
 - **Play** (Q-13) from the moment shown at 1×, 2×, 5×, 10× or 60×, for up to 30 minutes; pause, resume and speed
-  changes take effect at once. A replay that closes is not reopened; the screen says why (for example, a full replica).
-- **The proof.** "Rewind to now" and "Back to live" ask Q-12 for now (one second ahead: market-data counts up to two
-  seconds ahead as now) and show **Verified: hashes match**, the live engine's sequence and hash. When a replay ends,
-  its end hash is compared with Q-12 at the same moment.
+  changes take effect at once. Every fill of each replayed command goes on the tape, so it shows what the live market
+  showed. A replay that closes is not reopened; the screen says why (for example, a full replica).
+- **The proof.** **Verify against live** (and **Back to live**) ask Q-12 for now (one second ahead: market-data counts
+  up to two seconds ahead as now) and show **Verified at sequence N: hashes match** with the live engine's hash,
+  without changing what is shown. Dragging the timeline to its right edge (or End) rebuilds now instead. When a replay
+  ends, its end hash is compared with Q-12 at the same moment.
+- **One sequence, labelled hashes.** The hero, the banner and the status bar all show the same sequence: the shown
+  book's last event. A hash always says which sequence it belongs to: live, "verified at N"; paused, the hash of the
+  shown sequence (a replay paused mid-way asks Q-12 for it); while playing, "computed when paused".
 - **Never mistaken for live.** In every past state (seeking, paused, playing, ended) a banner sits under the header —
   paper: "From the archives · _date, time_"; terminal: amber `HISTORICAL MODE · time` — with **Back to live**, and every
   panel's title carries a tag; in the terminal skin the panels' outlines turn amber. A test renders every state in both
