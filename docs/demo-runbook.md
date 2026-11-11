@@ -11,12 +11,12 @@
 
 | Step | Command or action | Why |
 |---|---|---|
-| 1 | Laptop on power, **sleep and screen lock off** | A sleeping laptop freezes Docker. On waking, market-data has every missed 5-second candle to close (it saves them in chunks since Phase 4) and the bots' 12-hour sessions may have run out (they sign in again since Phase 4); both recover, but the market stalls meanwhile |
+| 1 | Laptop on power; in a spare terminal run **`caffeinate -dims`** and leave it running until the demo ends | macOS then never sleeps (`-d` display, `-i` idle, `-m` disk, `-s` system on power). A sleeping laptop freezes Docker: on waking, market-data has every missed 5-second candle to close (it saves them in chunks since Phase 4) and the bots' 12-hour sessions may have run out (they sign in again since Phase 4); both recover, but the market stalls meanwhile. `Ctrl+C` ends it |
 | 2 | Join the phone hotspot; set `PUBLIC_BASE_URL` to the laptop's address on it | The QR code must point where phones can reach ([developer setup §10](08-developer-setup.md#10-phones-on-a-hotspot-demo-day)) |
-| 3 | `CONFIRM=yes make demo-reset` | Wipes all data, starts everything and checks the clean start: five empty books, only the seeded accounts, no humans. Rehearsal traders, test accounts and leftover orders are gone, and the leaderboard starts empty |
+| 3 | **A person** runs `CONFIRM=yes make demo-reset` | Wipes all data, starts everything and checks the clean start: five empty books, only the seeded accounts, no humans. Rehearsal traders, test accounts and leftover orders are gone, and the leaderboard starts empty. Data-wiping commands are run by a person, never by a script or an assistant |
 | 4 | `make bots` | The 20 bots: the market moves and the books fill |
 | 5 | Wait at least **5 minutes** | Time travel needs a history to scrub through, and the timeline marks the biggest moves |
-| 6 | `python3 scripts/bots_check.py 120` | Every ticker trades at least 10 times a minute, the book is two-sided, nothing crossed, no refused bot order, no 5xx |
+| 6 | `python3 scripts/bots_check.py 120` | The market trades at least 5 times a minute per ticker (20 to 50 is normal), the book is two-sided, every price is within ±10% of its reference, nothing crossed, no refused bot order, no 5xx. For a full rehearsal, `python3 scripts/bots_check.py 1800` checks the band over 30 minutes |
 | 7 | `python3 scripts/time_travel_check.py 5 5` | Seeks answer fast and all five tickers say "hashes match" against the live engine |
 | 8 | Projector: `/dashboard?theme=paper` (or `terminal` in a dim room), sign in with the presenter passcode | The QR box must not warn about localhost |
 
@@ -55,6 +55,10 @@ Found while building, outside the frozen design, to reconsider in Phase 8 or aft
 **Q: Why reset everything before a demo?**
 A: `make demo-reset` gives every rehearsal and the demo the same starting state: no test accounts on the leaderboard,
 no orders left from earlier runs, an empty history. A script checks that state, so we know rather than hope.
+
+**Q: Why `caffeinate`?**
+A: A laptop that sleeps pauses every container. The system recovers on waking (Phase 4 fixed the two ways it used to
+freeze), but the audience would see a stalled market. `caffeinate -dims` keeps macOS awake for as long as it runs.
 
 **Q: Why wait five minutes after starting the bots?**
 A: Time travel shows the past, so there must be one: a few minutes of trading gives the timeline real moves to mark

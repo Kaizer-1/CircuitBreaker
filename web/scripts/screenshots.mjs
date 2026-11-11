@@ -9,9 +9,9 @@
 // default the hotspot example from docs/08-developer-setup.md), and dashboard-<theme>-qr-warning.png
 // shows the warning the presenter sees when PUBLIC_BASE_URL is localhost.
 //
-// It fails, rather than taking a shot, if anything overflows its container (or the screen), if
-// the last item on the phone hides behind the terminal skin's tabs, or if the hero price does not
-// return to its normal colour after a flash.
+// It fails, rather than taking a shot, if anything overflows its container (or the screen), if a
+// hero label wraps onto two lines, if the last item on the phone hides behind the terminal skin's
+// tabs, or if the hero price does not return to its normal colour after a flash.
 // Uses the installed Google Chrome (Playwright's "chrome" channel): nothing to download.
 //   node scripts/screenshots.mjs <output dir> [base URL, default http://localhost:5173]
 import { mkdirSync } from 'node:fs'
@@ -81,6 +81,20 @@ async function assertNothingOverflows(page, what) {
     return bad
   })
   if (found.length) throw new Error(`${what}: overflow\n  ${found.slice(0, 12).join('\n  ')}`)
+}
+
+/** Labels that must stay on one line: the hero's change, its fact names and values (Phase 4
+ * review: on paper "on the day" wrapped and "State hash" broke in two beside a long hash). */
+async function assertHeroLabelsOnOneLine(page, what) {
+  const wrapped = await page.evaluate(() =>
+    [...document.querySelectorAll('.hero .change small, .hero .facts dt, .hero .facts dd')]
+      .filter((e) => {
+        const line = parseFloat(getComputedStyle(e).lineHeight) || e.getBoundingClientRect().height
+        return e.getBoundingClientRect().height > line * 1.5
+      })
+      .map((e) => `"${(e.textContent ?? '').trim()}"`),
+  )
+  if (wrapped.length) throw new Error(`${what}: wraps onto two lines: ${wrapped.join(', ')}`)
 }
 
 /** The terminal skin's tabs are fixed at the bottom: the page must leave room under its last item. */
@@ -207,6 +221,7 @@ async function timeTravel(theme) {
   await page.getByText(/Paused · sequence/).waitFor()
   await page.waitForTimeout(800)
   await assertNothingOverflows(page, `${theme} time travel, paused`)
+  await assertHeroLabelsOnOneLine(page, `${theme} time travel, paused`)
   await page.screenshot({ path: `${out}/time-travel-${theme}-historical.png` })
 
   await page.getByRole('button', { name: '10×' }).click()
@@ -214,6 +229,7 @@ async function timeTravel(theme) {
   await page.getByText(/Replaying at 10×/).waitFor()
   await page.waitForTimeout(4000)
   await assertNothingOverflows(page, `${theme} time travel, replaying`)
+  await assertHeroLabelsOnOneLine(page, `${theme} time travel, replaying`)
   await page.screenshot({ path: `${out}/time-travel-${theme}-playing.png` })
 
   await page.getByRole('button', { name: /Back to live/ }).click()
@@ -223,6 +239,7 @@ async function timeTravel(theme) {
     .waitFor({ timeout: 10_000 })
   await page.waitForTimeout(800)
   await assertNothingOverflows(page, `${theme} time travel, live`)
+  await assertHeroLabelsOnOneLine(page, `${theme} time travel, live`)
   await page.screenshot({ path: `${out}/time-travel-${theme}-live.png` })
   await desk.close()
 }
@@ -233,6 +250,7 @@ async function dashboard(theme, url, file) {
   await page.goto(`${base}/dashboard?theme=${theme}`)
   await page.waitForTimeout(7000) // the streams' snapshots, a few trades and book updates
   await assertNothingOverflows(page, `${theme} dashboard`)
+  await assertHeroLabelsOnOneLine(page, `${theme} dashboard`)
   await page.screenshot({ path: `${out}/${file}` })
   await assertHeroSettles(page, `${theme} dashboard`)
   if (url === lan) {

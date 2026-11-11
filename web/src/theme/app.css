@@ -416,6 +416,7 @@ td:first-child {
   font-size: 0.55em;
   color: var(--text-2);
   font-weight: 500;
+  white-space: nowrap;
 }
 .hero .facts {
   margin-left: auto;
@@ -426,6 +427,7 @@ td:first-child {
   font-size: 1.05em;
 }
 .hero .facts dt {
+  white-space: nowrap;
   font-family: var(--font-label);
   color: var(--text-3);
   letter-spacing: var(--label-tracking);
@@ -1301,4 +1303,21 @@ td:first-child {
 }
 :root[data-theme='paper'] .dash.time-travel .hero .price {
   font-size: 6em;
+}
+/* Paper's ₹ sign and wider lettering leave no room beside the price for the sequence and the
+   hash (the change wrapped, "State hash" broke in two): on the time-travel screen they get their
+   own row under it. The terminal skin keeps them beside the price. */
+:root[data-theme='paper'] .dash.time-travel .hero {
+  flex-wrap: wrap;
+  row-gap: 0.1em;
+}
+:root[data-theme='paper'] .dash.time-travel .hero .facts {
+  flex-basis: 100%;
+  margin-left: 0;
+  grid-template-columns: auto auto auto 1fr;
+  align-items: baseline;
+  padding-bottom: 0.45em;
+}
+:root[data-theme='paper'] .dash.time-travel .hero .facts dt:nth-of-type(2) {
+  margin-left: 1.4em;
 }
