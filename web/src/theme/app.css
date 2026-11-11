@@ -1321,3 +1321,6 @@ td:first-child {
 :root[data-theme='paper'] .dash.time-travel .hero .facts dt:nth-of-type(2) {
   margin-left: 1.4em;
 }
+:root[data-theme='paper'] .dash.time-travel .hero .facts dd {
+  text-align: left; /* each value next to its own label, not pushed to the far edge */
+}
