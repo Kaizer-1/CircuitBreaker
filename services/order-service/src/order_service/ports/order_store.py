@@ -16,10 +16,16 @@ class OutboxEntry:
     order_id: str
     ticker: str
     event: EventEnvelope
+    written_at: str | None = None  # when the row was written, if not with the event (a re-send)
 
     @property
     def event_type(self) -> str:
         return self.event.event_type
+
+    @property
+    def row_at(self) -> str:
+        """The row's place in the outbox: when it was written."""
+        return self.written_at or self.event.occurred_at
 
 
 class OrderStore(Protocol):
@@ -39,10 +45,16 @@ class OrderStore(Protocol):
 
     async def add_outbox(self, entry: OutboxEntry) -> None: ...
 
-    async def find_event(self, order_id: str, event_type: str) -> EventEnvelope | None: ...
+    async def find_event(self, order_id: str, event_type: str) -> EventEnvelope | None:
+        """The order's newest stored event of this type."""
 
-    async def pending_outbox(self, since: str) -> list[OutboxEntry]:
-        """Unpublished rows written at or after `since`, oldest first."""
+    async def requeue(self, entry: OutboxEntry) -> None:
+        """Put an already stored event back in the outbox, as a row written at entry.written_at
+        (a retried A-07 or A-19 sends the same request again)."""
+
+    async def pending_outbox(self, settled_before: str) -> list[OutboxEntry]:
+        """Every unpublished row, however old, oldest first. No row is written before
+        `settled_before` any more, so the store may skip what it found empty before it."""
 
     async def mark_published(self, entry: OutboxEntry) -> None: ...
 

@@ -81,16 +81,26 @@ async def test_the_money_is_released_only_when_the_engine_answers(
     assert (await service.portfolio(raju))["reserved_cash_paise"] == 0
 
 
-async def test_an_expiry_is_asked_for_once(
+async def test_an_unanswered_expiry_is_asked_for_again_every_5_minutes_until_answered(
     store: InMemoryPortfolioStore, orders: FakeOrderService, clock: Clock
 ) -> None:
-    await orphan(store, clock)
+    # The request may have been lost after it left order-service; A-19 sends the same request
+    # again (one event_id), so asking again is safe. Money stays reserved meanwhile.
+    service, raju = await orphan(store, clock)
     clock.now += timedelta(seconds=130)
     s = sweeper(store, orders, clock)
     await s.sweep_once()
-    clock.now += timedelta(seconds=60)
+    clock.now += timedelta(seconds=299)
     assert await s.sweep_once() == 0
-    assert len(orders.requests) == 1
+    for _ in range(3):  # an hour of silence would mean 12 more requests
+        clock.now += timedelta(seconds=301)
+        assert await s.sweep_once() == 1
+    assert len(orders.requests) == 4
+    assert (await service.portfolio(raju))["reserved_cash_paise"] == 1_230_000
+    await service.apply_event(expired(1, raju))
+    clock.now += timedelta(minutes=10)
+    assert await s.sweep_once() == 0
+    assert (await service.portfolio(raju))["reserved_cash_paise"] == 0
 
 
 async def test_if_order_service_is_down_the_next_cycle_asks_again(

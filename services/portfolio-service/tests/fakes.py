@@ -77,14 +77,16 @@ class InMemoryTx:
     async def save_reservation(self, reservation: Reservation) -> None:
         self.s.reservations[reservation.order_id] = replace(reservation)
 
-    async def unconfirmed_reservations(self, created_before: str) -> list[Reservation]:
-        cut = parse_timestamp(created_before)
+    async def unconfirmed_reservations(
+        self, created_before: str, asked_before: str
+    ) -> list[Reservation]:
+        cut, asked = parse_timestamp(created_before), parse_timestamp(asked_before)
         return [
             replace(r)
             for r in self.s.reservations.values()
             if r.status is ReservationStatus.ACTIVE
             and not r.confirmed
-            and r.expiry_requested_at is None
+            and (r.expiry_requested_at is None or parse_timestamp(r.expiry_requested_at) <= asked)
             and parse_timestamp(r.created_at) <= cut
         ]
 

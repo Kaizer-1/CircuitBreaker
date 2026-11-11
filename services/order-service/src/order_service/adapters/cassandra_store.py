@@ -2,6 +2,13 @@
 
 Writes that must happen together (an order, its first event and its outbox row) are one LOGGED
 batch. The driver is synchronous, so every call runs in a worker thread.
+
+The outbox has one partition per minute, so the relay reads small partitions and never the
+tombstones of rows published long ago. It starts reading at a saved cursor, the oldest minute that
+may still hold a row, and moves the cursor only past minutes it has read and found empty. A row is
+only ever written at "now", so a minute that is settled (older than the relay's margin) and empty
+stays empty; one that still holds rows is read again on every pass until they are gone. That is
+how a row is found however old it is.
 """
 
 import asyncio
@@ -40,7 +47,10 @@ QUERIES = {
     "select_events": "SELECT event_type, payload FROM order_events WHERE order_id = ?",
     "insert_outbox": "INSERT INTO outbox (bucket, occurred_at, event_id, order_id, ticker,"
     " payload) VALUES (?, ?, ?, ?, ?, ?)",
-    "select_outbox": "SELECT * FROM outbox WHERE bucket = ? AND occurred_at >= ?",
+    "select_outbox": "SELECT * FROM outbox WHERE bucket = ?",
+    "select_cursor": "SELECT bucket FROM outbox_cursor WHERE name = 'relay'",
+    "save_cursor": "INSERT INTO outbox_cursor (name, bucket) VALUES ('relay', ?)",
+    "outbox_buckets": "SELECT DISTINCT bucket FROM outbox",
     "delete_outbox": "DELETE FROM outbox WHERE bucket = ? AND occurred_at = ? AND event_id = ?",
     "claim_key": "INSERT INTO orders_by_idempotency_key (trader_id, idempotency_key, order_id)"
     " VALUES (?, ?, ?) IF NOT EXISTS",
@@ -97,6 +107,15 @@ def _utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
+def _outbox_entry(row: Any) -> OutboxEntry:
+    event = EventEnvelope.from_json(row.payload.encode())
+    written = _utc(row.occurred_at)
+    same = written == parse_timestamp(event.occurred_at)
+    return OutboxEntry(
+        row.order_id, row.ticker, event, written_at=None if same else format_timestamp(written)
+    )
+
+
 def _order(row: Any) -> Order:
     return Order(
         order_id=row.order_id,
@@ -126,6 +145,9 @@ class CassandraOrderStore:
         self._session = session
         self._q: dict[str, Any] = {}
         self._scan_slots = asyncio.Semaphore(SCAN_READS_AT_ONCE)
+        self._held: list[int] = []  # settled minutes that still held rows at the last read
+        self._read_to: int | None = None  # every settled minute up to this one has been read
+        self._cursor: int | None = None  # as last saved
 
     async def _run(self, query: Any, params: Sequence[Any] = ()) -> list[Any]:
         return await asyncio.to_thread(lambda: list(self._session.execute(query, params)))
@@ -156,7 +178,7 @@ class CassandraOrderStore:
         return "insert_event", (order_id, at, event.event_id, event.event_type, payload, False)
 
     def _outbox_row(self, entry: OutboxEntry) -> tuple[str, tuple[Any, ...]]:
-        at = parse_timestamp(entry.event.occurred_at)
+        at = parse_timestamp(entry.row_at)
         payload = entry.event.to_json().decode()
         params = (bucket_of(at), at, entry.event.event_id, entry.order_id, entry.ticker, payload)
         return "insert_outbox", params
@@ -269,33 +291,57 @@ class CassandraOrderStore:
         await self._batch([self._event_row(entry.order_id, entry.event), self._outbox_row(entry)])
 
     async def find_event(self, order_id: str, event_type: str) -> EventEnvelope | None:
-        for row in await self._run(self._q["select_events"], (order_id,)):
-            if row.event_type == event_type:
-                return EventEnvelope.from_json(row.payload.encode())
-        return None
+        payloads = [
+            row.payload
+            for row in await self._run(self._q["select_events"], (order_id,))
+            if row.event_type == event_type
+        ]
+        return EventEnvelope.from_json(payloads[-1].encode()) if payloads else None
 
-    async def pending_outbox(self, since: str) -> list[OutboxEntry]:
-        start = parse_timestamp(since)
+    async def requeue(self, entry: OutboxEntry) -> None:
+        await self._batch([self._outbox_row(entry)])
+
+    async def pending_outbox(self, settled_before: str) -> list[OutboxEntry]:
+        settled = bucket_of(parse_timestamp(settled_before))  # minutes before it get no new rows
         last = bucket_of(datetime.now(UTC) + timedelta(minutes=1))
+        if self._read_to is None:
+            self._read_to = await self._start(settled) - 1
         found: list[OutboxEntry] = []
-        for bucket in range(bucket_of(start), last + 1):
-            for row in await self._run(self._q["select_outbox"], (bucket, start)):
-                event = EventEnvelope.from_json(row.payload.encode())
-                found.append(OutboxEntry(row.order_id, row.ticker, event))
+        held: list[int] = []
+        for bucket in self._held + list(range(self._read_to + 1, last + 1)):
+            rows = await self._run(self._q["select_outbox"], (bucket,))
+            if rows and bucket < settled:
+                held.append(bucket)
+            found += [_outbox_entry(row) for row in rows]
+        self._held, self._read_to = held, max(self._read_to, settled - 1)
+        cursor = held[0] if held else settled
+        if cursor != self._cursor:
+            await self._run(self._q["save_cursor"], (cursor,))
+            self._cursor = cursor
         return found
 
+    async def _start(self, settled: int) -> int:
+        """Where the relay stopped last time. With no cursor yet (a store from before Phase 4),
+        the oldest minute that holds a row: one scan of the partition keys, once."""
+        rows = await self._run(self._q["select_cursor"])
+        if rows:
+            self._cursor = rows[0].bucket
+            return int(rows[0].bucket)
+        return min((r.bucket for r in await self._run(self._q["outbox_buckets"])), default=settled)
+
     async def mark_published(self, entry: OutboxEntry) -> None:
-        at = parse_timestamp(entry.event.occurred_at)
+        row_at = parse_timestamp(entry.row_at)
+        occurred_at = parse_timestamp(entry.event.occurred_at)
         statements: list[tuple[str, tuple[Any, ...]]] = [
-            ("delete_outbox", (bucket_of(at), at, entry.event.event_id)),
-            ("event_published", (entry.order_id, at, entry.event.event_id)),
+            ("delete_outbox", (bucket_of(row_at), row_at, entry.event.event_id)),
+            ("event_published", (entry.order_id, occurred_at, entry.event.event_id)),
         ]
         if entry.event_type == "OrderPlaced":
             statements.append(("set_published", (entry.order_id,)))
         await self._batch(statements)
 
     async def drop_outbox(self, entry: OutboxEntry) -> None:
-        at = parse_timestamp(entry.event.occurred_at)
+        at = parse_timestamp(entry.row_at)
         await self._run(self._q["delete_outbox"], (bucket_of(at), at, entry.event.event_id))
 
     async def is_processed(self, event_id: str) -> bool:

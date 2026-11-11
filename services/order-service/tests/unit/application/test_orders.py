@@ -233,8 +233,33 @@ async def test_a_cancel_is_requested_once_and_published_after_the_order(w: World
     cancelled = await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
     assert cancelled.cancel_requested
     assert w.publisher.types() == ["OrderPlaced", "OrderCancelRequested"]
-    with pytest.raises(NotCancellableError, match="already pending"):
-        await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+
+
+async def test_a_retried_cancel_sends_the_same_request_again_and_is_accepted(w: World) -> None:
+    # The engine has not answered (the first copy may be stuck or lost): A-07 again re-sends it,
+    # with the same event_id, so the engine cancels once. Before Phase 4 this was 409.
+    order = await w.place()
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+    w.clock.now += timedelta(minutes=30)
+    again = await w.orders.cancel(RAJU, order.order_id, correlation_id="c2")
+    assert again.cancel_requested and again.status is OrderStatus.PENDING
+    _, first, second = (e for _, _, e in w.publisher.sent)
+    assert (second.event_type, second.event_id) == ("OrderCancelRequested", first.event_id)
+    assert w.store.outbox == []
+
+
+async def test_a_retried_cancel_while_redpanda_is_down_waits_in_the_outbox(w: World) -> None:
+    order = await w.place()
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+    w.publisher.down = True
+    w.clock.now += timedelta(minutes=20)
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c2")
+    [requeued] = w.store.outbox
+    assert requeued.written_at == "2026-11-20T11:02:01.248Z"  # a fresh row, the same event
+    w.publisher.down = False
+    w.clock.now += timedelta(seconds=6)
+    assert await w.relay.run_once() == 1
+    assert [e.event_type for _, _, e in w.publisher.sent[-1:]] == ["OrderCancelRequested"]
 
 
 async def test_a_cancel_never_overtakes_an_unpublished_order(w: World) -> None:
@@ -299,15 +324,21 @@ async def test_listing_is_newest_first_with_filters_and_pages(w: World) -> None:
 
 
 async def test_an_expiry_request_is_idempotent_with_a_deterministic_event_id(w: World) -> None:
+    # Asked again (the sweeper re-asks while the engine has not answered), the same request is
+    # sent again: one event_id, so the engine handles it once.
     first = await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CHAIWALA")
     w.clock.now += timedelta(seconds=30)
     again = await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CHAIWALA")
     assert again.requested_at == first.requested_at
-    [(_, key, event)] = w.publisher.sent
-    assert key == "CHAIWALA"
-    assert event.event_id == deterministic_event_id(
-        "https://circuitbreaker.local/order-expiry/6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f"
-    )  # the catalog's example ID: a3b049e7-…
+    assert {(key, event.event_id) for _, key, event in w.publisher.sent} == {
+        (
+            "CHAIWALA",
+            deterministic_event_id(
+                "https://circuitbreaker.local/order-expiry/6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f"
+            ),  # the catalog's example ID: a3b049e7-…
+        )
+    }
+    assert len(w.publisher.sent) == 2 and w.store.outbox == []
 
 
 async def test_an_expiry_for_a_stored_but_never_published_order_rejects_it_first(w: World) -> None:

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from order_service.config import Settings
+from order_service.domain.order import OrderStatus
 from order_service.main import create_app
 from tests.unit.application.test_orders import MEERA, RAJU, World
 
@@ -97,7 +98,7 @@ def test_the_idempotency_key_header_makes_retries_safe(client: TestClient) -> No
     assert first.json()["order_id"] == again.json()["order_id"]
 
 
-def test_get_list_and_cancel(client: TestClient) -> None:
+def test_get_list_and_cancel(client: TestClient, world: World) -> None:
     order_id = place(client).json()["order_id"]
     assert client.get(f"/v1/orders/{order_id}", headers=ME).json()["order_id"] == order_id
     assert client.get(f"/v1/orders/{order_id}", headers={"X-Trader-Id": MEERA}).status_code == 404
@@ -105,11 +106,15 @@ def test_get_list_and_cancel(client: TestClient) -> None:
     assert [o["order_id"] for o in listed["items"]] == [order_id] and listed["next_cursor"] is None
     cancelled = client.delete(f"/v1/orders/{order_id}", headers=ME)
     assert (cancelled.status_code, cancelled.json()["cancel_requested"]) == (202, True)
-    again = client.delete(f"/v1/orders/{order_id}", headers=ME)
-    assert (again.status_code, again.json()["code"]) == (409, "ORDER_NOT_CANCELLABLE")
+    again = client.delete(f"/v1/orders/{order_id}", headers=ME)  # a retry re-sends the cancel
+    assert (again.status_code, again.json()["cancel_requested"]) == (202, True)
     assert (
         client.delete(f"/v1/orders/{order_id}", headers={"X-Trader-Id": MEERA}).status_code == 404
     )
+    world.store.orders[order_id].status = OrderStatus.CANCELLED
+    finished = client.delete(f"/v1/orders/{order_id}", headers=ME)
+    assert (finished.status_code, finished.json()["code"]) == (409, "ORDER_NOT_CANCELLABLE")
+    assert finished.json()["detail"].endswith("is already CANCELLED.")
 
 
 def test_listing_validates_its_parameters(client: TestClient) -> None:

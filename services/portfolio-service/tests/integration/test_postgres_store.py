@@ -99,10 +99,15 @@ async def test_orphan_candidates_and_the_human_nickname_rule(store: PostgresPort
     raju = (await service.open_account("RajuTrader", AccountKind.HUMAN))[0].trader_id
     await service.create_reservation(buy(1, raju, 1, 24600))
     async with store.transaction() as tx:
-        assert [
-            r.order_id for r in await tx.unconfirmed_reservations("2999-01-01T00:00:00.000Z")
-        ] == [oid(1)]
-        assert await tx.unconfirmed_reservations("2000-01-01T00:00:00.000Z") == []
+        never, later = "2000-01-01T00:00:00.000Z", "2999-01-01T00:00:00.000Z"
+        assert [r.order_id for r in await tx.unconfirmed_reservations(later, never)] == [oid(1)]
+        assert await tx.unconfirmed_reservations(never, never) == []
+        asked = await tx.reservation(oid(1), lock=True)
+        assert asked is not None
+        asked.expiry_requested_at = "2026-11-20T10:44:00.000Z"
+        await tx.save_reservation(asked)
+        assert await tx.unconfirmed_reservations(later, "2026-11-20T10:43:59.999Z") == []
+        assert len(await tx.unconfirmed_reservations(later, "2026-11-20T10:49:00.000Z")) == 1
     with pytest.raises(NicknameTakenError):
         await service.open_account("RajuTrader", AccountKind.HUMAN)
 

@@ -83,7 +83,8 @@ finished or expired order ID (so cancel rejections and tombstones give the same 
 | `orders_by_id` | `order_id` | — | Q-08 Get one order |
 | `orders_by_trader` | `trader_id` | `placed_at DESC, order_id DESC` | Q-07 List my orders, newest first |
 | `order_events` | `order_id` | `occurred_at ASC` | Order history; outbox (column `published` boolean) |
-| `outbox` | `bucket` (minutes since 1970) | `occurred_at ASC, event_id` | "Which events are not yet published?" for the relay; a row is deleted once published. `order_events` alone cannot answer this: it is partitioned by order |
+| `outbox` | `bucket` (minutes since 1970) | `occurred_at ASC, event_id` | "Which events are not yet published?" for the relay; a row is deleted once published. `order_events` alone cannot answer this: it is partitioned by order. `occurred_at` is when the row was written (a retried cancel or expiry is a fresh row of the same event) |
+| `outbox_cursor` | `name` (one row, `relay`) | — | "From which minute must the relay read?" The oldest minute that may still hold an unpublished row, so a cancel or expiry request is found however old it is ([ADR-0017 note](../adr/0017-fail-closed-orphan-release.md#note-no-time-limit-for-cancels-and-expiries-phase-4)) |
 | `orders_by_idempotency_key` | `(trader_id, idempotency_key)` | — | "Did this trader already send this `Idempotency-Key`?" (24 h TTL, claimed with a lightweight transaction) |
 | `processed_events` | `event_id` | — | Idempotent consumption of `matching.v1` |
 
@@ -115,7 +116,7 @@ every table can be dropped and rebuilt from the event store ([read side](08-read
 |---|---|---|
 | `accounts` | `trader_id` (PK), `nickname` (UNIQUE) | `kind` (`HUMAN`, `BOT`, `LOAD`), `cash_paise`, `reserved_cash_paise`, `CHECK (cash_paise >= reserved_cash_paise AND reserved_cash_paise >= 0)` |
 | `holdings` | `(trader_id, ticker)` | `quantity`, `reserved_quantity`, `avg_cost_paise`, `CHECK (quantity >= reserved_quantity AND reserved_quantity >= 0)` |
-| `reservations` | `reservation_id`; UNIQUE `order_id` | `side`, `ticker`, `reserved_cash_paise` or `reserved_quantity`, remaining amounts, `status` (`ACTIVE`, `RELEASED`, `CONSUMED`), `confirmed` (`OrderAccepted` seen), `expiry_requested_at` (the fail-closed sweeper asked for an expiry, [ADR-0017](../adr/0017-fail-closed-orphan-release.md)) |
+| `reservations` | `reservation_id`; UNIQUE `order_id` | `side`, `ticker`, `reserved_cash_paise` or `reserved_quantity`, remaining amounts, `status` (`ACTIVE`, `RELEASED`, `CONSUMED`), `confirmed` (`OrderAccepted` seen), `expiry_requested_at` (when the fail-closed sweeper last asked for an expiry; it asks again every 5 minutes until the engine answers, [ADR-0017](../adr/0017-fail-closed-orphan-release.md)) |
 | `settlements` | `(trade_id, trader_id)` | One row per side of each trade, for the trader's history |
 | `last_prices` | `ticker` | Copy of last traded price, used for valuation and market-order protection price |
 | `processed_events` | `event_id` | Idempotency: inserted in the same transaction as the change it caused |

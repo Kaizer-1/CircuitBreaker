@@ -3,55 +3,20 @@
 Run with `uv run pytest -m integration --no-cov` (Docker needed).
 """
 
-from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from testcontainers.community.cassandra import CassandraContainer
 
-from order_service.adapters.cassandra_store import CassandraOrderStore
+from order_service.adapters.cassandra_store import CassandraOrderStore, bucket_of
 from order_service.domain.order import Order, OrderStatus, OrderType, Side
-from order_service.events.orders import order_placed
+from order_service.events.orders import order_cancel_requested, order_placed
 from order_service.ports.order_store import OutboxEntry
 from order_service.runtime.events import format_timestamp
 
 pytestmark = pytest.mark.integration
 RAJU = "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d"
-TABLES = (
-    "orders_by_id",
-    "orders_by_trader",
-    "order_events",
-    "outbox",
-    "orders_by_idempotency_key",
-    "processed_events",
-)
-
-
-@pytest.fixture(scope="module")
-def session() -> Iterator[Any]:
-    from cassandra.cluster import Cluster
-
-    with CassandraContainer("cassandra:5.0.9") as container:
-        cluster = Cluster(container.get_contact_points(), protocol_version=4)
-        admin = cluster.connect()
-        admin.execute(
-            "CREATE KEYSPACE order_service_it WITH replication = "
-            "{'class': 'SimpleStrategy', 'replication_factor': 1}"
-        )
-        admin.set_keyspace("order_service_it")
-        yield admin
-        cluster.shutdown()
-
-
-@pytest.fixture
-async def store(session: Any) -> CassandraOrderStore:
-    for table in TABLES:
-        session.execute(f"DROP TABLE IF EXISTS {table}")
-    s = CassandraOrderStore(session)
-    await s.migrate()
-    return s
 
 
 def order(n: int, at: datetime) -> Order:
@@ -82,10 +47,10 @@ async def test_an_order_round_trips_and_its_outbox_row_is_pending_until_publishe
     )
     await store.create(o, entry)
     assert await store.get(o.order_id) == o
-    pending = await store.pending_outbox(format_timestamp(now - timedelta(minutes=15)))
+    pending = await store.pending_outbox(format_timestamp(now - timedelta(minutes=2)))
     assert [p.event.event_id for p in pending] == [entry.event.event_id]
     await store.mark_published(entry)
-    assert await store.pending_outbox(format_timestamp(now - timedelta(minutes=15))) == []
+    assert await store.pending_outbox(format_timestamp(now - timedelta(minutes=2))) == []
     stored = await store.get(o.order_id)
     assert stored is not None and stored.published
     assert (await store.find_event(o.order_id, "OrderPlaced")) == entry.event
@@ -134,3 +99,64 @@ async def test_a_dropped_outbox_row_is_never_seen_again(store: CassandraOrderSto
     await store.create(o, entry)
     await store.drop_outbox(entry)
     assert await store.pending_outbox(format_timestamp(now - timedelta(minutes=1))) == []
+
+
+def placed(n: int, at: datetime) -> tuple[Order, OutboxEntry]:
+    o = order(n, at)
+    return o, OutboxEntry(
+        o.order_id, o.ticker, order_placed(o, at, environment="dev", correlation_id="c")
+    )
+
+
+async def test_a_row_of_any_age_is_found_and_the_cursor_never_passes_it(
+    store: CassandraOrderStore, session: Any
+) -> None:
+    # Phase 4: the relay used to look back 15 minutes, so a cancel older than that was never sent.
+    now = datetime.now(UTC)
+    settled = format_timestamp(now - timedelta(minutes=2))
+    older, oldest = placed(20, now - timedelta(minutes=25)), placed(21, now - timedelta(minutes=40))
+    for o, entry in (older, oldest):
+        await store.create(o, entry)
+
+    # The first pass ever (no cursor yet) starts at the oldest row in the outbox.
+    found = await store.pending_outbox(settled)
+    assert [e.order_id for e in found] == [oldest[0].order_id, older[0].order_id]
+    await store.mark_published(oldest[1])
+    assert [e.order_id for e in await store.pending_outbox(settled)] == [older[0].order_id]
+    cursor = session.execute("SELECT bucket FROM outbox_cursor WHERE name = 'relay'").one()
+    assert cursor.bucket == bucket_of(now - timedelta(minutes=25))  # held at the waiting row
+
+    # A restarted service starts at the saved cursor and still finds the 25-minute-old row.
+    restarted = CassandraOrderStore(session)
+    await restarted.migrate()
+    assert [e.order_id for e in await restarted.pending_outbox(settled)] == [older[0].order_id]
+    await restarted.mark_published(older[1])
+    assert await restarted.pending_outbox(settled) == []
+    cursor = session.execute("SELECT bucket FROM outbox_cursor WHERE name = 'relay'").one()
+    assert cursor.bucket == bucket_of(now - timedelta(minutes=2))  # past the empty minutes
+
+
+async def test_a_requeued_request_is_a_fresh_row_of_the_same_event(
+    store: CassandraOrderStore,
+) -> None:
+    now = datetime.now(UTC)
+    o, entry = placed(22, now - timedelta(minutes=30))
+    await store.create(o, entry)
+    await store.mark_published(entry)
+    first = order_cancel_requested(
+        o, now - timedelta(minutes=29), environment="dev", correlation_id="c"
+    )
+    second = order_cancel_requested(
+        o, now - timedelta(minutes=10), environment="dev", correlation_id="c"
+    )
+    for at, event in ((first.occurred_at, first), (second.occurred_at, second)):
+        await store.set_cancel_requested(o.order_id, at, OutboxEntry(o.order_id, o.ticker, event))
+        await store.mark_published(OutboxEntry(o.order_id, o.ticker, event))
+    assert await store.find_event(o.order_id, "OrderCancelRequested") == second  # the newest
+
+    again = OutboxEntry(o.order_id, o.ticker, second, written_at=format_timestamp(now))
+    await store.requeue(again)
+    [pending] = await store.pending_outbox(format_timestamp(now - timedelta(minutes=2)))
+    assert pending == again
+    await store.mark_published(pending)
+    assert await store.pending_outbox(format_timestamp(now - timedelta(minutes=2))) == []

@@ -25,7 +25,7 @@ matching engine confirms the order can never trade. A CQRS read model of trades 
 |---|---|
 | `domain/rules.py` | Pure money rules: `reserve`, `settle_buy`, `settle_sell`, `release`, `protection_price`, `portfolio_view` |
 | `application/portfolio.py` | Use cases A-02, A-06, A-09, Q-09; each runs in one transaction |
-| `application/sweeper.py` | Policy P-15: every 10 s, reservations with no `OrderAccepted` for 120 s → A-19 on order-service |
+| `application/sweeper.py` | Policy P-15: every 10 s, reservations with no `OrderAccepted` for 120 s → A-19 on order-service; asks again every 5 min until the engine answers |
 | `adapters/postgres.py` | The store: row locks (`FOR UPDATE`, accounts first, in trader-ID order), `CHECK` constraints, migrations |
 | `adapters/order_service_http.py` | A-19 `POST /internal/v1/order-expiries` |
 | `adapters/partitions.py` | Which `matching.v1` partition holds a ticker (the producers' murmur2 hash) |

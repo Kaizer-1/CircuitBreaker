@@ -318,7 +318,7 @@ paths:
       summary: Cancel an order
       x-seeds-id: A-07
       x-upstream: order-service
-      description: '**A-07** — Proxied to order-service `DELETE /v1/orders/{order_id}`. Roles: trader, bot. Returns 202.'
+      description: '**A-07** — Proxied to order-service `DELETE /v1/orders/{order_id}`. Roles: trader, bot. Returns 202, also when repeated while the cancel is pending (it is sent again).'
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
       responses:
@@ -333,7 +333,7 @@ paths:
         '404':
           $ref: './shared/common.yaml#/components/responses/NotFound'
         '409':
-          description: Order cannot be cancelled.
+          description: Order cannot be cancelled (already FILLED, CANCELLED or REJECTED).
           content:
             application/problem+json:
               schema:

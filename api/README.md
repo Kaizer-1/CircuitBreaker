@@ -205,7 +205,7 @@ frame (`trades`).
 | `NOT_FOUND` | 404 | Resource not found or not yours |
 | `NO_ACTIVE_FAULT` | 404 | No chaos fault to clear |
 | `NICKNAME_TAKEN` | 409 | Nickname already used |
-| `ORDER_NOT_CANCELLABLE` | 409 | Order already finished or cancel already pending |
+| `ORDER_NOT_CANCELLABLE` | 409 | Order already finished (a repeat while a cancel is pending answers `202` and re-sends it) |
 | `EXPERIMENT_ALREADY_RUNNING` | 409 | Only one chaos experiment at a time |
 | `EXPERIMENT_NOT_RUNNING` | 409 | Experiment already ended |
 | `FAULT_ALREADY_ACTIVE` | 409 | A fault is already injected |

@@ -101,7 +101,10 @@ that the order did not get through ([ADR-0011](../adr/0011-synchronous-reservati
 message it could not deliver within 10 s, and the relay starts no `OrderPlaced` send after 50 s, so nothing lands after
 60 s ([ADR-0017 note](../adr/0017-fail-closed-orphan-release.md#note-making-the-60-s-rule-true-phase-3)). The same outbox carries
 `OrderCancelRequested` and `OrderExpiryRequested`; a cancel or expiry for an order is never published before that order's
-`OrderPlaced`.
+`OrderPlaced`. Those two have **no time limit**: until the engine answers them, the trader's money stays reserved, so the
+relay retries them however long Redpanda was away. It reads the outbox from a saved cursor (the oldest minute that may
+still hold a row), not just the last few minutes, and a retried A-07 or A-19 sends the same request again
+([ADR-0017 note](../adr/0017-fail-closed-orphan-release.md#note-no-time-limit-for-cancels-and-expiries-phase-4)).
 
 **Orphaned reservations are released fail-closed** ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)): after 120 s
 without `OrderAccepted`, portfolio-service asks order-service to publish an `OrderExpiryRequested`. It lands in the same

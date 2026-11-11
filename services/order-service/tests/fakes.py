@@ -24,6 +24,11 @@ STATUS_FIELDS = (
 )
 
 
+def _row(entry: OutboxEntry) -> tuple[str, str]:
+    """An outbox row's key, as in Cassandra: when it was written and its event."""
+    return entry.row_at, entry.event.event_id
+
+
 class InMemoryOrderStore:
     def __init__(self) -> None:
         self.orders: dict[str, Order] = {}
@@ -31,6 +36,7 @@ class InMemoryOrderStore:
         self.outbox: list[OutboxEntry] = []
         self.keys: dict[tuple[str, str], str] = {}
         self.processed: set[str] = set()
+        self.settled_before: list[str] = []  # what each relay pass asked for
         self.fail_create = False
 
     async def get(self, order_id: str) -> Order | None:
@@ -66,19 +72,22 @@ class InMemoryOrderStore:
 
     async def find_event(self, order_id: str, event_type: str) -> EventEnvelope | None:
         found = [e for e in self.events.get(order_id, []) if e.event_type == event_type]
-        return found[0] if found else None
+        return found[-1] if found else None
 
-    async def pending_outbox(self, since: str) -> list[OutboxEntry]:
-        cut = parse_timestamp(since)
-        return [e for e in self.outbox if parse_timestamp(e.event.occurred_at) >= cut]
+    async def requeue(self, entry: OutboxEntry) -> None:
+        self.outbox.append(entry)
+
+    async def pending_outbox(self, settled_before: str) -> list[OutboxEntry]:
+        self.settled_before.append(settled_before)
+        return sorted(self.outbox, key=lambda e: parse_timestamp(e.row_at))
 
     async def mark_published(self, entry: OutboxEntry) -> None:
-        self.outbox = [e for e in self.outbox if e.event.event_id != entry.event.event_id]
+        self.outbox = [e for e in self.outbox if _row(e) != _row(entry)]
         if entry.event_type == "OrderPlaced" and entry.order_id in self.orders:
             self.orders[entry.order_id].published = True
 
     async def drop_outbox(self, entry: OutboxEntry) -> None:
-        self.outbox = [e for e in self.outbox if e.event.event_id != entry.event.event_id]
+        self.outbox = [e for e in self.outbox if _row(e) != _row(entry)]
 
     async def claim_idempotency_key(self, trader_id: str, key: str, order_id: str) -> str:
         return self.keys.setdefault((trader_id, key), order_id)

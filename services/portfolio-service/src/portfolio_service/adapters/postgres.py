@@ -214,11 +214,14 @@ class PgTx:
             ),
         )
 
-    async def unconfirmed_reservations(self, created_before: str) -> list[Reservation]:
+    async def unconfirmed_reservations(
+        self, created_before: str, asked_before: str
+    ) -> list[Reservation]:
         rows = await self._all(
             "SELECT * FROM reservations WHERE status = 'ACTIVE' AND NOT confirmed"
-            " AND expiry_requested_at IS NULL AND created_at <= %s ORDER BY created_at",
-            (parse_timestamp(created_before),),
+            " AND created_at <= %s"
+            " AND (expiry_requested_at IS NULL OR expiry_requested_at <= %s) ORDER BY created_at",
+            (parse_timestamp(created_before), parse_timestamp(asked_before)),
         )
         return [_reservation(r) for r in rows]
 

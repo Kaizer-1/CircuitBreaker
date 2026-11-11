@@ -15,6 +15,11 @@ ever settled against a reservation that was already released.** The liveness pro
 everything is up again, no unconfirmed reservation stays locked.
 
 The same model with ADR-0011's rule (release after 120 s by timer) is shown to be unsafe.
+
+A scenario test drives a 25-minute Redpanda outage (orders.v1 unreachable) with a pending cancel and
+a pending expiry request: after recovery both must reach the engine and the money must come back.
+With the relay's old 15-minute look-back (before Phase 4) both stay locked for ever (ADR-0017 note
+"No time limit for cancels and expiries").
 """
 
 import asyncio
@@ -36,7 +41,7 @@ TRADERS = (ALICE, BOB, CARA, DEV)
 TICKERS = ("CHAIWALA", "JUGAAD")
 PRICE = {"CHAIWALA": 24550, "JUGAAD": 118000}
 START = datetime(2026, 11, 20, 10, 0, tzinfo=UTC)
-PUBLISH_TIMEOUT_S, ORPHAN_AFTER_S = 60, 120
+PUBLISH_TIMEOUT_S, ORPHAN_AFTER_S, ASK_AGAIN_S = 60, 120, 300
 
 Logs = dict[str, list[EventEnvelope]]  # ticker -> ordered partition
 
@@ -79,6 +84,7 @@ class Outbox:
     event: EventEnvelope
     ticker: str
     placed_at: int | None  # only for OrderPlaced
+    written_at: int = 0
     done: bool = False
 
 
@@ -87,17 +93,41 @@ class OrderServiceModel:
     clock: Clock
     orders: Logs
     up: bool = True
+    broker_up: bool = True  # orders.v1 reachable
+    look_back: int | None = None  # the relay's age limit in seconds: 900 before Phase 4, now none
     outbox: list[Outbox] = field(default_factory=list)
     in_flight: list[tuple[int, str, EventEnvelope]] = field(default_factory=list)  # (lands_at, ...)
     rejected: set[str] = field(default_factory=set)
+    expiries: dict[str, EventEnvelope] = field(default_factory=dict)
 
     def store(self, event: EventEnvelope, ticker: str, placed_at: int | None) -> None:
-        self.outbox.append(Outbox(event, ticker, placed_at))
+        self.outbox.append(Outbox(event, ticker, placed_at, self.clock.now))
+
+    def cancel(self, order_id: str, trader: str, ticker: str) -> None:
+        """A-07: an OrderCancelRequested into the outbox."""
+        data = {
+            "order_id": order_id,
+            "trader_id": trader,
+            "ticker": ticker,
+            "requested_at": iso(self.clock.now),
+        }
+        event = build_event(
+            "OrderCancelRequested",
+            data,
+            producer="order-service",
+            environment="dev",
+            correlation_id=f"cancel-{order_id}",
+        )
+        self.store(event, ticker, None)
 
     def request_expiry(self, order_id: str, trader: str, ticker: str) -> bool:
-        """A-19. False when order-service is down (the sweeper retries on its next cycle)."""
+        """A-19. False when order-service is down (the sweeper retries on its next cycle). Asked
+        again, it stores the same request again (same event_id)."""
         if not self.up:
             return False
+        if order_id in self.expiries:
+            self.store(self.expiries[order_id], ticker, None)
+            return True
         data = {
             "order_id": order_id,
             "trader_id": trader,
@@ -114,15 +144,18 @@ class OrderServiceModel:
                 f"https://circuitbreaker.local/order-expiry/{order_id}"
             ),
         )
+        self.expiries[order_id] = event
         self.store(event, ticker, None)
         return True
 
     def relay(self, rng: random.Random) -> None:
-        if not self.up:
+        if not self.up or not self.broker_up:
             return
         for entry in self.outbox:
             if entry.done:
                 continue
+            if self.look_back is not None and self.clock.now - entry.written_at > self.look_back:
+                continue  # before Phase 4: too old, never retried
             entry.done = True
             if entry.placed_at is not None and self.clock.now - entry.placed_at > PUBLISH_TIMEOUT_S:
                 self.rejected.add(entry.event.data["order_id"])  # REJECTED, PUBLISH_TIMEOUT
@@ -151,7 +184,7 @@ class Reservation:
     created_at: int
     confirmed: bool = False
     released: bool = False
-    expiry_requested: bool = False
+    expiry_asked_at: int | None = None
 
 
 @dataclass
@@ -159,6 +192,7 @@ class PortfolioModel:
     clock: Clock
     matching: Logs
     fail_closed: bool
+    ask_again: bool = True  # since Phase 4: ask again every 5 min until the engine answers
     up: bool = True
     cash: dict[str, int] = field(default_factory=lambda: dict.fromkeys(TRADERS, 30_000_000))
     reserved_cash: dict[str, int] = field(default_factory=lambda: dict.fromkeys(TRADERS, 0))
@@ -248,7 +282,11 @@ class PortfolioModel:
         if not self.up:
             return
         for order_id, r in self.reservations.items():
-            if r.confirmed or r.released or r.expiry_requested:
+            if r.confirmed or r.released:
+                continue
+            if r.expiry_asked_at is not None and (
+                not self.ask_again or self.clock.now - r.expiry_asked_at < ASK_AGAIN_S
+            ):
                 continue
             if self.clock.now - r.created_at < ORPHAN_AFTER_S:
                 continue
@@ -257,7 +295,8 @@ class PortfolioModel:
                 continue
             if self.position[r.ticker] < len(self.matching[r.ticker]):
                 continue  # behind on this partition: an OrderAccepted may be unread
-            r.expiry_requested = order_service.request_expiry(order_id, r.trader, r.ticker)
+            if order_service.request_expiry(order_id, r.trader, r.ticker):
+                r.expiry_asked_at = self.clock.now
 
 
 class LogPublisher:
@@ -386,3 +425,77 @@ def test_the_old_120_second_timer_rule_can_trade_on_released_money() -> None:
         settings=settings(max_examples=2000, database=None, derandomize=True),
     )
     assert asyncio.run(simulate(unsafe, fail_closed=False)).violations
+
+
+class NoZombies(random.Random):
+    """Every publish lands at once: the scenario below is about the outage, not hung sends."""
+
+    def random(self) -> float:
+        return 0.5
+
+
+async def outage_with_a_pending_cancel_and_expiry(after_phase_4: bool) -> PortfolioModel:
+    """Raju's BUY rests in the book; Bob's order was reserved, then order-service lost it. Redpanda
+    becomes unreachable for order-service for 25 minutes, during which Raju cancels and the
+    sweeper asks for Bob's expiry. Then everything is up and the queues drain for 10 minutes."""
+    clock = Clock()
+    orders: Logs = defaultdict(list)
+    matching: Logs = defaultdict(list)
+    os_model = OrderServiceModel(clock, orders, look_back=None if after_phase_4 else 900)
+    ps = PortfolioModel(clock, matching, fail_closed=True, ask_again=after_phase_4)
+    store, publisher = InMemoryEventStore(), LogPublisher(matching)
+    engine = MatchingEngine(
+        store,
+        publisher,
+        environment="dev",
+        clock=lambda: START + timedelta(seconds=clock.now),
+        new_id=id_source("5e5e5e5e"),
+    )
+    await engine.recover()
+    done: dict[str, int] = defaultdict(int)
+
+    async def run_for(seconds: int) -> None:
+        for _ in range(seconds // 10):
+            clock.now += 10
+            os_model.relay(NoZombies())
+            for ticker in TICKERS:
+                for event in orders[ticker][done[ticker] :]:
+                    await engine.handle_envelope(event)
+                done[ticker] = len(orders[ticker])
+            ps.consume(1000)
+            ps.sweep(os_model)
+
+    resting, lost = "0dde0000-0000-4000-8000-000000000001", "0dde0000-0000-4000-8000-000000000002"
+    assert ps.reserve(resting, ALICE, "CHAIWALA", "BUY", 10, 24550)
+    os_model.store(
+        order_placed(resting, ALICE, "CHAIWALA", "BUY", 10, 24550, clock.now), "CHAIWALA", 0
+    )
+    assert ps.reserve(lost, BOB, "CHAIWALA", "BUY", 20, 24500)  # never stored: order-service died
+    await run_for(10)
+    assert ps.reservations[resting].confirmed  # accepted and resting
+
+    os_model.broker_up = False
+    os_model.cancel(resting, ALICE, "CHAIWALA")
+    await run_for(25 * 60)  # the sweeper asks for Bob's expiry at 120 s, and again every 5 min
+    assert ps.reservations[lost].expiry_asked_at is not None
+    os_model.broker_up = True
+    await run_for(10 * 60)
+    return ps
+
+
+async def test_a_25_minute_outage_delays_a_cancel_and_an_expiry_but_both_release_the_money() -> (
+    None
+):
+    ps = await outage_with_a_pending_cancel_and_expiry(after_phase_4=True)
+    assert all(r.released for r in ps.reservations.values())
+    assert ps.reserved_cash == dict.fromkeys(TRADERS, 0)
+    assert ps.cash == dict.fromkeys(TRADERS, 30_000_000)  # nothing traded, nothing lost
+    events = [(e.event_type, e.data.get("reason")) for e in ps.matching["CHAIWALA"]]
+    assert ("OrderCancelled", "USER_REQUESTED") in events and ("OrderExpired", None) in events
+    assert ps.violations == []
+
+
+async def test_with_the_old_15_minute_look_back_the_money_stays_locked_for_ever() -> None:
+    ps = await outage_with_a_pending_cancel_and_expiry(after_phase_4=False)
+    assert not any(r.released for r in ps.reservations.values())
+    assert ps.reserved_cash[ALICE] == 245_500 and ps.reserved_cash[BOB] == 490_000
