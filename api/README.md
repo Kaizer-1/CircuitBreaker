@@ -145,7 +145,7 @@ Query parameters: `from`, `to` (ISO-8601 with a UTC offset, window ≤ 30 minute
 
 | Direction | `type` | `data` |
 |---|---|---|
-| server → client | `frame` | `{ as_of, as_of_sequence, order_book: OrderBookDepth, last_trade: Trade \| null, candle: Candle (forming 5s candle) }` — first the book at `from` (rebuilt like Q-12), then one per command's group of events (same `causation_id`, so never half a match), paced by original time ÷ speed |
+| server → client | `frame` | `{ as_of, as_of_sequence, order_book: OrderBookDepth, last_trade: Trade \| null, trades: Trade[], candle: Candle (forming 5s candle) }` — first the book at `from` (rebuilt like Q-12), then one per command's group of events (same `causation_id`, so never half a match), paced by original time ÷ speed. `trades` (optional field, Phase 4) lists every fill of that command, oldest first, so the replay's tape equals what the live market published; `last_trade` is its last one |
 | server → client | `end` | `{ frames_sent, from, to, as_of_sequence, state_hash }` — once market time reaches `to`; `state_hash` is the book at `to`, equal to Q-12's `state_hash` at `to` (Phase 4). Then the server closes normally (`1000`) |
 | client → server | `pause` / `resume` | `{}` — market time stops and starts again |
 | client → server | `speed` | `{ speed }`, one of 1, 2, 5, 10, 60 — takes effect at once from the current position (Phase 4); any other value is ignored |
@@ -191,7 +191,8 @@ Phase 2 feedback: the orphan rule became fail-closed, adding A-19 and the cancel
 self-trade prevention added the cancel reason `SELF_TRADE_PREVENTED` (order-service spec 1.1.0, gateway spec 1.1.0).
 Phase 4 feedback (proving time travel exact to an audience): Q-15 returns the snapshot's finished and expired orders
 (`closed`, matching-engine spec 1.2.0); Q-12 returns the rebuilt book's `state_hash` and, at "now", a `verification`
-against the live engine book (market-data spec 1.1.0); Q-13 gained the `speed` message and the `end` hash.
+against the live engine book (market-data spec 1.1.0); Q-13 gained the `speed` message, the `end` hash and every fill per
+frame (`trades`).
 
 ## Error code catalog
 

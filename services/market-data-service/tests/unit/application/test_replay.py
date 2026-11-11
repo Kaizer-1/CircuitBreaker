@@ -224,3 +224,25 @@ def test_a_replay_left_paused_too_long_ends() -> None:
     with pytest.raises(PausedTooLongError):
         asyncio.run(scenario())
     assert all(m["type"] == "frame" for m in sent.messages)
+
+
+def test_the_replayed_fills_are_exactly_the_live_fills_over_the_same_range() -> None:
+    """Every fill the live market published between `from` and `to`, in the same order, and none
+    twice: the replay's tape shows what live showed, sweeps included."""
+    exchange, after = market(commands=10, gap_seconds=0.7)
+    exchange.place("a", "SELL", 5, 520)  # above every bid: they rest
+    exchange.place("b", "SELL", 5, 520)
+    exchange.place("c", "BUY", 10, 520)  # a sweep: several fills in one command
+    start, end = after[1][0], ms(exchange.as_of or "") + 50
+    live = [
+        e.data["trade_id"]
+        for e in exchange.log
+        if e.event_type == "TradeExecuted" and start < ms(e.occurred_at) <= end
+    ]
+    assert len(live) > 3
+    sent = Recorder()
+    asyncio.run(session_for(exchange, start, end, speed=60).run(sent))
+    replayed = [t["trade_id"] for f in sent.frames() for t in f["trades"]]
+    assert replayed == live
+    sweep = sent.frames()[-1]
+    assert len(sweep["trades"]) > 1 and sweep["last_trade"] == sweep["trades"][-1]

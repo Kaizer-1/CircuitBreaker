@@ -5,8 +5,10 @@ docs/03-architecture/04-event-sourcing-and-cqrs.md, section 5, and api/README.md
 1. Rebuild the book at `from` exactly as time travel does (snapshot + events up to `from`) and send
    it as the first frame.
 2. Walk the stored events after it up to `to`. The events of one command (same `causation_id`)
-   are applied together and sent as one frame, so a viewer never sees half a match. Before each
-   frame the replay waits the original time between the events divided by the speed.
+   are applied together and sent as one frame, so a viewer never sees half a match. The frame
+   lists every fill of that command (`trades`, oldest first), so the replay's tape is exactly the
+   one the live market showed. Before each frame the replay waits the original time between the
+   events divided by the speed.
 3. When market time reaches `to`, send `end` with the hash of the book at `to` (equal to Q-12's
    at `to`), then close.
 
@@ -181,7 +183,7 @@ class ReplaySession:
         so_far = await self._store.trades_between(self.ticker, start, self.from_ms)
         candle = candle_up_to(start, so_far, last_price)
 
-        async def frame(at: str, trade: Trade | None) -> None:
+        async def frame(at: str, trade: Trade | None, fills: list[Trade]) -> None:
             bids, asks = book.depth(DEPTH_LEVELS)
             await send(
                 {
@@ -193,25 +195,26 @@ class ReplaySession:
                             self.ticker, book.sequence, book.as_of or at, bids, asks
                         ),
                         "last_trade": trade_view(trade) if trade else None,
+                        "trades": [trade_view(t) for t in fills],
                         "candle": candle_view(candle),
                     },
                 }
             )
             self.frames_sent += 1
 
-        await frame(iso(self.from_ms), last_trade)
+        await frame(iso(self.from_ms), last_trade, [])
         later = self._events.events_after(self.ticker, book.sequence, until_ms=self.to_ms)
         async for group in _groups(later):
             at_ms = ms_of(group[0].occurred_at)
             await self.pacer.wait_until(at_ms)
             candle = _roll(candle, at_ms)
-            trade = None
+            fills: list[Trade] = []
             for event in group:
                 book.apply(event.event_type, event.data, event.occurred_at)
                 if event.event_type == "TradeExecuted":
-                    trade = _trade(event)
-                    candle = _add(candle, trade)
-            await frame(group[0].occurred_at, trade)
+                    fills.append(_trade(event))
+                    candle = _add(candle, fills[-1])
+            await frame(group[0].occurred_at, fills[-1] if fills else None, fills)
         await self.pacer.wait_until(self.to_ms)
         await send(
             {

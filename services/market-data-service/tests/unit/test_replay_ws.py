@@ -84,6 +84,8 @@ def test_a_replay_streams_frames_then_end_and_closes_normally(
         check("Candle", frame["candle"])
         if frame["last_trade"] is not None:
             check("Trade", frame["last_trade"])
+        for trade in frame["trades"]:
+            check("Trade", trade)
     end_message = messages[-1]
     assert end_message["type"] == "end"
     assert end_message["data"]["state_hash"] == exchange.state_hash()

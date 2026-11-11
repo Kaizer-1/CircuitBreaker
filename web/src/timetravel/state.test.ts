@@ -136,6 +136,21 @@ describe('the time-travel state', () => {
     expect(s.view).toBe(before)
   })
 
+  it('a sweep adds every one of its fills to the tape, newest first', () => {
+    const sweep = {
+      ...frame(45, T + 3_000, 24530),
+      trades: [
+        trade(43, T + 3_000, 24510),
+        trade(44, T + 3_000, 24520),
+        trade(45, T + 3_000, 24530),
+      ],
+    }
+    const v = applyFrame(paused().view!, sweep)
+    expect(v.trades.map((t) => t.sequence)).toEqual([45, 44, 43, 39, 38])
+    expect(v.lastPrice).toBe(24530)
+    expect(applyFrame(v, { ...sweep, as_of_sequence: 45 }).trades).toBe(v.trades) // not twice
+  })
+
   it('a frame replaces the forming candle and opens the next one', () => {
     const v = paused().view!
     const a = applyFrame(v, frame(41, T + 1_000, 24520))
@@ -144,6 +159,17 @@ describe('the time-travel state', () => {
     expect(b.candles.length).toBe(a.candles.length)
     expect(b.candles.at(-1)?.close_paise).toBe(24530)
     expect(c.candles.length).toBe(b.candles.length + 1)
+  })
+
+  it('a paused replay gets its hash, but only for the very sequence shown', () => {
+    let s = reduce(paused(), { kind: 'play' })
+    s = reduce(s, { kind: 'frame', frame: frame(42, T + 1_000, 24520) })
+    s = reduce(s, { kind: 'pause' })
+    expect(s.view?.stateHash).toBeNull()
+    expect(reduce(s, { kind: 'hashed', sequence: 41, stateHash: 'd'.repeat(64) })).toBe(s)
+    s = reduce(s, { kind: 'hashed', sequence: 42, stateHash: 'd'.repeat(64) })
+    expect(s.view?.stateHash).toBe('d'.repeat(64))
+    expect(reduce(initialState, { kind: 'hashed', sequence: 1, stateHash: 'x' })).toBe(initialState)
   })
 
   it('pausing, resuming and frames do nothing outside a replay', () => {

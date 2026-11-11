@@ -63,6 +63,7 @@ export type Action =
   | { kind: 'replay-checked'; matches: boolean }
   | { kind: 'live' }
   | { kind: 'verified'; verification: Verification | null }
+  | { kind: 'hashed'; sequence: number; stateHash: string }
   | { kind: 'error'; message: string }
 
 export const initialState: TimeTravelState = {
@@ -128,15 +129,18 @@ function withCandle(candles: Candle[], candle: Candle): Candle[] {
 
 export function applyFrame(view: HistoryView, frame: ReplayFrame): HistoryView {
   if (frame.as_of_sequence < view.sequence) return view // older than what is shown
-  const trade = frame.last_trade
-  const fresh = trade && !view.trades.some((t) => t.sequence >= trade.sequence)
+  // Every fill of the command (a sweep has several), newest first on the tape, each once.
+  const fills = frame.trades ?? (frame.last_trade ? [frame.last_trade] : [])
+  const newest = view.trades[0]?.sequence ?? 0
+  const fresh = fills.filter((t) => t.sequence > newest).reverse()
+  const last = fills[fills.length - 1]
   return {
     at: ms(frame.as_of),
     sequence: frame.as_of_sequence,
     book: frame.order_book,
-    lastPrice: trade ? trade.price_paise : view.lastPrice,
+    lastPrice: last ? last.price_paise : view.lastPrice,
     candles: withCandle(view.candles, frame.candle),
-    trades: fresh ? [trade, ...view.trades].slice(0, KEEP_TRADES) : view.trades,
+    trades: fresh.length ? [...fresh, ...view.trades].slice(0, KEEP_TRADES) : view.trades,
     stateHash: null, // known again at a seek or at the replay's end
   }
 }
@@ -193,6 +197,10 @@ export function reduce(state: TimeTravelState, action: Action): TimeTravelState 
       return { ...state, mode: 'live', target: null, view: null, replay: null, error: null }
     case 'verified':
       return { ...state, verification: action.verification }
+    case 'hashed': // the hash of a paused replay, from Q-12 at the same moment
+      return state.view && state.view.sequence === action.sequence
+        ? { ...state, view: { ...state.view, stateHash: action.stateHash } }
+        : state
     case 'error':
       return { ...state, error: action.message }
   }

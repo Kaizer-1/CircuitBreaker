@@ -162,6 +162,7 @@ export interface ReplayFrame {
   as_of_sequence: number
   order_book: OrderBook
   last_trade: Trade | null
+  trades?: Trade[] // every fill of this command, oldest first (Phase 4; optional)
   candle: Candle // the forming 5s candle
 }
 export interface ReplayEnd {
