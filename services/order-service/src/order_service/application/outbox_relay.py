@@ -10,9 +10,14 @@ Every second it re-publishes outbox rows that are still unpublished 5 s after th
   nothing it hands over can reach the broker after 60 s (ADR-0017).
 - A cancel or expiry is never published before its order's OrderPlaced.
 
+A cancel or an expiry request has **no time limit**: it is retried until it is published, however
+long Redpanda or this service was down, because until the engine answers it the trader's money stays
+reserved (ADR-0017 note "No time limit for cancels and expiries"). The store finds a row of any age
+(adapters/cassandra_store.py: a cursor over the minute partitions). Until Phase 4 the relay looked
+back only 15 minutes, and a cancel left behind by a long outage kept its order resting for ever.
+
 Several replicas may run it at once: a row can be published twice, and the engine drops the copy
-by event_id. Rows older than the look-back window (15 min, Redpanda down that long) are not
-retried: an order among them is later rejected through A-19, when portfolio asks for its expiry.
+by event_id.
 """
 
 import asyncio
@@ -22,6 +27,7 @@ from datetime import UTC, datetime, timedelta
 
 from order_service.application.orders import must_wait
 from order_service.domain.order import (
+    FINISHED,
     PUBLISH_TIMEOUT_SECONDS,
     Order,
     OrderStatus,
@@ -35,7 +41,10 @@ logger = logging.getLogger("outbox")
 
 RETRY_AFTER_SECONDS = 5
 DELIVERY_TIMEOUT_SECONDS = 10  # the publisher's delivery_timeout_seconds (config.py)
-LOOK_BACK = timedelta(minutes=15)
+# A replica writes a row at its own clock. Rows are never written further than this in the past, so
+# the store may stop re-reading empty minutes older than it. Every replica runs on the host's clock
+# (Compose, kind); two minutes is ample.
+CLOCK_MARGIN = timedelta(minutes=2)
 
 
 class OutboxRelay:
@@ -67,7 +76,7 @@ class OutboxRelay:
         so a hung Redpanda cannot delay a PUBLISH_TIMEOUT; then one bounded attempt per row.
         """
         now = self._clock()
-        entries = await self._store.pending_outbox(format_timestamp(now - LOOK_BACK))
+        entries = await self._store.pending_outbox(format_timestamp(now - CLOCK_MARGIN))
         to_publish = []
         for entry in entries:
             order = await self._store.get(entry.order_id)
@@ -88,7 +97,7 @@ class OutboxRelay:
                     )
                     continue
             elif order is not None and entry.event_type == "OrderCancelRequested":
-                if order.status is OrderStatus.REJECTED:
+                if order.status in FINISHED:
                     await self._store.drop_outbox(entry)  # nothing left to cancel
                     continue
             to_publish.append((entry, order))
@@ -97,7 +106,7 @@ class OutboxRelay:
         for entry, order in to_publish:
             if order is not None:
                 order = await self._store.get(entry.order_id)  # an earlier row may have changed it
-            written = parse_timestamp(entry.event.occurred_at)
+            written = parse_timestamp(entry.row_at)
             if must_wait(entry, order) or now - written < self._retry_after:
                 continue
             if order is not None and entry.event_type == "OrderPlaced" and self._too_late(order):

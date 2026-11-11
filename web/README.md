@@ -1,8 +1,8 @@
 # web
 
-> **Status:** Phase 3. Four screens: **System Status**, the **presenter dashboard** for the projector, and the phone's
-> **Join** and **Trade** pages. Each has two skins, Pink Paper (light) and Terminal (dark), on one layout. The
-> leaderboard and time travel arrive in Phase 4. The chaos panel, agent controls and incident feed arrive in Phase 7.
+> **Status:** Phase 4. Five screens: **System Status**, the **presenter dashboard** and **time travel**
+> for the projector, and the phone's **Join** and **Trade** pages. Each has two skins, Pink Paper (light) and Terminal
+> (dark), on one layout. The chaos panel, agent controls and incident feed arrive in Phase 7.
 
 |                 |                                                  |
 | --------------- | ------------------------------------------------ |
@@ -14,17 +14,20 @@
 
 React + Vite + TypeScript single-page app with TradingView Lightweight Charts. Every call goes through api-gateway.
 
-| Page                     | URL                       | Who                   | Sign-in               | Uses                                     |
-| ------------------------ | ------------------------- | --------------------- | --------------------- | ---------------------------------------- |
-| **System Status**        | `/` (also `/status`)      | Presenter, developers | Admin passcode (A-04) | `GET /v1/system/status`                  |
-| **Presenter dashboard**  | `/dashboard`              | Presenter (projector) | Admin passcode (A-04) | Q-02, Q-06 (all five tickers), QR        |
-| **Join**                 | `/join` (the QR's target) | Trader (phone)        | None: a nickname      | A-01                                     |
-| **Trade**                | `/trade`                  | Trader (phone)        | The session from Join | Q-02, Q-06, Q-07, Q-09, Q-10, A-05, A-07 |
-| Leaderboard, time travel | (Phase 4)                 | Everyone              |                       | Q-11, Q-12, Q-13                         |
-| Chaos panel, agent       | (Phase 7)                 | Admin                 |                       | Q-19–Q-23, A-10, A-11, A-14, A-15        |
+| Page                    | URL                       | Who                   | Sign-in               | Uses                                     |
+| ----------------------- | ------------------------- | --------------------- | --------------------- | ---------------------------------------- |
+| **System Status**       | `/` (also `/status`)      | Presenter, developers | Admin passcode (A-04) | `GET /v1/system/status`                  |
+| **Presenter dashboard** | `/dashboard`              | Presenter (projector) | Admin passcode (A-04) | Q-02, Q-06 (all five tickers), Q-11, QR  |
+| **Time travel**         | `/time-travel`            | Presenter (projector) | Admin passcode (A-04) | Q-03, Q-06, Q-12, Q-13                   |
+| **Join**                | `/join` (the QR's target) | Trader (phone)        | None: a nickname      | A-01                                     |
+| **Trade**               | `/trade`                  | Trader (phone)        | The session from Join | Q-02, Q-06, Q-07, Q-09, Q-10, A-05, A-07 |
+| Chaos panel, agent      | (Phase 7)                 | Admin                 |                       | Q-19–Q-23, A-10, A-11, A-14, A-15        |
 
 - **Presenter dashboard:** the five tickers in a watchlist, the selected one big (keys 1–5 choose it), 5-second candles,
   the order book (best 6 levels), the trades tape, the join QR code, and a status bar (health, live streams, volume).
+  Beside the watchlist, the **leaderboard**: the top five human traders by net worth (Q-11, polled every 2 s; ties share
+  a rank). Projector safety: the header's **Hide leaderboard** / **Show leaderboard** button (or key B) takes it off
+  the screen, the choice is remembered on this device, and a hidden leaderboard is not polled.
 - **Trade:** net worth and P&L (live over Q-10), one stock's price and chart, the order ticket (LIMIT or MARKET, BUY or
   SELL; it applies the exchange's rules before sending: tick 5 paise, quantity 1–10,000, available cash or shares),
   open orders with cancel, and holdings. Every touch target is at least 44 px, for one-handed use.
@@ -51,6 +54,36 @@ the gateway never log it. On every connect the server sends a snapshot, then upd
 (`src/market/marketState.ts`) drops anything at or below the sequence it has. After a disconnect it reconnects
 (`src/market/stream.ts`, waiting 1 s, then 2 s, doubling up to 30 s) and starts again from a fresh snapshot
 ([read side §4](../docs/03-architecture/08-read-side.md#4-snapshot-then-updates-resyncing-a-client)).
+
+### Time travel (presenter)
+
+Event sourcing shown to an audience (J-20). The screen has the dashboard's layout with a timeline in place of the
+watchlist. The APIs (Q-12, Q-13) are open to any signed-in user; the _screen_ lives in the presenter's area, reached by
+the terminal skin's on-screen **F5 TIME TRAVEL** key or the paper skin's **Time travel** section link (the real F5 key
+stays the browser's reload).
+
+- **Timeline** (`src/components/Timeline.tsx`): the session's one-minute closes from its first trade, markers ▲ ▼ at
+  the five biggest one-minute moves, and a handle at the moment shown. Drag or click to seek; a marker jumps to its
+  minute. The handle is a slider: ← → one minute (Shift: ten seconds), Page Up/Down ten minutes, Home the start, End
+  now.
+- **Seek** (Q-12): the book, last price, trades and state hash at that moment. The chart's 5-second candles come from
+  Q-03 up to that moment, the one holding it rebuilt from the trades so far (`candlesUpTo`).
+- **Play** (Q-13) from the moment shown at 1×, 2×, 5×, 10× or 60×, for up to 30 minutes; pause, resume and speed
+  changes take effect at once. Every fill of each replayed command goes on the tape, so it shows what the live market
+  showed. A replay that closes is not reopened; the screen says why (for example, a full replica).
+- **The proof.** **Verify against live** (and **Back to live**) ask Q-12 for now (one second ahead: market-data counts
+  up to two seconds ahead as now) and show **Verified at sequence N: hashes match** with the live engine's hash,
+  without changing what is shown. Dragging the timeline to its right edge (or End) rebuilds now instead. When a replay
+  ends, its end hash is compared with Q-12 at the same moment.
+- **One sequence, labelled hashes.** The hero, the banner and the status bar all show the same sequence: the shown
+  book's last event. A hash always says which sequence it belongs to: live, "verified at N"; paused, the hash of the
+  shown sequence (a replay paused mid-way asks Q-12 for it); while playing, "computed when paused".
+- **Never mistaken for live.** In every past state (seeking, paused, playing, ended) a banner sits under the header —
+  paper: "From the archives · _date, time_"; terminal: amber `HISTORICAL MODE · time` — with **Back to live**, and every
+  panel's title carries a tag; in the terminal skin the panels' outlines turn amber. A test renders every state in both
+  skins.
+- Keys: 1–5 choose the ticker, Space plays or pauses, L goes back to live. State: one reducer
+  (`src/timetravel/state.ts`); actions: `src/timetravel/useTimeTravel.ts`; the socket: `src/timetravel/replay.ts`.
 
 ### The join QR code and `PUBLIC_BASE_URL`
 

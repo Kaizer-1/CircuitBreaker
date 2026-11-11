@@ -1,5 +1,11 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { api, type Instrument, type Portfolio, type Ticker } from '../lib/market'
+import {
+  api,
+  type Instrument,
+  type LeaderboardEntry,
+  type Portfolio,
+  type Ticker,
+} from '../lib/market'
 import { applyMarket, emptyMarket, type MarketMessage, type MarketView } from './marketState'
 import { openStream, type StreamState } from './stream'
 
@@ -89,4 +95,36 @@ export function useMarkets(token: string | null): Record<Ticker, [MarketView, St
     MONSOON: useMarket('MONSOON', token),
     FILMY: useMarket('FILMY', token),
   }
+}
+
+export interface Board {
+  asOf: string
+  entries: LeaderboardEntry[]
+}
+
+/** Q-11, the human traders ranked by net worth, polled every 2 s (the service recomputes it at
+ * most that often). Not polled at all while the presenter has it hidden. */
+export function useLeaderboard(
+  token: string | null,
+  enabled: boolean,
+  everyMs = 2000,
+  limit = 5,
+): Board | null {
+  const [board, setBoard] = useState<Board | null>(null)
+  useEffect(() => {
+    if (!token || !enabled) return
+    let stop = false
+    const load = () =>
+      api
+        .leaderboard(token, limit)
+        .then((b) => !stop && setBoard({ asOf: b.as_of, entries: b.entries }))
+        .catch(() => {})
+    void load()
+    const id = window.setInterval(load, everyMs)
+    return () => {
+      stop = true
+      window.clearInterval(id)
+    }
+  }, [token, enabled, everyMs, limit])
+  return board
 }

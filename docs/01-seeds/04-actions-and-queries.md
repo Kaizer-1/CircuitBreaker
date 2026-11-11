@@ -60,7 +60,7 @@ starts its description with one of these IDs. IDs never change meaning; new item
 | Q-13 | Stream a replay of a past time window | Admin, Trader | J-20 | `market-data-service` | WS | `/v1/ws/replay/{ticker}` | Yes |
 | Q-14 | Read market events by sequence (event store) | market-data-service | J-33 | `matching-engine` | HTTP | `GET /internal/v1/events` | Internal |
 | Q-15 | Get the nearest order-book snapshot at or before time T | market-data-service | J-33 | `matching-engine` | HTTP | `GET /internal/v1/snapshots/{ticker}` | Internal |
-| Q-16 | Get the engine's live in-memory order book | Developer | J-34 | `matching-engine` | HTTP | `GET /internal/v1/books/{ticker}` | Internal |
+| Q-16 | Get the engine's live in-memory order book | Developer, market-data-service | J-34 | `matching-engine` | HTTP | `GET /internal/v1/books/{ticker}` | Internal |
 | Q-17 | List incidents | Admin | J-19 | `sre-agent` | HTTP | `GET /v1/incidents` | Yes |
 | Q-18 | Get one incident with its timeline | Admin | J-18, J-19 | `sre-agent` | HTTP | `GET /v1/incidents/{incident_id}` | Yes |
 | Q-19 | Stream the live incident feed | Admin | J-19, J-24 | `sre-agent` | WS | `/v1/ws/incidents` | Yes |

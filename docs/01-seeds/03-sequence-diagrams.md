@@ -215,26 +215,38 @@ sequenceDiagram
     participant MC as Cassandra (market_data keyspace)
 
     A->>GW: GET /v1/time-travel/CHAIWALA?at=2026-11-20T10:42:15Z  (Q-12)
-    GW->>MD: forward
+    GW->>MD: forward (with the caller's role)
+    alt 4 rebuilds already running (1 place kept for the admin role)
+        MD-->>A: 503 OVERLOADED
+    end
+    opt at is now (at or after market-data's latest event): the proof
+        MD->>ME: GET /internal/v1/books/CHAIWALA  (Q-16)
+        ME-->>MD: live sequence S and its state_hash
+    end
     MD->>ME: GET /internal/v1/snapshots/CHAIWALA?at=10:42:15  (Q-15)
     ME->>EC: Latest snapshot taken at or before 10:42:15
-    ME-->>MD: Snapshot at sequence 4000 (book as of 10:41:50)
+    ME-->>MD: Snapshot at sequence 4000 (book and closed orders as of 10:41:50)
     MD->>ME: GET /internal/v1/events?ticker=CHAIWALA&after_sequence=4000&until=10:42:15  (Q-14)
     ME->>EC: Range read by sequence
-    ME-->>MD: Events 4001 to 4187 (paged)
-    MD->>MD: Apply events to a fresh in-memory book (no matching, just apply results)
+    ME-->>MD: Events 4001 to 4187 (paged, up to sequence S for the proof)
+    MD->>MD: Apply events to a fresh in-memory book (no matching, just apply results), then hash it
     MD->>MC: Read candles and trades up to 10:42:15
-    MD-->>GW: 200 book, candles, last trades, as_of_sequence 4187
+    MD-->>GW: 200 book, candles, last trades, as_of_sequence 4187, state_hash, verification (null in the past)
     GW-->>A: 200
 
     Note over A,MD: Replay stream (Q-13)
     A->>GW: WebSocket /v1/ws/replay/CHAIWALA?from=10:40&to=10:45&speed=10
     GW->>MD: upgrade and proxy
-    MD->>ME: Same snapshot + events load for the window
-    loop for each group of events, paced by original time divided by speed
-        MD-->>A: frame  as_of, book, last trade, candle
+    alt 4 replays already playing (1 place kept for the admin role)
+        MD-->>A: close 1013 (try again later)
     end
-    MD-->>A: end
+    MD->>ME: Same snapshot + events load for the window
+    MD-->>A: frame: the book at from
+    loop for each command's group of events, paced by original time divided by speed
+        MD-->>A: frame  as_of, book, every fill of the command, forming candle
+    end
+    MD-->>A: end  frames_sent, as_of_sequence, state_hash (= Q-12 at to)
+    MD-->>A: close 1000
 ```
 
 **Design notes**
@@ -245,6 +257,8 @@ sequenceDiagram
   asks matching-engine over HTTP.
 - **Snapshots** (every 500 events per ticker) mean we replay at most 500 events, not the whole day.
 - Time travel is a **query**: it never changes live state. That is CQRS in action.
+- **The proof:** at "now", market-data reads the live engine's sequence and hash first and rebuilds to exactly that
+  sequence, so trading never has to pause for the comparison ([ES and CQRS §5](../03-architecture/04-event-sourcing-and-cqrs.md#proving-it-is-exact)).
 
 ---
 
@@ -342,7 +356,7 @@ sequenceDiagram
     participant EC as Cassandra (matching_engine keyspace)
 
     loop every 10 s (sweeper, policy P-15)
-        PS->>PG: ACTIVE reservations with no OrderAccepted for 120 s,<br/>on partitions this replica owns with no lag
+        PS->>PG: ACTIVE reservations with no OrderAccepted for 120 s,<br/>not asked about in the last 5 min,<br/>on partitions this replica owns with no lag
     end
     PS->>OS: POST /internal/v1/order-expiries  order_id, trader_id, ticker  (A-19)
     alt order-service is down
@@ -374,7 +388,9 @@ sequenceDiagram
 - **Why not just release after 120 s?** A timer cannot know what the engine decided. If the engine was down, or
   crashed after storing a trade but before publishing it, the money could be traded after it was handed back.
 - **Fail-closed:** if the engine is down, the money stays reserved until it answers. If order-service is down, the
-  sweeper asks again on its next cycle.
+  sweeper asks again on its next cycle. If no answer comes within 5 minutes, it asks again (order-service sends the
+  same request, same `event_id`), and the outbox relay retries the request however long Redpanda is away
+  ([ADR-0017 note](../adr/0017-fail-closed-orphan-release.md#note-no-time-limit-for-cancels-and-expiries-phase-4)).
 - **Why through order-service?** The expiry must be in the same `orders.v1` partition as the order so it is handled
   after any `OrderPlaced` already sent, and `orders.v1` has one producer, order-service, with an outbox.
 

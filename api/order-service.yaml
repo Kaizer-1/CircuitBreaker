@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: order-service API
-  version: 1.1.0
+  version: 1.2.0
   summary: Accepts, validates and tracks orders.
   description: |
     Owned by the **Trading Team** (Kaizer Dewaswala). Reached from outside only through `api-gateway`,
@@ -221,7 +221,9 @@ paths:
         **A-07** — Request cancellation of the unfilled part of an order. Returns **202** with
         `cancel_requested: true`. The matching engine decides: the order becomes CANCELLED (`OrderCancelled`) or,
         if it filled in the meantime, the request is rejected (`OrderCancelRejected`) and `cancel_requested`
-        returns to false.
+        returns to false. Calling it again while the cancel is still pending sends the **same** request again
+        (same event ID, so the engine acts on it once) and answers **202** as the first time: a cancel has no time
+        limit and is retried until the engine answers (ADR-0017 note, Phase 4).
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/TraderIdHeader'
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
@@ -253,7 +255,7 @@ paths:
         '404':
           $ref: './shared/common.yaml#/components/responses/NotFound'
         '409':
-          description: The order is already FILLED, CANCELLED or REJECTED, or a cancel is already pending.
+          description: The order is already FILLED, CANCELLED or REJECTED.
           content:
             application/problem+json:
               schema:
@@ -276,7 +278,8 @@ paths:
         (ADR-0017, fail-closed). Writes an `OrderExpiryRequested` to the outbox; the relay publishes it to `orders.v1`
         (key = ticker), after the order's `OrderPlaced` if that was ever published. Works even if order-service has no
         record of the order (it may have crashed after reserving). Idempotent per `order_id`: a repeat returns **202**
-        with the original `requested_at`. The money is released later by portfolio-service, only when the matching
+        with the original `requested_at` and sends the same request again (same event ID); the sweeper repeats it every
+        5 minutes until the engine answers. The money is released later by portfolio-service, only when the matching
         engine answers (`OrderCancelled` reason `ORDER_EXPIRED`, or `OrderExpired`).
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'

@@ -4,6 +4,10 @@ Every cycle it finds reservations that have been ACTIVE for 120 s without an Ord
 order-service (A-19) to send an expiry request to the matching engine. It never releases money
 itself: the release happens later, only when the engine's answer (OrderCancelled ORDER_EXPIRED or
 OrderExpired) arrives on matching.v1. If order-service does not answer, the next cycle asks again.
+If the engine has not answered 5 minutes after the request, the sweeper asks again, with no limit:
+A-19 then sends the same request once more (same event_id, so the engine acts on it once). A request
+lost on its way is sent again; until the engine answers, the money stays reserved (ADR-0017 note
+"No time limit for cancels and expiries").
 
 `can_sweep(ticker)` lets the caller skip tickers whose matching.v1 partition this replica does not
 own or has not fully read: an unread OrderAccepted must not look like an orphan.
@@ -22,6 +26,7 @@ from portfolio_service.runtime.events import format_timestamp
 logger = logging.getLogger("sweeper")
 
 ORPHAN_AFTER_SECONDS = 120
+ASK_AGAIN_AFTER_SECONDS = 300
 SWEEP_EVERY_SECONDS = 10
 
 
@@ -34,6 +39,7 @@ class OrphanSweeper:
         can_sweep: Callable[[str], bool],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         orphan_after_seconds: float = ORPHAN_AFTER_SECONDS,
+        ask_again_after_seconds: float = ASK_AGAIN_AFTER_SECONDS,
         on_requested: Callable[[], None] = lambda: None,
     ) -> None:
         self._store = store
@@ -41,6 +47,7 @@ class OrphanSweeper:
         self._can_sweep = can_sweep
         self._clock = clock
         self._orphan_after = timedelta(seconds=orphan_after_seconds)
+        self._ask_again_after = timedelta(seconds=ask_again_after_seconds)
         self._on_requested = on_requested
 
     async def sweep_once(self) -> int:
@@ -48,7 +55,8 @@ class OrphanSweeper:
         now = self._clock()
         async with self._store.transaction() as tx:
             candidates = await tx.unconfirmed_reservations(
-                format_timestamp(now - self._orphan_after)
+                format_timestamp(now - self._orphan_after),
+                format_timestamp(now - self._ask_again_after),
             )
         requested = 0
         for r in candidates:

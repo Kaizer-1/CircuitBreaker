@@ -11,11 +11,12 @@ import asyncio
 import base64
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from order_service.domain.order import (
+    FINISHED,
     Order,
     OrderRequest,
     OrderStatus,
@@ -46,8 +47,7 @@ class OrderNotFoundError(Exception):
 
 class NotCancellableError(Exception):
     def __init__(self, order: Order) -> None:
-        state = "a cancel is already pending" if order.cancel_requested else str(order.status)
-        super().__init__(f"Order {order.order_id} is {state}.")
+        super().__init__(f"Order {order.order_id} is already {order.status}.")
 
 
 class RejectedOrderError(Exception):
@@ -207,8 +207,13 @@ class Orders:
 
     async def cancel(self, trader_id: str, order_id: str, *, correlation_id: str) -> Order:
         order = await self.get(trader_id, order_id)
-        if not order.cancellable():
+        if order.status in FINISHED:
             raise NotCancellableError(order)
+        if order.cancel_requested:
+            sent = await self._store.find_event(order_id, "OrderCancelRequested")
+            if sent is not None:  # a retry while the engine has not answered yet
+                await self._resend(OutboxEntry(order_id, order.ticker, sent), order)
+                return order
         at = self._clock()
         now = format_timestamp(at)
         event = order_cancel_requested(
@@ -219,6 +224,14 @@ class Orders:
         order.cancel_requested, order.updated_at = True, now
         await self._publish_now(entry, order)
         return order
+
+    async def _resend(self, entry: OutboxEntry, order: Order | None) -> None:
+        """Send a stored request again: the same event, so the engine acts on it once (it drops a
+        second copy by event_id). It goes back in the outbox first, so it is delivered even if
+        Redpanda is down now. Cancels and expiries have no time limit (ADR-0017 note)."""
+        again = replace(entry, written_at=self._now())
+        await self._store.requeue(again)
+        await self._publish_now(again, order)
 
     async def list(
         self,
@@ -255,7 +268,8 @@ class Orders:
     async def request_expiry(self, order_id: str, trader_id: str, ticker: str) -> ExpiryAccepted:
         order = await self._store.get(order_id)
         existing = await self._store.find_event(order_id, "OrderExpiryRequested")
-        if existing is not None:
+        if existing is not None:  # the sweeper asks again: the engine has not answered yet
+            await self._resend(OutboxEntry(order_id, ticker, existing), order)
             requested_at = str(existing.data["requested_at"])
             return ExpiryAccepted(order_id, requested_at, order is not None)
         at = self._clock()

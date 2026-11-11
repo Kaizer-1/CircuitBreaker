@@ -14,6 +14,7 @@ from api_gateway.api import internal_block, proxied, sessions, system_status, ws
 from api_gateway.api.auth import install_problem_handler
 from api_gateway.business_metrics import register_business_metrics
 from api_gateway.config import Settings
+from api_gateway.domain.nicknames import NicknameBlocklist
 from api_gateway.domain.rate_limit import RateLimiter
 from api_gateway.domain.sessions import Sessions
 from api_gateway.runtime.health import ReadinessCheck, health_router
@@ -63,6 +64,7 @@ def create_app(
         settings.jwt_secret.get_secret_value(), hours=settings.session_hours
     )
     app.state.rate_limiter = RateLimiter()
+    app.state.nickname_blocklist = NicknameBlocklist.default()
 
     # The gateway issues the correlation ID; every other service passes it through.
     app.add_middleware(

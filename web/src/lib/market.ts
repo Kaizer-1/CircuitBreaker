@@ -139,6 +139,48 @@ async function call<T>(
   return (response.status === 204 ? undefined : await response.json()) as T
 }
 
+/** Q-12 (api/market-data-service.yaml TimeTravelView). */
+export interface Verification {
+  live_sequence: number
+  live_state_hash: string
+  matches: boolean
+}
+export interface TimeTravelView {
+  ticker: Ticker
+  at: string
+  as_of_sequence: number
+  last_price_paise: number | null
+  order_book: OrderBook
+  candles: Candle[] // 1-minute, up to `at`
+  recent_trades: Trade[] // newest first
+  state_hash: string
+  verification: Verification | null
+}
+/** Q-13 messages (api/README.md). */
+export interface ReplayFrame {
+  as_of: string
+  as_of_sequence: number
+  order_book: OrderBook
+  last_trade: Trade | null
+  trades?: Trade[] // every fill of this command, oldest first (Phase 4; optional)
+  candle: Candle // the forming 5s candle
+}
+export interface ReplayEnd {
+  frames_sent: number
+  from: string
+  to: string
+  as_of_sequence: number
+  state_hash: string
+}
+export interface LeaderboardEntry {
+  rank: number
+  trader_id: string
+  nickname: string
+  kind: 'HUMAN' | 'BOT' | 'LOAD'
+  net_worth_paise: number
+  pnl_percent: number
+}
+
 export interface JoinAnswer {
   access_token: string
   trader_id: string
@@ -156,6 +198,32 @@ export const api = {
       `/v1/market/${ticker}/candles?interval=${interval}&limit=120`,
       token,
     ).then((b) => b.candles),
+  /** Candles in a window, oldest first (Q-03): the time-travel timeline and the replay chart. */
+  candlesBetween: (
+    token: string,
+    ticker: Ticker,
+    interval: '5s' | '1m',
+    from: string,
+    to: string,
+    limit: number,
+  ) =>
+    call<{ candles: Candle[] }>(
+      'GET',
+      `/v1/market/${ticker}/candles?${new URLSearchParams({ interval, from, to, limit: String(limit) })}`,
+      token,
+    ).then((b) => b.candles),
+  timeTravel: (token: string, ticker: Ticker, at: string) =>
+    call<TimeTravelView>(
+      'GET',
+      `/v1/time-travel/${ticker}?${new URLSearchParams({ at, depth: '6' })}`,
+      token,
+    ),
+  leaderboard: (token: string, limit = 10) =>
+    call<{ as_of: string; entries: LeaderboardEntry[] }>(
+      'GET',
+      `/v1/leaderboard?limit=${limit}`,
+      token,
+    ),
   portfolio: (token: string) => call<Portfolio>('GET', '/v1/portfolio', token),
   openOrders: (token: string) =>
     call<{ items: Order[] }>('GET', '/v1/orders?status=open&limit=50', token).then((b) => b.items),

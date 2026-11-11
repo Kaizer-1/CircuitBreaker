@@ -17,6 +17,7 @@ from bot_traders.domain.market import (
     Cancel,
     OpenOrder,
     Place,
+    Requote,
     buy_protection,
     ceil_tick,
     floor_tick,
@@ -101,11 +102,14 @@ def view(**fields: Any) -> TickerView:
     return TickerView(**(base | fields))
 
 
+def quotes(intents: list[Any]) -> list[Place]:
+    """The new quotes in a market maker's intents (each sent with what it replaces)."""
+    return [i.place for i in intents if isinstance(i, Requote)]
+
+
 def test_a_market_maker_quotes_both_sides_on_ticks_around_the_price() -> None:
     intents = MarketMaker(half_spread_bps=10).decide(view(), seeded())
-    bid, ask = (
-        next(i for i in intents if isinstance(i, Place) and i.side == s) for s in ("BUY", "SELL")
-    )
+    bid, ask = (next(q for q in quotes(intents) if q.side == s) for s in ("BUY", "SELL"))
     assert bid.limit_price_paise is not None and ask.limit_price_paise is not None
     assert bid.limit_price_paise < 24550 < ask.limit_price_paise
     assert (ask.limit_price_paise - bid.limit_price_paise) / 24550 < 0.003
@@ -114,15 +118,17 @@ def test_a_market_maker_quotes_both_sides_on_ticks_around_the_price() -> None:
 
 def test_a_market_maker_keeps_a_good_quote_and_replaces_a_stale_one() -> None:
     mm = MarketMaker(half_spread_bps=10)
-    first = [i for i in mm.decide(view(), seeded()) if isinstance(i, Place)]
-    bid = next(i for i in first if i.side == "BUY")
+    bid = next(q for q in quotes(mm.decide(view(), seeded())) if q.side == "BUY")
     resting = OpenOrder(
         "o1", "CHAIWALA", "BUY", bid.limit_price_paise, bid.quantity, placed_candle=9
     )
     again = mm.decide(view(open_orders=[resting]), seeded())
-    assert not any(isinstance(i, Place) and i.side == "BUY" for i in again)  # keeps it
+    assert not any(q.side == "BUY" for q in quotes(again))  # keeps it
     moved = mm.decide(view(open_orders=[resting], closes=deque([25000] * 30)), seeded())
-    assert Cancel("o1", "CHAIWALA") in moved  # the price moved: requote
+    [requote] = [i for i in moved if isinstance(i, Requote) and i.place.side == "BUY"]
+    # The price moved: a new bid, sent together with the cancel of the old one (no gap).
+    assert requote.cancels == (Cancel("o1", "CHAIWALA"),)
+    assert not any(isinstance(i, Cancel) for i in moved)
 
 
 def test_a_market_maker_long_on_shares_quotes_lower_to_sell_them() -> None:
@@ -131,13 +137,42 @@ def test_a_market_maker_long_on_shares_quotes_lower_to_sell_them() -> None:
     long = mm.decide(view(shares_held=1_800), seeded())
 
     def ask(intents: list[Any]) -> int:
-        [price] = [
-            i.limit_price_paise for i in intents if isinstance(i, Place) and i.side == "SELL"
-        ]
+        [price] = [q.limit_price_paise for q in quotes(intents) if q.side == "SELL"]
         assert price is not None
         return price
 
     assert ask(long) < ask(flat)
+
+
+def test_a_market_maker_short_of_shares_never_bids_far_above_its_fair_price() -> None:
+    # Phase 4: bidding up to 30 bp above fair to buy back shares fed a run-away price on MONSOON.
+    mm = MarketMaker(half_spread_bps=8)
+    short = mm.decide(view(shares_held=0), seeded())
+    [bid] = [q.limit_price_paise for q in quotes(short) if q.side == "BUY"]
+    assert bid is not None
+    fair = 24550  # last == reference here, so the lean changes nothing
+    assert (bid - fair) / fair * 10_000 <= 15 - 8
+
+
+def test_a_market_makers_fair_price_leans_towards_the_reference() -> None:
+    above = view(closes=deque([27000] * 30), best_bid=26990, best_ask=27010)
+    [bid, ask] = sorted(
+        q.limit_price_paise or 0
+        for q in quotes(MarketMaker(half_spread_bps=8).decide(above, seeded()))
+    )
+    fair = 27000 - 0.05 * (27000 - 24550)  # 26877.5: 5% of the gap every candle
+    assert bid < fair < ask < 27000
+
+
+def test_momentum_needs_three_ticks_on_a_cheap_ticker() -> None:
+    # MONSOON is 8820 paise: 8 basis points is 7 paise, under 2 ticks of 5 paise.
+    always = Momentum(chance=1.0)
+    wiggle = view(
+        ticker="MONSOON", closes=deque([8820] * 10 + [8830]), best_bid=8815, best_ask=8835
+    )
+    trend = view(ticker="MONSOON", closes=deque([8820] * 10 + [8835]), best_bid=8830, best_ask=8840)
+    assert always.decide(wiggle, seeded()) == []
+    assert [i.side for i in always.decide(trend, seeded()) if isinstance(i, Place)] == ["BUY"]
 
 
 def test_momentum_follows_the_move() -> None:
@@ -347,3 +382,149 @@ async def test_after_the_stream_drops_the_next_refresh_lists_open_orders_again()
     await bot.refresh()
     assert exchange.order_lists == 2
     listening.cancel()
+
+
+class SlowListing(SimExchange):
+    """Q-07 times out (order-service saturated) until `healthy` is set."""
+
+    def __init__(self) -> None:
+        super().__init__(VirtualTime())
+        self.healthy = False
+        self.listings_tried = 0
+
+    async def open_orders(self, session: Session) -> list[dict[str, Any]]:
+        self.listings_tried += 1
+        if not self.healthy:
+            raise TimeoutError("ReadTimeout")
+        return await super().open_orders(session)
+
+
+async def test_a_failing_bot_backs_off_instead_of_retrying_every_candle() -> None:
+    from bot_traders.application.bot import STEP_BACKOFF_MAX_SECONDS, Bot, MarketState
+
+    exchange = SlowListing()
+    bot = Bot(roster()[0], exchange, seeded(), clock=exchange.time.clock, sleep=exchange.time.sleep)
+    await bot.login()
+    market = MarketState([24550])
+    tried_at: list[float] = []
+    for second in range(0, 120, 5):  # a candle every 5 s for two minutes
+        exchange.time.now = float(second)
+        before = exchange.listings_tried
+        await bot.act("CHAIWALA", market)
+        if exchange.listings_tried > before:
+            tried_at.append(exchange.time.now)
+    # 1 s, 2 s, 4 s ... between tries, rounded up to the next candle, never more than 30 s apart.
+    assert tried_at[:5] == [0.0, 5.0, 10.0, 15.0, 25.0]
+    gaps = [b - a for a, b in zip(tried_at, tried_at[1:], strict=False)]
+    assert gaps == sorted(gaps) and max(gaps) <= STEP_BACKOFF_MAX_SECONDS + 5
+    assert len(tried_at) < 24 / 2  # far fewer than one try per candle
+
+    exchange.healthy = True  # order-service recovered
+    tries = exchange.listings_tried
+    exchange.time.now = 1_000.0
+    acting = asyncio.create_task(bot.act("CHAIWALA", market))
+    await exchange.time.run_until(1_005.0)  # the step's orders go out over the interval
+    await acting
+    assert exchange.listings_tried == tries + 1 and bot._backoff == 0.0  # the pause is reset
+
+
+class Expiring(SimExchange):
+    """Sessions that end: after `expire()`, every call with an old token is refused (401)."""
+
+    def __init__(self) -> None:
+        super().__init__(VirtualTime())
+        self.logins = 0
+        self.valid: set[str] = set()
+
+    async def login(self, account: str) -> Session:
+        self.logins += 1
+        base = await super().login(account)  # opens the account the first time
+        session = Session(base.account, base.trader_id, f"token-{account}-{self.logins}")
+        self.valid.add(session.token)
+        return session
+
+    def expire(self) -> None:
+        self.valid.clear()
+
+    async def portfolio(self, session: Session) -> dict[str, Any]:
+        from bot_traders.ports.exchange import SessionExpiredError
+
+        if session.token not in self.valid:
+            raise SessionExpiredError("401")
+        return await super().portfolio(session)
+
+
+async def test_a_bot_whose_session_expired_signs_in_again_and_carries_on() -> None:
+    from bot_traders.application.bot import Bot, MarketState
+
+    exchange = Expiring()
+    bot = Bot(roster()[0], exchange, seeded(), clock=exchange.time.clock, sleep=exchange.time.sleep)
+    await bot.login()
+    market = MarketState([24550])
+
+    async def step(at: float) -> None:
+        exchange.time.now = at
+        acting = asyncio.create_task(bot.act("CHAIWALA", market))
+        await exchange.time.run_until(at + 5)
+        await acting
+
+    await step(0)
+    assert exchange.logins == 1 and bot.session is not None and exchange.placed
+    exchange.expire()  # twelve hours later
+    await step(100)
+    assert bot.session is None  # refused: dropped, to sign in on the next step
+    lists = exchange.order_lists
+    await step(110)
+    assert exchange.logins == 2 and bot.session is not None and bot._backoff == 0.0
+    assert exchange.order_lists == lists + 1  # what finished while signed out: listed again
+
+
+async def test_a_requote_places_the_new_quote_before_it_cancels_the_old_one() -> None:
+    """The README's promise: a market maker always has a bid and an ask. Replacing a quote never
+    leaves its side empty, not even for the moment between the two requests."""
+    from bot_traders.application.bot import Bot, MarketState
+
+    exchange = SimExchange(VirtualTime())
+    bot = Bot(roster()[0], exchange, seeded())
+    await bot.login()
+    await bot.refresh()
+    market = MarketState([24550])
+    await bot.execute(Place("CHAIWALA", "BUY", 5, 24500), market)
+    [old] = list(bot.open_orders)
+    calls: list[str] = []
+    real_place, real_cancel = exchange.place, exchange.cancel
+
+    async def place(session: Session, order: Place) -> dict[str, Any]:
+        calls.append("place")
+        return await real_place(session, order)
+
+    async def cancel(session: Session, order_id: str) -> None:
+        calls.append("cancel")
+        await real_cancel(session, order_id)
+
+    exchange.place, exchange.cancel = place, cancel  # type: ignore[method-assign,assignment]
+    await bot.execute(
+        Requote(Place("CHAIWALA", "BUY", 5, 24510), (Cancel(old, "CHAIWALA"),)), market
+    )
+    assert calls == ["place", "cancel"]
+    assert old not in bot.open_orders and len(bot.open_orders) == 1
+
+
+async def test_a_lost_answer_is_asked_again_with_the_same_key_so_no_order_is_orphaned() -> None:
+    tries: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        tries.append(request.headers["Idempotency-Key"])
+        if len(tries) == 1:
+            raise httpx.ReadTimeout("the answer was lost", request=request)
+        return httpx.Response(202, json={"order_id": "o7", "status": "PENDING"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
+        gateway = GatewayExchange("http://gateway/", "s3cret", client)
+        placed = await gateway.place(
+            Session("bot-01", "b0b0", "tok"), Place("JUGAAD", "SELL", 3, 118000)
+        )
+    assert placed["order_id"] == "o7"
+    assert (
+        len(tries) == 2 and tries[0] == tries[1]
+    )  # the same key: order-service returns the same order

@@ -2,8 +2,8 @@
 
 Generated once by tools/gen_stubs.py (contract first). From now on edit this file by hand:
 replace a stub with the real route when the operation is built. tests/contract/ fails if this
-file and the spec disagree. Q-02 to Q-05 are built (api/market.py); Q-12 is Phase 4, A-12 and A-13
-Phase 7.
+file and the spec disagree. Q-02 to Q-05 are built (api/market.py), Q-12 too (api/time_travel.py);
+A-12 and A-13 are Phase 7.
 """
 
 from fastapi import APIRouter, Request
@@ -12,16 +12,6 @@ from fastapi.responses import JSONResponse
 from market_data_service.runtime.problem import not_implemented
 
 router = APIRouter()
-
-
-@router.get(
-    "/v1/time-travel/{ticker}",
-    operation_id="getMarketAt",
-    summary="Get the market as it was at time T",
-    openapi_extra={"x-seeds-id": "Q-12"},
-)
-async def get_market_at(request: Request) -> JSONResponse:
-    return not_implemented(request, "Q-12")
 
 
 @router.post(

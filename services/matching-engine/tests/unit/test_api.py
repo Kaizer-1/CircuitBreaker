@@ -106,6 +106,10 @@ def test_q15_returns_the_latest_snapshot_at_or_before_a_time(client: TestClient)
     ).json()
     assert body["sequence"] == 3  # every 2 events: taken after the 2-event command (seq 2-3)
     assert body["bids"][0]["orders"][0]["remaining_quantity"] == 30
+    # BOB's sell was filled by the trade at sequence 3: the snapshot says so, for the hash.
+    assert body["closed"] == [
+        {"order_id": "0dde0000-0000-4000-8000-000000000001", "state": "FILLED", "trader_id": BOB}
+    ]
 
 
 def test_q15_without_a_snapshot_yet_is_an_empty_book_at_sequence_0(client: TestClient) -> None:
@@ -116,6 +120,7 @@ def test_q15_without_a_snapshot_yet_is_an_empty_book_at_sequence_0(client: TestC
         "as_of": "2026-11-20T11:00:00.000Z",
         "bids": [],
         "asks": [],
+        "closed": [],
     }
 
 

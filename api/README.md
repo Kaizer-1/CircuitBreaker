@@ -96,7 +96,8 @@ carries its ID in its description and in an `x-seeds-id` field.
   → connection closed.
 - **Reconnect:** clients reconnect with exponential backoff (1 s → 30 s) and receive a fresh `snapshot` first,
   so a missed message never leaves the UI wrong.
-- **Close codes:** `4401` unauthenticated, `4403` forbidden, `4404` unknown ticker/incident, `1011` server error.
+- **Close codes:** `4401` unauthenticated, `4403` forbidden, `4404` unknown ticker/incident, `4422` invalid parameters,
+  `1013` try again later (a full replica), `1011` server error.
 
 ### Q-06 — `/v1/ws/market/{ticker}` (market-data-service, any role)
 
@@ -139,13 +140,21 @@ that holds that ticker at most once a second. An `OrderExpired` (an order the en
 
 ### Q-13 — `/v1/ws/replay/{ticker}?from=…&to=…&speed=…` (market-data-service, any role)
 
-Query parameters: `from`, `to` (ISO-8601, window ≤ 30 minutes, `to` not in the future), `speed` ∈ {1, 2, 5, 10, 60}.
+Query parameters: `from`, `to` (ISO-8601 with a UTC offset, window ≤ 30 minutes, `to` not in the future), `speed` ∈
+{1, 2, 5, 10, 60}. The 30-minute cap is for playback only: time travel (Q-12) seeks anywhere in the stored history.
 
 | Direction | `type` | `data` |
 |---|---|---|
-| server → client | `frame` | `{ as_of, as_of_sequence, order_book: OrderBookDepth, last_trade: Trade \| null, candle: Candle (forming 5s candle) }` — one per command's group of events, paced by original time ÷ speed |
-| server → client | `end` | `{ frames_sent, from, to }` — then the server closes the connection normally |
-| client → server | `pause` / `resume` | `{}` |
+| server → client | `frame` | `{ as_of, as_of_sequence, order_book: OrderBookDepth, last_trade: Trade \| null, trades: Trade[], candle: Candle (forming 5s candle) }` — first the book at `from` (rebuilt like Q-12), then one per command's group of events (same `causation_id`, so never half a match), paced by original time ÷ speed. `trades` (optional field, Phase 4) lists every fill of that command, oldest first, so the replay's tape equals what the live market published; `last_trade` is its last one |
+| server → client | `end` | `{ frames_sent, from, to, as_of_sequence, state_hash }` — once market time reaches `to`; `state_hash` is the book at `to`, equal to Q-12's `state_hash` at `to` (Phase 4). Then the server closes normally (`1000`) |
+| client → server | `pause` / `resume` | `{}` — market time stops and starts again |
+| client → server | `speed` | `{ speed }`, one of 1, 2, 5, 10, 60 — takes effect at once from the current position (Phase 4); any other value is ignored |
+
+Each market-data replica plays at most 4 replays at once and keeps one of those places for the admin role, so the
+presenter is never refused. A replay paused for more than 5 minutes is closed (`1000`), and a disconnect ends the
+replay at once; either way its place is free again. Close codes: `4404` unknown ticker, `4422` invalid parameters
+(the reason says which), `1013` this replica is already playing its replays (try again later; the gateway passes it
+on), `1011` market data is starting or the event store stopped answering.
 
 ### Q-19 — `/v1/ws/incidents` (sre-agent, any role; approve/decline buttons shown only to admins)
 
@@ -180,6 +189,10 @@ Phase 0 feedback already applied: cancel became asynchronous (202) after the can
 sequence diagrams; reservations gained idempotency by `order_id` and the orphan rule (ADR-0011).
 Phase 2 feedback: the orphan rule became fail-closed, adding A-19 and the cancel reason `ORDER_EXPIRED` (ADR-0017), and
 self-trade prevention added the cancel reason `SELF_TRADE_PREVENTED` (order-service spec 1.1.0, gateway spec 1.1.0).
+Phase 4 feedback (proving time travel exact to an audience): Q-15 returns the snapshot's finished and expired orders
+(`closed`, matching-engine spec 1.2.0); Q-12 returns the rebuilt book's `state_hash` and, at "now", a `verification`
+against the live engine book (market-data spec 1.1.0); Q-13 gained the `speed` message, the `end` hash and every fill per
+frame (`trades`).
 
 ## Error code catalog
 
@@ -192,7 +205,7 @@ self-trade prevention added the cancel reason `SELF_TRADE_PREVENTED` (order-serv
 | `NOT_FOUND` | 404 | Resource not found or not yours |
 | `NO_ACTIVE_FAULT` | 404 | No chaos fault to clear |
 | `NICKNAME_TAKEN` | 409 | Nickname already used |
-| `ORDER_NOT_CANCELLABLE` | 409 | Order already finished or cancel already pending |
+| `ORDER_NOT_CANCELLABLE` | 409 | Order already finished (a repeat while a cancel is pending answers `202` and re-sends it) |
 | `EXPERIMENT_ALREADY_RUNNING` | 409 | Only one chaos experiment at a time |
 | `EXPERIMENT_NOT_RUNNING` | 409 | Experiment already ended |
 | `FAULT_ALREADY_ACTIVE` | 409 | A fault is already injected |

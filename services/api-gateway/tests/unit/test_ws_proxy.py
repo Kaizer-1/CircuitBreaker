@@ -158,6 +158,19 @@ def test_messages_are_relayed_both_ways_and_close_codes_pass_through(gateway: An
     assert e.value.code == 4404
 
 
+@pytest.mark.parametrize(("upstream", "client_sees"), [(1013, 1013), (4422, 4422), (1012, 1011)])
+def test_try_again_later_reaches_the_client_and_other_upstream_codes_become_1011(
+    gateway: Any, upstream: int, client_sees: int
+) -> None:
+    client, app = gateway
+    with client.websocket_connect(f"/v1/ws/replay/CHAIWALA?access_token={token(app)}") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "close", "code": upstream})
+        with pytest.raises(WebSocketDisconnect) as e:
+            ws.receive_json()
+    assert e.value.code == client_sees
+
+
 def test_an_unreachable_upstream_closes_with_1011(gateway: Any) -> None:
     client, app = gateway
     assert closed_with(client, f"/v1/ws/incidents?access_token={token(app)}") == 1011

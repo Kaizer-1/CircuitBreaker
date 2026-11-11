@@ -4,7 +4,9 @@ shared by the REST routes and the WebSocket so both always say the same thing.""
 from datetime import UTC, date, datetime
 from typing import Any
 
+from market_data_service.application.time_travel import MarketAt
 from market_data_service.domain.candles import Candle
+from market_data_service.domain.depth import Level
 from market_data_service.domain.instruments import LOT_SIZE, TICK_SIZE_PAISE
 from market_data_service.domain.market import TickerMarket, Trade
 from market_data_service.events.candles import format_bucket
@@ -40,12 +42,38 @@ def trade_view(t: Trade) -> dict[str, Any]:
 
 def depth_view(market: TickerMarket, levels: int, now_ms: int) -> dict[str, Any]:
     bids, asks = market.depth_levels(levels)
+    as_of = iso(market.as_of_ms if market.as_of_ms is not None else now_ms)
+    return order_book_view(market.ticker, market.sequence, as_of, bids, asks)
+
+
+def time_travel_view(market: MarketAt, levels: int) -> dict[str, Any]:
+    """TimeTravelView (Q-12)."""
+    book = market.book
+    bids, asks = book.depth(levels)
+    as_of = book.as_of or iso(market.at_ms)
+    return {
+        "ticker": market.ticker,
+        "at": iso(market.at_ms),
+        "as_of_sequence": book.sequence,
+        "last_price_paise": market.last_price_paise,
+        "order_book": order_book_view(market.ticker, book.sequence, as_of, bids, asks),
+        "candles": [candle_view(c) for c in market.candles],
+        "recent_trades": [trade_view(t) for t in market.recent_trades],
+        "state_hash": market.state_hash,
+        "verification": vars(market.verification) if market.verification else None,
+    }
+
+
+def order_book_view(
+    ticker: str, sequence: int, as_of: str, bids: list[Level], asks: list[Level]
+) -> dict[str, Any]:
+    """OrderBookDepth."""
     best_bid = bids[0].price_paise if bids else None
     best_ask = asks[0].price_paise if asks else None
     return {
-        "ticker": market.ticker,
-        "as_of_sequence": market.sequence,
-        "as_of": iso(market.as_of_ms if market.as_of_ms is not None else now_ms),
+        "ticker": ticker,
+        "as_of_sequence": sequence,
+        "as_of": as_of,
         "best_bid_paise": best_bid,
         "best_ask_paise": best_ask,
         "spread_paise": best_ask - best_bid

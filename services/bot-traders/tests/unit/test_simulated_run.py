@@ -2,8 +2,8 @@
 
 - They never place an order the exchange would refuse: tick size, quantity, funds (no margin),
   shares (no short selling). Not one refusal in an hour of trading.
-- The market looks realistic: market makers keep the spread tight, prices drift but stay near
-  their reference, and trades keep coming.
+- The market looks realistic: market makers keep the spread tight, prices drift but stay within
+  ±10% of their reference (the band `scripts/bots_check.py` checks live), and trades keep coming.
 - Orders flow through each interval instead of arriving in a burst at the candle boundary.
 """
 
@@ -130,7 +130,7 @@ def test_prices_drift_but_stay_near_their_reference(hour: Run) -> None:
         prices = [p for t, p, _, _ in hour.exchange.trades if t == ticker]
         assert len(prices) > 300, ticker  # trades keep coming
         assert len(set(prices)) > 10, ticker  # and the price moves
-        assert all(0.85 * reference <= p <= 1.15 * reference for p in prices), ticker
+        assert all(0.90 * reference <= p <= 1.10 * reference for p in prices), ticker
 
 
 def test_every_strategy_trades(hour: Run) -> None:

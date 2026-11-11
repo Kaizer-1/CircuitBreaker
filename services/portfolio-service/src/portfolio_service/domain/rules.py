@@ -163,18 +163,53 @@ def settle_sell(
         r.status = ReservationStatus.CONSUMED
 
 
+def net_worth(account: Account, holdings: list[Holding], last_prices: dict[str, int]) -> int:
+    """Cash (reserved cash included) plus every share (reserved ones included) at the last price."""
+    return account.cash_paise + sum(h.quantity * last_prices[h.ticker] for h in holdings)
+
+
+def pnl_percent(account: Account, worth: int) -> float:
+    return round((worth - account.starting_value_paise) * 100 / account.starting_value_paise, 2)
+
+
+def leaderboard(
+    standings: list[tuple[Account, list[Holding]]], last_prices: dict[str, int], limit: int
+) -> list[dict[str, Any]]:
+    """Q-11: ranked by net worth, marked to market at the last traded price (as Q-09 values it).
+
+    Equal net worth shares a rank and the next rank skips ("1, 1, 3", standard competition
+    ranking); within a tie, nickname A to Z (ignoring case), so the order never flickers.
+    """
+    worths = sorted(
+        ((net_worth(a, hs, last_prices), a) for a, hs in standings),
+        key=lambda wa: (-wa[0], wa[1].nickname.casefold(), wa[1].nickname),
+    )
+    entries: list[dict[str, Any]] = []
+    for position, (worth, account) in enumerate(worths[:limit], start=1):
+        tied = entries and entries[-1]["net_worth_paise"] == worth
+        entries.append(
+            {
+                "rank": entries[-1]["rank"] if tied else position,
+                "trader_id": account.trader_id,
+                "nickname": account.nickname,
+                "kind": account.kind.value,
+                "net_worth_paise": worth,
+                "pnl_percent": pnl_percent(account, worth),
+            }
+        )
+    return entries
+
+
 def portfolio_view(
     account: Account, holdings: list[Holding], last_prices: dict[str, int], as_of: str
 ) -> dict[str, Any]:
     """Q-09: cash, holdings at last traded prices, net worth and profit or loss."""
     rows = []
-    market_value = 0
     for h in sorted(holdings, key=lambda h: h.ticker):
         if h.quantity == 0 and h.reserved_quantity == 0:
             continue
         price = last_prices[h.ticker]
         value = h.quantity * price
-        market_value += value
         rows.append(
             {
                 "ticker": h.ticker,
@@ -187,8 +222,8 @@ def portfolio_view(
                 "unrealised_pnl_paise": value - h.quantity * h.avg_cost_paise,
             }
         )
-    net_worth = account.cash_paise + market_value
-    pnl = net_worth - account.starting_value_paise
+    worth = net_worth(account, holdings, last_prices)
+    pnl = worth - account.starting_value_paise
     return {
         "trader_id": account.trader_id,
         "nickname": account.nickname,
@@ -197,9 +232,9 @@ def portfolio_view(
         "reserved_cash_paise": account.reserved_cash_paise,
         "available_cash_paise": account.available_cash_paise,
         "holdings": rows,
-        "net_worth_paise": net_worth,
+        "net_worth_paise": worth,
         "starting_value_paise": account.starting_value_paise,
         "pnl_paise": pnl,
-        "pnl_percent": round(pnl * 100 / account.starting_value_paise, 2),
+        "pnl_percent": pnl_percent(account, worth),
         "as_of": as_of,
     }

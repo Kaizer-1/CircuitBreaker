@@ -1,7 +1,11 @@
 """The MarketStore port on Cassandra (keyspace market_data, migrations/001_market_data.cql).
 
-One logged batch per save, so the stored sequence, candles and trades always agree. The driver
-is synchronous, so every call runs in a worker thread.
+One logged batch per save, so the stored sequence, candles and trades always agree. A save too big
+for one batch (thousands of flat candles after the laptop slept, say) is split: the candle and
+trade rows go first in batches of at most MAX_BATCH rows, and the sequence (last_prices) last, so
+the stored sequence is never ahead of what is stored. Rows are upserts by key, so a crash between
+the parts only means the restart writes the same rows again. The driver is synchronous, so every
+call runs in a worker thread.
 """
 
 import asyncio
@@ -17,6 +21,10 @@ from market_data_service.domain.market import DayStats, Trade, utc_day
 from market_data_service.ports.market_store import Changes, StoredMarket
 
 RESTORE_TRADES = 200
+# Rows per logged batch: Cassandra refuses a batch over batch_size_fail_threshold (50 KiB by
+# default); a candle row is about 100 bytes. Phase 4: after the laptop slept for two days, closing
+# every 5-second bucket in one batch was refused for ever and the market froze.
+MAX_BATCH = 100
 TRADE_DAYS_BACK = 7  # Q-05 looks this many days back for trades when today has too few
 
 QUERIES = {
@@ -32,6 +40,10 @@ QUERIES = {
     "insert_trade": "INSERT INTO trades_by_ticker (ticker, day, executed_at, trade_id, sequence,"
     " price_paise, quantity, aggressor_side) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     "select_trades": "SELECT * FROM trades_by_ticker WHERE ticker = ? AND day = ? LIMIT ?",
+    "select_trades_until": "SELECT * FROM trades_by_ticker WHERE ticker = ? AND day = ?"
+    " AND executed_at <= ? LIMIT ?",
+    "select_trades_between": "SELECT * FROM trades_by_ticker WHERE ticker = ? AND day = ?"
+    " AND executed_at >= ? AND executed_at <= ?",
 }
 
 
@@ -137,12 +149,12 @@ class CassandraMarketStore:
         def call() -> None:
             from cassandra.query import BatchStatement, BatchType
 
-            batch = BatchStatement(batch_type=BatchType.LOGGED)
             for name in ("upsert_market", "upsert_candle", "insert_trade"):
                 if name not in self._prepared:
                     self._prepared[name] = self._session.prepare(QUERIES[name])
+            rows: list[tuple[Any, tuple[Any, ...]]] = []
             d = changes.day
-            batch.add(
+            market_row = (
                 self._prepared["upsert_market"],
                 (
                     changes.ticker,
@@ -158,35 +170,45 @@ class CassandraMarketStore:
                 ),
             )
             for (interval, bucket), c in changes.candles.items():
-                batch.add(
-                    self._prepared["upsert_candle"],
+                rows.append(
                     (
-                        changes.ticker,
-                        interval,
-                        to_dt(bucket),
-                        c.open_paise,
-                        c.high_paise,
-                        c.low_paise,
-                        c.close_paise,
-                        c.volume,
-                        c.trade_count,
-                    ),
+                        self._prepared["upsert_candle"],
+                        (
+                            changes.ticker,
+                            interval,
+                            to_dt(bucket),
+                            c.open_paise,
+                            c.high_paise,
+                            c.low_paise,
+                            c.close_paise,
+                            c.volume,
+                            c.trade_count,
+                        ),
+                    )
                 )
             for t in changes.trades:
-                batch.add(
-                    self._prepared["insert_trade"],
+                rows.append(
                     (
-                        changes.ticker,
-                        utc_day(t.executed_at_ms),
-                        to_dt(t.executed_at_ms),
-                        UUID(t.trade_id),
-                        t.sequence,
-                        t.price_paise,
-                        t.quantity,
-                        t.aggressor_side,
-                    ),
+                        self._prepared["insert_trade"],
+                        (
+                            changes.ticker,
+                            utc_day(t.executed_at_ms),
+                            to_dt(t.executed_at_ms),
+                            UUID(t.trade_id),
+                            t.sequence,
+                            t.price_paise,
+                            t.quantity,
+                            t.aggressor_side,
+                        ),
+                    )
                 )
-            self._session.execute(batch)
+            # The sequence row goes in the last batch: it is stored only once everything is.
+            rows.append(market_row)
+            for start in range(0, len(rows), MAX_BATCH):
+                batch = BatchStatement(batch_type=BatchType.LOGGED)
+                for statement, values in rows[start : start + MAX_BATCH]:
+                    batch.add(statement, values)
+                self._session.execute(batch)
 
         await asyncio.to_thread(call)
 
@@ -202,6 +224,30 @@ class CassandraMarketStore:
         rows = await self._run("select_market", ticker)
         last = rows[0].last_trade_at if rows else None
         return await self._recent(ticker, limit, to_ms(last) if last is not None else None)
+
+    async def trades_until(self, ticker: str, until_ms: int, limit: int) -> list[Trade]:
+        found: list[Trade] = []
+        day = utc_day(until_ms)
+        for _ in range(TRADE_DAYS_BACK):
+            rows = await self._run(
+                "select_trades_until", ticker, day, to_dt(until_ms), limit - len(found)
+            )
+            found += sorted((_trade(r) for r in rows), key=lambda t: -t.sequence)
+            if len(found) >= limit:
+                break
+            day -= timedelta(days=1)
+        return found
+
+    async def trades_between(self, ticker: str, from_ms: int, to_ms: int) -> list[Trade]:
+        found: list[Trade] = []
+        day, last = utc_day(from_ms), utc_day(to_ms)
+        while day <= last:  # a candle never spans more than two days
+            rows = await self._run(
+                "select_trades_between", ticker, day, to_dt(from_ms), to_dt(to_ms)
+            )
+            found += [_trade(r) for r in rows]
+            day += timedelta(days=1)
+        return sorted(found, key=lambda t: t.sequence)
 
     async def _recent(self, ticker: str, limit: int, last_trade_at_ms: int | None) -> list[Trade]:
         if last_trade_at_ms is None:

@@ -24,9 +24,9 @@ events.
 |---|---|
 | `domain/order.py` | Validation codes and the status rules (`accepted`, `traded`, `cancelled`, `cancel_rejected`, `expired`) |
 | `application/orders.py` | A-05, A-07, Q-07, Q-08, A-19 and the `matching.v1` updates |
-| `application/outbox_relay.py` | Re-publishes unpublished rows after 5 s; never an `OrderPlaced` older than 60 s (no send starts after 50 s) |
+| `application/outbox_relay.py` | Re-publishes unpublished rows after 5 s; never an `OrderPlaced` older than 60 s (no send starts after 50 s); cancels and expiry requests have no time limit |
 | `application/circuit_breaker.py` | The breaker around A-06 |
-| `adapters/cassandra_store.py` | The keyspace; one logged batch per write that must be atomic |
+| `adapters/cassandra_store.py` | The keyspace; one logged batch per write that must be atomic; the outbox cursor |
 | `adapters/portfolio_http.py` | A-06 over HTTP, 500 ms timeout, through the breaker |
 
 **Placing an order** ([sequence diagram 2](../../docs/01-seeds/03-sequence-diagrams.md#2-place-an-order-j-03-j-04--a-05-a-06)):
@@ -34,6 +34,15 @@ validate → reserve (A-06) → store the order **and** its `OrderPlaced` in the
 `202`. If the publish fails, the relay retries after 5 s; if 60 s pass without a publish, the order becomes `REJECTED`
 (`PUBLISH_TIMEOUT`) and is never sent ([ADR-0011](../../docs/adr/0011-synchronous-reservation-over-saga.md)). A cancel
 or expiry is never published before its order's `OrderPlaced`.
+
+**Cancels and expiry requests have no time limit** (Phase 4,
+[ADR-0017 note](../../docs/adr/0017-fail-closed-orphan-release.md#note-no-time-limit-for-cancels-and-expiries-phase-4)):
+until the engine answers them the money stays reserved, so they are retried however long Redpanda was away. The relay
+reads the outbox from the cursor in `outbox_cursor` (the oldest minute that may still hold a row) instead of the last 15
+minutes, which once left three `DABBA` bids that could never be cancelled. A-07 on an order whose cancel is pending, and
+a repeated A-19, put the same stored request back in the outbox and send it again: the engine drops the second copy by
+`event_id`. `tests/integration/test_outbox_outage.py` stops a real Redpanda for 25 (virtual) minutes and checks that both
+requests arrive afterwards.
 
 **The Kafka producer has a 10 s delivery timeout and is not idempotent** (Phase 3,
 [ADR-0017 note](../../docs/adr/0017-fail-closed-orphan-release.md#note-making-the-60-s-rule-true-phase-3)): an idempotent
@@ -63,7 +72,11 @@ applied, so replayed events change nothing; `processed_events` drops duplicates.
 
 **A-19** (`POST /internal/v1/order-expiries`, called by portfolio-service's sweeper): writes an `OrderExpiryRequested`
 (event ID = UUIDv5 of the order ID) to the outbox, even for an order it never stored. An order still `PENDING` and
-never published becomes `REJECTED` (`PUBLISH_TIMEOUT`) first. A repeat answers `202` with the original `requested_at`.
+never published becomes `REJECTED` (`PUBLISH_TIMEOUT`) first. A repeat answers `202` with the original `requested_at`
+and sends the same request again.
+
+**A-07 repeated** while the cancel is pending answers `202` and sends the same `OrderCancelRequested` again; only a
+finished order (`FILLED`, `CANCELLED`, `REJECTED`) answers `409 ORDER_NOT_CANCELLABLE`.
 
 ## Circuit breaker (shown in the demo)
 
@@ -100,7 +113,7 @@ Other business metrics: `orders_placed_total{order_type,side}`, `orders_rejected
 
 Cassandra keyspace `order_service` (schema: [`src/order_service/migrations/`](src/order_service/migrations/), applied at
 start-up): `orders_by_id`, `orders_by_trader`, `order_events` (with a `published` flag), `outbox` (unpublished rows,
-one partition per minute, deleted once published; the relay looks back 15 minutes), `orders_by_idempotency_key`
+one partition per minute, deleted once published), `outbox_cursor` (where the relay starts reading), `orders_by_idempotency_key`
 (24 h TTL), `processed_events`.
 
 ## Events

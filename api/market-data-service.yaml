@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: market-data-service API
-  version: 1.0.0
+  version: 1.1.0
   summary: Instruments, candles, order-book depth, trades and time travel.
   description: |
     Owned by the **Market Insights Team** (MD Asif Ali). A CQRS read side: builds its models from `matching.v1`
@@ -218,8 +218,18 @@ paths:
       x-seeds-id: Q-12
       description: |
         **Q-12** — Rebuilds the ticker's order book at `at` by loading the nearest snapshot (Q-15) and applying stored
-        events (Q-14) from matching-engine, and returns it with the candles and trades up to that moment.
-        Never changes live state.
+        events (Q-14) from matching-engine, and returns it with the candles and trades up to that moment, plus the
+        rebuilt book's `state_hash` (the same rule as matching-engine's Q-16). Works for any moment in the stored
+        history (only the replay stream, Q-13, limits its window). Never changes live state: the book is a private
+        copy built for this request.
+
+        **Proof of exactness.** When `at` is at or after the ticker's latest event, the live book *is* the market at
+        `at`. market-data then reads matching-engine's live book (Q-16) first, stops the rebuild at exactly its
+        sequence, and fills `verification` with the live hash and whether the two match. Because both are compared at
+        one sequence, the check works while bots keep trading. For an earlier `at`, `verification` is null.
+
+        Each replica rebuilds at most 4 books at once, one place kept for the admin role (the presenter); beyond that
+        the answer is `503` with code `OVERLOADED`.
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/TickerPath'
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
@@ -272,8 +282,12 @@ paths:
                     quantity: 5
                     aggressor_side: SELL
                     executed_at: '2026-11-20T10:42:14.870Z'
+                state_hash: 7d1c0b5e3a9f8e2d4c6b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d
+                verification: null
         '422':
-          description: Invalid request, or `at` is in the future.
+          description: |
+            Invalid request, or `at` is in the future. A moment up to 2 seconds ahead of the service's clock counts as now
+            (viewers' clocks differ slightly), so "rewind to now" always lands after the latest event.
           content:
             application/problem+json:
               schema:
@@ -516,7 +530,8 @@ components:
             $ref: '#/components/schemas/Trade'
     TimeTravelView:
       type: object
-      required: [ticker, at, as_of_sequence, last_price_paise, order_book, candles, recent_trades]
+      required:
+        [ticker, at, as_of_sequence, last_price_paise, order_book, candles, recent_trades, state_hash, verification]
       properties:
         ticker:
           $ref: './shared/common.yaml#/components/schemas/Ticker'
@@ -528,11 +543,14 @@ components:
           description: Last event applied to rebuild this view.
         last_price_paise:
           type: [integer, 'null']
+          description: The last traded price at or before `at` (the reference price before the first trade).
         order_book:
           $ref: '#/components/schemas/OrderBookDepth'
         candles:
           type: array
-          description: 1-minute candles up to `at` (last 60).
+          description: |
+            1-minute candles up to `at` (last 60), oldest first. The candle holding `at` counts only the trades up to
+            `at`, so nothing from after that moment shows.
           items:
             $ref: '#/components/schemas/Candle'
         recent_trades:
@@ -540,6 +558,35 @@ components:
           description: Up to 50 trades at or before `at`, newest first.
           items:
             $ref: '#/components/schemas/Trade'
+        state_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: |
+            SHA-256 of the whole rebuilt book at `as_of_sequence` (every resting order and every finished or expired order
+            ID), by the rule of matching-engine's `BookState.state_hash`. Equal to the live engine's Q-16 hash when the
+            live book is at the same sequence: the proof that the rebuild is exact.
+        verification:
+          oneOf:
+            - $ref: '#/components/schemas/Verification'
+            - type: 'null'
+          description: |
+            Only when `at` is at or after the ticker's latest event (otherwise null): the rebuild compared with
+            matching-engine's live book (Q-16) at the same sequence.
+    Verification:
+      type: object
+      required: [live_sequence, live_state_hash, matches]
+      properties:
+        live_sequence:
+          type: integer
+          minimum: 0
+          description: The live book's sequence, read before the rebuild; the rebuild stopped at it (`as_of_sequence`).
+        live_state_hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: matching-engine's Q-16 `state_hash` at `live_sequence`.
+        matches:
+          type: boolean
+          description: True when the rebuilt book has the same sequence and the same `state_hash` as the live book.
     FaultRequest:
       type: object
       required: [fault, rate_mb_per_minute]

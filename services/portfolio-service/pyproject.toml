@@ -27,6 +27,7 @@ dev = [
   "hypothesis>=6.170,<7",
   "testcontainers[postgres]>=4.15,<5",
   "pytest-cov>=7.1,<8",
+  "jsonschema[format-nongpl]>=4.26,<5",
 ]
 
 [build-system]
@@ -60,4 +61,9 @@ files = ["src", "tests"]
 [[tool.mypy.overrides]]
 # Optional drivers: imported lazily in runtime/checks.py, and not every service installs every driver.
 module = ["aiokafka.*", "cassandra.*", "psycopg.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Test-only libraries without type information.
+module = ["jsonschema.*"]
 ignore_missing_imports = true

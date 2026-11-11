@@ -7,7 +7,9 @@ forwarded, so a trader can only ever open their own portfolio stream). The token
 on, and never logged: access logs record the path only. After that the gateway is a pipe: every
 message is relayed both ways, and an upstream close code (e.g. 4404) reaches the client as is.
 
-Close codes: 4401 no valid token, 4403 wrong role, 1011 the upstream is not reachable.
+Close codes: 4401 no valid token, 4403 wrong role, 1011 the upstream is not reachable. Passed on
+from the upstream as they are: 1000, 1013 ("try again later": a replay replica that is full) and
+every 4xxx code; any other upstream code becomes 1011.
 """
 
 import asyncio
@@ -73,7 +75,8 @@ async def _relay(client: WebSocket, upstream: Upstream) -> None:
                 else:
                     await client.send_bytes(message)
         code = upstream.close_code
-        return code if code is not None and (code == 1000 or 4000 <= code < 5000) else 1011
+        passed_on = code is not None and (code in (1000, 1013) or 4000 <= code < 5000)
+        return code if passed_on and code is not None else 1011
 
     up, down = asyncio.create_task(to_upstream()), asyncio.create_task(to_client())
     done, pending = await asyncio.wait({up, down}, return_when=asyncio.FIRST_COMPLETED)

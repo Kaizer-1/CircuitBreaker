@@ -2,13 +2,14 @@
 exception inside it rolls back, as in Postgres. Uniqueness rules match the real schema."""
 
 import copy
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any
 
 from portfolio_service.domain.model import (
     Account,
+    AccountKind,
     Holding,
     NicknameTakenError,
     Reservation,
@@ -76,15 +77,31 @@ class InMemoryTx:
     async def save_reservation(self, reservation: Reservation) -> None:
         self.s.reservations[reservation.order_id] = replace(reservation)
 
-    async def unconfirmed_reservations(self, created_before: str) -> list[Reservation]:
-        cut = parse_timestamp(created_before)
+    async def unconfirmed_reservations(
+        self, created_before: str, asked_before: str
+    ) -> list[Reservation]:
+        cut, asked = parse_timestamp(created_before), parse_timestamp(asked_before)
         return [
             replace(r)
             for r in self.s.reservations.values()
             if r.status is ReservationStatus.ACTIVE
             and not r.confirmed
-            and r.expiry_requested_at is None
+            and (r.expiry_requested_at is None or parse_timestamp(r.expiry_requested_at) <= asked)
             and parse_timestamp(r.created_at) <= cut
+        ]
+
+    async def standings(self, kinds: Sequence[AccountKind]) -> list[tuple[Account, list[Holding]]]:
+        return [
+            (
+                copy.deepcopy(a),
+                [
+                    copy.deepcopy(h)
+                    for (t, _), h in self.s.holdings.items()
+                    if t == a.trader_id and h.quantity > 0
+                ],
+            )
+            for a in self.s.accounts.values()
+            if a.kind in kinds
         ]
 
     async def last_prices(self) -> dict[str, int]:

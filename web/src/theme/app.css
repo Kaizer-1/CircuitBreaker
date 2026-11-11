@@ -311,8 +311,37 @@ td:first-child {
 .watch tr[aria-selected='true'] td {
   background: var(--row-select);
 }
-:root[data-theme='terminal'] .watch {
+/* The top row: the watchlist, and beside it the leaderboard when the presenter shows it, in the
+   same columns as the chart and the order book below. */
+.dash-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--gap);
+}
+.dash-top.with-board {
+  grid-template-columns: minmax(0, 1fr) 33em;
+}
+:root[data-theme='terminal'] .dash-top {
   margin: 0 calc(var(--gap) * 1);
+}
+.watch.compact .nm,
+.watch.compact .hl {
+  display: none; /* the hero names the stock; high and low make room for the leaderboard */
+}
+.leaderboard td {
+  font-size: 1.2em;
+  padding: calc(var(--cell-y) + 1px) 0.6em;
+}
+.leaderboard td.rank {
+  width: 2.2em;
+  text-align: right;
+  color: var(--text-3);
+}
+.leaderboard td.who {
+  max-width: 11em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .dash-main {
   flex: 1;
@@ -387,6 +416,7 @@ td:first-child {
   font-size: 0.55em;
   color: var(--text-2);
   font-weight: 500;
+  white-space: nowrap;
 }
 .hero .facts {
   margin-left: auto;
@@ -397,6 +427,7 @@ td:first-child {
   font-size: 1.05em;
 }
 .hero .facts dt {
+  white-space: nowrap;
   font-family: var(--font-label);
   color: var(--text-3);
   letter-spacing: var(--label-tracking);
@@ -1003,4 +1034,293 @@ td:first-child {
 .nick .suffix {
   color: var(--text-3);
   font-weight: 400;
+}
+
+/* ================================================================ time travel (presenter) */
+/* The paper masthead with the section line under it (both presenter screens). */
+.dash-head .title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+}
+.dash-head .title .masthead {
+  margin: 0;
+}
+.sections {
+  display: flex;
+  gap: 1.1em;
+  font-family: var(--font-label);
+  font-size: 0.85em;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+}
+.sections a {
+  color: var(--text-2);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+.sections a[aria-current='page'] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* Historical mode: a banner no one can miss, with the way back to live. */
+.historical,
+.live-strip {
+  display: flex;
+  align-items: center;
+  gap: 1.2em;
+  min-height: 2.9em;
+  padding: 0.3em var(--pad);
+}
+.historical .state {
+  margin-left: auto;
+  font-family: var(--font-num);
+  font-size: 0.95em;
+}
+.historical .edition b {
+  font-family: var(--font-num);
+}
+:root[data-theme='paper'] .historical {
+  border-top: var(--frame-strong);
+  border-bottom: var(--frame-strong);
+  background: var(--surface);
+}
+:root[data-theme='paper'] .historical .kicker {
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: 0.85em;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+:root[data-theme='paper'] .historical .edition {
+  font-family: var(--font-head);
+  font-style: italic;
+  font-size: 1.45em;
+}
+:root[data-theme='terminal'] .historical {
+  margin: 0 var(--gap);
+  background: var(--accent);
+  color: var(--select-text);
+  font-family: var(--font-num);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+:root[data-theme='terminal'] .historical .edition {
+  font-size: 1.3em;
+}
+.live-button {
+  border: 2px solid var(--select-bg);
+  background: var(--select-bg);
+  color: var(--select-text);
+  min-height: 44px;
+  padding: 0.35em 1.3em;
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: 1.05em;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+}
+:root[data-theme='terminal'] .live-button {
+  background: var(--bg);
+  border-color: var(--bg);
+  color: var(--accent-text);
+}
+.live-button b {
+  font-family: var(--font-num);
+}
+.live-strip {
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: 0.9em;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  border-bottom: var(--frame);
+}
+:root[data-theme='terminal'] .live-strip {
+  margin: 0 var(--gap);
+  border: var(--frame);
+  background: var(--surface);
+}
+.live-strip .proof {
+  margin-left: auto;
+}
+.proof {
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: 0.9em;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.proof .dim {
+  font-family: var(--font-num);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* On every panel's title in the past. */
+.history-tag {
+  font-family: var(--font-label);
+  font-size: 0.62em;
+  font-weight: 700;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+:root[data-theme='paper'] .history-tag {
+  font-family: var(--font-head);
+  font-size: 0.72em;
+  font-style: italic;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent-text);
+}
+:root[data-theme='terminal'] .history-tag {
+  background: var(--accent);
+  color: var(--select-text);
+  padding: 0.05em 0.5em;
+}
+:root[data-theme='terminal'] .is-historical .panel {
+  --panel-border: 1px solid var(--accent);
+}
+:root[data-theme='terminal'] .is-historical .panel > h2 {
+  background: var(--row-select);
+}
+
+/* The timeline: the session as a line, its biggest moves, the moment shown. */
+:root[data-theme='terminal'] .tt-timeline {
+  margin: 0 var(--gap);
+}
+.tt-timeline .tickers {
+  display: flex;
+  gap: 2px;
+}
+.tt-timeline .tickers button,
+.controls button {
+  border: var(--frame);
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-label);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 0.2em 0.7em;
+}
+.tt-timeline .tickers button[aria-pressed='true'],
+.controls button[aria-pressed='true'] {
+  background: var(--select-bg);
+  border-color: var(--select-bg);
+  color: var(--select-text);
+}
+.controls button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.timeline {
+  padding: 0.3em var(--pad) 0;
+}
+.timeline .track {
+  position: relative;
+  height: 4.4em;
+  cursor: ew-resize;
+  touch-action: none;
+  border-bottom: var(--frame);
+}
+.timeline svg {
+  position: absolute;
+  left: 0;
+  top: 1.3em;
+  width: 100%;
+  height: calc(100% - 1.6em);
+}
+.timeline path {
+  fill: none;
+  stroke: var(--text-2);
+  stroke-width: 1.5;
+}
+.timeline .moment {
+  position: absolute;
+  top: 0;
+  border: none;
+  background: transparent;
+  padding: 0 0.15em;
+  font-size: 1em;
+  line-height: 1.1;
+}
+.timeline .handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+}
+.timeline .handle-label {
+  position: absolute;
+  bottom: 0;
+  pointer-events: none;
+  padding: 0.05em 0.45em;
+  background: var(--select-bg);
+  color: var(--select-text);
+  font-family: var(--font-num);
+  font-size: 0.85em;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.timeline .ends {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-num);
+  font-size: 0.8em;
+  color: var(--text-3);
+  padding-top: 0.15em;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  padding: 0.35em var(--pad) 0.45em;
+}
+.controls .play {
+  min-width: 7.5em;
+  font-size: 1rem;
+  color: var(--text);
+}
+.controls .speeds {
+  display: flex;
+  gap: 2px;
+}
+.controls .problem {
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: 0.9em;
+}
+.dash.time-travel .hero .price {
+  font-size: 6.6em;
+}
+:root[data-theme='paper'] .dash.time-travel .hero .price {
+  font-size: 6em;
+}
+/* Paper's ₹ sign and wider lettering leave no room beside the price for the sequence and the
+   hash (the change wrapped, "State hash" broke in two): on the time-travel screen they get their
+   own row under it. The terminal skin keeps them beside the price. */
+:root[data-theme='paper'] .dash.time-travel .hero {
+  flex-wrap: wrap;
+  row-gap: 0.1em;
+}
+:root[data-theme='paper'] .dash.time-travel .hero .facts {
+  flex-basis: 100%;
+  margin-left: 0;
+  grid-template-columns: auto auto auto 1fr;
+  align-items: baseline;
+  padding-bottom: 0.45em;
+}
+:root[data-theme='paper'] .dash.time-travel .hero .facts dt:nth-of-type(2) {
+  margin-left: 1.4em;
+}
+:root[data-theme='paper'] .dash.time-travel .hero .facts dd {
+  text-align: left; /* each value next to its own label, not pushed to the far edge */
 }

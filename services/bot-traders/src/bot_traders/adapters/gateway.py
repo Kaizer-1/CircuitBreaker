@@ -10,9 +10,10 @@ from uuid import uuid4
 import httpx
 
 from bot_traders.domain.market import Place
-from bot_traders.ports.exchange import OrderRefusedError, Session
+from bot_traders.ports.exchange import OrderRefusedError, Session, SessionExpiredError
 
 RETRIES_ON_429 = 3
+LISTING_TIMEOUT_SECONDS = 30.0  # Q-07 reads the order history: slower than the 5 s other calls get
 
 
 class GatewayExchange:
@@ -30,17 +31,25 @@ class GatewayExchange:
         json: Any = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
+        read_timeout: float | None = None,
     ) -> httpx.Response:
         all_headers = dict(headers or {})
         if session is not None:
             all_headers["Authorization"] = f"Bearer {session.token}"
         for _ in range(RETRIES_ON_429):
             response = await self._client.request(
-                method, f"{self._base}{path}", json=json, params=params, headers=all_headers
+                method,
+                f"{self._base}{path}",
+                json=json,
+                params=params,
+                headers=all_headers,
+                timeout=read_timeout if read_timeout is not None else httpx.USE_CLIENT_DEFAULT,
             )
             if response.status_code != 429:
-                return response
+                break
             await asyncio.sleep(float(response.headers.get("Retry-After", "1")))  # the rate limit
+        if response.status_code == 401 and session is not None:
+            raise SessionExpiredError(f"{session.account}: token refused on {method} {path}")
         return response
 
     async def login(self, account: str) -> Session:
@@ -63,10 +72,15 @@ class GatewayExchange:
         }
         if order.limit_price_paise is not None:
             body["limit_price_paise"] = order.limit_price_paise
-        # A retried request must not become a second order.
-        response = await self._call(
-            "POST", "/v1/orders", session, json=body, headers={"Idempotency-Key": str(uuid4())}
-        )
+        # A retried request must not become a second order. If the answer is lost (a timeout, a
+        # dropped connection) the order may exist anyway: asking again with the same key returns
+        # it, so the bot knows about it instead of leaving an order it never cancels (Phase 4:
+        # such orphans piled up in the book during an outage).
+        key = {"Idempotency-Key": str(uuid4())}
+        try:
+            response = await self._call("POST", "/v1/orders", session, json=body, headers=key)
+        except httpx.TransportError:
+            response = await self._call("POST", "/v1/orders", session, json=body, headers=key)
         if response.status_code == 422:
             problem = response.json()
             raise OrderRefusedError(
@@ -84,7 +98,11 @@ class GatewayExchange:
 
     async def open_orders(self, session: Session) -> list[dict[str, Any]]:
         response = await self._call(
-            "GET", "/v1/orders", session, params={"status": "open", "limit": 100}
+            "GET",
+            "/v1/orders",
+            session,
+            params={"status": "open", "limit": 100},
+            read_timeout=LISTING_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         items: list[dict[str, Any]] = response.json()["items"]
@@ -114,12 +132,17 @@ class GatewayExchange:
         import websockets
 
         url = self._base.replace("http", "ws", 1) + "/v1/ws/portfolio"
-        async with websockets.connect(
-            f"{url}?access_token={session.token}", open_timeout=5, ping_interval=None
-        ) as ws:
-            async for raw in ws:
-                message: dict[str, Any] = json.loads(raw)
-                if message.get("type") == "ping":
-                    await ws.send('{"type":"pong"}')  # the api/README.md heartbeat
-                    continue
-                yield message
+        try:
+            async with websockets.connect(
+                f"{url}?access_token={session.token}", open_timeout=5, ping_interval=None
+            ) as ws:
+                async for raw in ws:
+                    message: dict[str, Any] = json.loads(raw)
+                    if message.get("type") == "ping":
+                        await ws.send('{"type":"pong"}')  # the api/README.md heartbeat
+                        continue
+                    yield message
+        except websockets.ConnectionClosed as exc:
+            if exc.rcvd is not None and exc.rcvd.code == 4401:
+                raise SessionExpiredError(f"{session.account}: stream refused the token") from exc
+            raise

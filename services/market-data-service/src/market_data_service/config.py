@@ -20,6 +20,13 @@ class Settings(BaseServiceSettings):
     # Inside Compose: http://matching-engine:8000
     matching_engine_url: str = "http://localhost:8002"
 
+    # Time travel (Q-12) and replay (Q-13): concurrent work per replica, one place of each kept for
+    # the admin role so the presenter is never refused (application/slots.py).
+    rebuild_slots: int = 4
+    replay_slots: int = 4
+    admin_reserved_slots: int = 1
+    replay_pause_limit_seconds: float = 300.0  # a replay paused longer than this is closed
+
     ws_ping_seconds: float = 15.0  # api/README.md heartbeat
     ws_pong_timeout_seconds: float = 45.0
     start_consumers: bool = True  # False in unit tests: no Cassandra or Kafka at start-up

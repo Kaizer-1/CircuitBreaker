@@ -6,14 +6,18 @@ gateway, except where a script must look at or break internals on purpose (it sa
 
 from __future__ import annotations
 
+import base64
 import json
 import os
+import socket
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -118,6 +122,16 @@ def join(prefix: str) -> Trader:
     return Trader(http("POST", f"{GATEWAY}/v1/sessions", {"nickname": nickname}))
 
 
+def tester(n: int) -> Trader:
+    """A trader for scripts and tests: load-test account `load-NN` (A-03, kind LOAD), never ranked
+    on the leaderboard (Q-11), so test traders never reach the projector. load-01 ... load-10 are
+    chaos-service's; tests use 11 and up. These accounts carry over between runs (until make
+    demo-reset), so checks compare with each one's own portfolio at the start."""
+    if not 11 <= n <= 99:
+        raise ValueError("test traders are load-11 ... load-99")
+    return bot(f"load-{n:02d}")
+
+
 def bot(name: str) -> Trader:
     return Trader(
         http(
@@ -129,12 +143,17 @@ def bot(name: str) -> Trader:
     )
 
 
-def wait_until_ready(timeout: float = 180) -> None:
-    """Every service ready (stores reachable, consumers caught up), as the admin's status shows."""
+def admin_token() -> str:
+    """A presenter (role admin) session: A-04 with the dev passcode."""
     session = http(
         "POST", f"{GATEWAY}/v1/admin/sessions", {"nickname": "e2e", "passcode": ADMIN_PASSCODE}
     )
-    auth = {"Authorization": f"Bearer {session['access_token']}"}
+    return str(session["access_token"])
+
+
+def wait_until_ready(timeout: float = 180) -> None:
+    """Every service ready (stores reachable, consumers caught up), as the admin's status shows."""
+    auth = {"Authorization": f"Bearer {admin_token()}"}
 
     def healthy() -> bool:
         return bool(http("GET", f"{GATEWAY}/v1/system/status", headers=auth)["status"] == "healthy")
@@ -224,3 +243,125 @@ def rupees(paise: int) -> str:
     if head:
         groups.insert(0, head)
     return f"{sign}₹{','.join([*groups, tail]) if groups else tail}.{fraction:02d}"
+
+
+class WebSocket:
+    """Just enough of a WebSocket client (RFC 6455) for the scripts: JSON text messages, the
+    protocol's ping/pong and close, and the channels' own {"type": "ping"} heartbeat (api/README).
+    Standard library only, like the rest of this file."""
+
+    def __init__(self, url: str, timeout: float = 60) -> None:
+        parts = urllib.parse.urlsplit(url)
+        self._sock = socket.create_connection((parts.hostname, parts.port or 80), timeout=timeout)
+        key = base64.b64encode(os.urandom(16)).decode()
+        target = parts.path + (f"?{parts.query}" if parts.query else "")
+        self._sock.sendall(
+            (
+                f"GET {target} HTTP/1.1\r\nHost: {parts.netloc}\r\nUpgrade: websocket\r\n"
+                f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n\r\n"
+            ).encode()
+        )
+        self._buffer = b""
+        while b"\r\n\r\n" not in self._buffer:
+            self._buffer += self._recv()
+        head, self._buffer = self._buffer.split(b"\r\n\r\n", 1)
+        status = head.split(b"\r\n", 1)[0].decode()
+        if " 101 " not in status:
+            raise ConnectionError(f"no WebSocket upgrade: {status}")
+        self.close_code: int | None = None
+        self.close_reason = ""
+
+    def _recv(self) -> bytes:
+        chunk = self._sock.recv(65536)
+        if not chunk:
+            raise ConnectionError("the connection dropped")
+        return chunk
+
+    def _read(self, count: int) -> bytes:
+        while len(self._buffer) < count:
+            self._buffer += self._recv()
+        data, self._buffer = self._buffer[:count], self._buffer[count:]
+        return data
+
+    def _send(self, opcode: int, payload: bytes) -> None:
+        mask, size = os.urandom(4), len(payload)  # a client always masks what it sends
+        if size < 126:
+            header = bytes([0x80 | opcode, 0x80 | size])
+        elif size < 65536:
+            header = bytes([0x80 | opcode, 0x80 | 126]) + size.to_bytes(2, "big")
+        else:
+            header = bytes([0x80 | opcode, 0x80 | 127]) + size.to_bytes(8, "big")
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        self._sock.sendall(header + mask + masked)
+
+    def send(self, message: dict[str, Any]) -> None:
+        self._send(0x1, json.dumps(message).encode())
+
+    def receive(self) -> dict[str, Any] | None:
+        """The next message; None once the server has closed (then see close_code)."""
+        message = b""
+        while True:
+            first, second = self._read(2)
+            opcode, size = first & 0x0F, second & 0x7F
+            if size == 126:
+                size = int.from_bytes(self._read(2), "big")
+            elif size == 127:
+                size = int.from_bytes(self._read(8), "big")
+            payload = self._read(size)
+            if opcode == 0x8:  # close: answer it and stop
+                self.close_code = int.from_bytes(payload[:2], "big") if payload else 1005
+                self.close_reason = payload[2:].decode(errors="replace")
+                try:
+                    self._send(0x8, payload[:2])
+                finally:
+                    self._sock.close()
+                return None
+            if opcode == 0x9:
+                self._send(0xA, payload)
+                continue
+            if opcode == 0xA:
+                continue
+            message += payload
+            if not first & 0x80:
+                continue  # more fragments follow
+            parsed: dict[str, Any] = json.loads(message)
+            message = b""
+            if parsed.get("type") == "ping":
+                self.send({"type": "pong"})
+                continue
+            return parsed
+
+    def close(self) -> None:
+        try:
+            self._send(0x8, (1000).to_bytes(2, "big"))
+        finally:
+            self._sock.close()
+
+
+@dataclass
+class Replay:
+    frames: list[dict[str, Any]]
+    end: dict[str, Any] | None
+    close_code: int | None
+    close_reason: str
+
+
+def open_replay(token: str, ticker: str, start: str, until: str, speed: int) -> WebSocket:
+    """Q-13 through the gateway, as the web app opens it."""
+    query = urllib.parse.urlencode(
+        {"from": start, "to": until, "speed": speed, "access_token": token}
+    )
+    return WebSocket(f"{GATEWAY.replace('http', 'ws', 1)}/v1/ws/replay/{ticker}?{query}")
+
+
+def play(socket_: WebSocket) -> Replay:
+    """Read a replay to its end: every frame, the end message and how it closed."""
+    frames: list[dict[str, Any]] = []
+    end = None
+    while (message := socket_.receive()) is not None:
+        if message["type"] == "frame":
+            frames.append(message["data"])
+        elif message["type"] == "end":
+            end = message["data"]
+    return Replay(frames, end, socket_.close_code, socket_.close_reason)

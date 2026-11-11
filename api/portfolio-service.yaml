@@ -71,7 +71,12 @@ paths:
       operationId: getLeaderboard
       summary: Get the leaderboard
       x-seeds-id: Q-11
-      description: '**Q-11** — Traders ranked by net worth (cash plus holdings at last price). Recomputed every 2 seconds.'
+      description: |
+        **Q-11** — Traders ranked by net worth: cash plus every share at the last traded price (reserved cash and shares
+        included; the reference price before a ticker's first trade), exactly as Q-09 values a portfolio. Only humans by
+        default; `include_bots=true` adds the bots; load-test accounts (`LOAD`) are never ranked. Equal net worth shares
+        a rank and the next rank skips (1, 1, 3); a tie is listed by nickname, A to Z ignoring case. Recomputed at most
+        every 2 seconds per replica, so `as_of` can be up to 2 seconds old.
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
         - $ref: './shared/common.yaml#/components/parameters/Limit'

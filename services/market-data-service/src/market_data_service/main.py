@@ -16,9 +16,13 @@ from market_data_service.adapters.cassandra_store import CassandraMarketStore, c
 from market_data_service.adapters.engine_http import HttpEventStore
 from market_data_service.adapters.matching_feed import MatchingFeed
 from market_data_service.api import market as market_api
+from market_data_service.api import replay as replay_api
 from market_data_service.api import stubs
+from market_data_service.api import time_travel as time_travel_api
 from market_data_service.application.hub import MarketHub
 from market_data_service.application.projection import MarketProjection
+from market_data_service.application.slots import Slots
+from market_data_service.application.time_travel import TimeTravel
 from market_data_service.business_metrics import register_business_metrics
 from market_data_service.config import Settings
 from market_data_service.runtime.checks import cassandra_check, redpanda_check
@@ -70,6 +74,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
     publisher = EventPublisher(settings.kafka_bootstrap_servers, settings.service_name, metrics)
     feed = MatchingFeed(settings.kafka_bootstrap_servers, settings.service_name, metrics)
     async with httpx.AsyncClient(limits=KEEP_ALIVE) as client:
+        engine = HttpEventStore(settings.matching_engine_url, client)
         while True:
             try:
                 session = await asyncio.to_thread(
@@ -87,7 +92,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
                 await feed.start()
                 projection = MarketProjection(
                     store,
-                    HttpEventStore(settings.matching_engine_url, client),
+                    engine,
                     publisher,
                     environment=settings.environment,
                     feed_caught_up=feed.caught_up,
@@ -108,6 +113,8 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
         business.market_ws_connections.labels(settings.service_name).set_function(hub.connections)
         app.state.store, app.state.projection, app.state.hub = store, projection, hub
         app.state.feed = feed
+        # Time travel reads the event store with its own private books: never the live ones.
+        app.state.time_travel = TimeTravel(engine, store, live=engine)
         tasks = [
             asyncio.create_task(projection.run_clock()),
             asyncio.create_task(hub.run()),
@@ -157,6 +164,9 @@ def create_app(
     app.state.projection = None
     app.state.hub = None
     app.state.feed = None
+    app.state.time_travel = None
+    app.state.rebuild_slots = Slots(settings.rebuild_slots, settings.admin_reserved_slots)
+    app.state.replay_slots = Slots(settings.replay_slots, settings.admin_reserved_slots)
     if readiness_checks is None:
         checks.append(projection_check(app))
 
@@ -170,5 +180,7 @@ def create_app(
     app.include_router(health_router(settings.service_name, checks))
     app.include_router(metrics_router(metrics))
     app.include_router(market_api.router)
+    app.include_router(time_travel_api.router)
+    app.include_router(replay_api.router)
     app.include_router(stubs.router)
     return app

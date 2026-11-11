@@ -5,7 +5,7 @@ settlements touching the same account wait for each other instead of overwriting
 """
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib import resources
@@ -214,13 +214,31 @@ class PgTx:
             ),
         )
 
-    async def unconfirmed_reservations(self, created_before: str) -> list[Reservation]:
+    async def unconfirmed_reservations(
+        self, created_before: str, asked_before: str
+    ) -> list[Reservation]:
         rows = await self._all(
             "SELECT * FROM reservations WHERE status = 'ACTIVE' AND NOT confirmed"
-            " AND expiry_requested_at IS NULL AND created_at <= %s ORDER BY created_at",
-            (parse_timestamp(created_before),),
+            " AND created_at <= %s"
+            " AND (expiry_requested_at IS NULL OR expiry_requested_at <= %s) ORDER BY created_at",
+            (parse_timestamp(created_before), parse_timestamp(asked_before)),
         )
         return [_reservation(r) for r in rows]
+
+    async def standings(self, kinds: Sequence[AccountKind]) -> list[tuple[Account, list[Holding]]]:
+        accounts = await self._all(
+            "SELECT * FROM accounts WHERE kind = ANY(%s)", ([k.value for k in kinds],)
+        )
+        holdings = await self._all(
+            "SELECT h.* FROM holdings h JOIN accounts a USING (trader_id)"
+            " WHERE a.kind = ANY(%s) AND h.quantity > 0",
+            ([k.value for k in kinds],),
+        )
+        by_trader: dict[str, list[Holding]] = {}
+        for row in holdings:
+            holding = _holding(row)
+            by_trader.setdefault(holding.trader_id, []).append(holding)
+        return [(a, by_trader.get(a.trader_id, [])) for a in map(_account, accounts)]
 
     async def last_prices(self) -> dict[str, int]:
         rows = await self._all("SELECT ticker, price_paise FROM last_prices", ())

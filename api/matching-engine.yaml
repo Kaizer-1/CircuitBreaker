@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: matching-engine internal API
-  version: 1.1.1
+  version: 1.2.0
   summary: Read-only access to the market event store and order books.
   description: |
     Owned by the **Trading Team** (Kaizer Dewaswala); treated as a complicated subsystem.
@@ -128,7 +128,9 @@ paths:
       x-seeds-id: Q-15
       description: |
         **Q-15** — Return the latest snapshot of the ticker's book taken at or before `at`. If none exists yet, returns
-        an empty book at sequence 0 (replay then starts from the first event).
+        an empty book at sequence 0 (replay then starts from the first event). Includes `closed`, every order the book
+        had finished or expired by then, so a rebuild from this snapshot plus later events (time travel, Q-12) has the
+        whole state and reproduces Q-16's `state_hash` exactly.
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/TickerPath'
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
@@ -162,6 +164,16 @@ paths:
                         trader_id: b0b0b0b0-0003-4000-8000-000000000003
                         remaining_quantity: 20
                         accepted_sequence: 995
+                closed:
+                  - order_id: 2c4e6a80-1b3d-4f5a-8c7e-9d0f1a2b3c4d
+                    state: FILLED
+                    trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                  - order_id: 6f5e4d3c-2b1a-4f0e-9d8c-7b6a5f4e3d2c
+                    state: EXPIRED
+                    trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                  - order_id: a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
+                    state: CANCELLED
+                    trader_id: b0b0b0b0-0002-4000-8000-000000000002
         '422':
           $ref: './shared/common.yaml#/components/responses/ValidationFailed'
         '503':
@@ -174,7 +186,9 @@ paths:
       x-seeds-id: Q-16
       description: |
         **Q-16** — Full live book (every resting order, in priority order) straight from the engine's memory. For
-        debugging and for checking that market-data-service's depth read model agrees with the source of truth.
+        debugging and for checking that market-data-service's depth read model agrees with the source of truth. Also
+        read by market-data-service when a time-travel request (Q-12) reaches "now", to prove its rebuild equals the
+        live book (Q-12 `verification`).
         Includes `state_hash`, so two books (before and after a restart, or rebuilt elsewhere) can be compared in
         one line. 404 while the engine is still rebuilding its books.
       parameters:
@@ -199,7 +213,8 @@ paths:
                         remaining_quantity: 30
                         accepted_sequence: 1041
                 asks: []
-                state_hash: 3f1d8b2a9c4e7f6a5b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a
+                # The real hash of this book, whose one finished order is 9e8d7c6b-… (filled by the Q-14 example's trade).
+                state_hash: 03ca757be8ef8300eee1590ee92781d47e6b765b9652c783fc43270372a95a2c
         '404':
           $ref: './shared/common.yaml#/components/responses/NotFound'
 components:
@@ -302,9 +317,35 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PriceLevel'
+        closed:
+          type: array
+          description: |
+            Q-15 only. Every order the book has finished (`FILLED`, `CANCELLED`) or expired (`EXPIRED`, a tombstone),
+            sorted by `order_id`. Part of the state: it decides cancel rejections and the tombstone rule, and
+            `state_hash` covers it.
+          items:
+            $ref: '#/components/schemas/ClosedOrder'
         state_hash:
           type: string
           pattern: '^[0-9a-f]{64}$'
           description: |
-            Q-16 only. SHA-256 of the canonical book (resting orders, finished and expired order IDs, sequence).
-            Equal hashes mean identical books; used to check that a restarted engine rebuilt exactly the same state.
+            Q-16 only. SHA-256 (lowercase hex) of the canonical book: the JSON object
+            `{"as_of", "asks", "bids", "closed", "sequence", "ticker"}` with keys sorted and no whitespace (separators
+            `,` and `:`). `bids` and `asks` are `[price_paise, [[order_id, trader_id, remaining_quantity,
+            accepted_sequence], …]]` levels in priority order (bids high to low, asks low to high; orders first in,
+            first matched); `closed` is `[order_id, state, trader_id]` sorted by `order_id`; `as_of` is the
+            `occurred_at` of the last applied event (`null` before any event). Equal hashes mean identical books: used
+            to check that a restarted engine rebuilt exactly the same state, and that a time-travel rebuild (Q-12)
+            equals the live book. Example: the Q-15 example above, as a book, hashes to
+            `0596569a159caeba4158cc5d45a807ab55e35fbf52c0959a943ad4bd5215edc3`.
+    ClosedOrder:
+      type: object
+      required: [order_id, state, trader_id]
+      properties:
+        order_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'
+        state:
+          type: string
+          enum: [FILLED, CANCELLED, EXPIRED]
+        trader_id:
+          $ref: './shared/common.yaml#/components/schemas/Uuid'

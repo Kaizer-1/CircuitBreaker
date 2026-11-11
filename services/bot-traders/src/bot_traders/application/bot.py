@@ -22,13 +22,18 @@ from random import Random
 from typing import Any
 
 from bot_traders.domain.ledger import Ledger
-from bot_traders.domain.market import Cancel, Intent, OpenOrder, Place
+from bot_traders.domain.market import Cancel, Intent, OpenOrder, Place, Requote
 from bot_traders.domain.strategies import BotPlan, TickerView
-from bot_traders.ports.exchange import Exchange, OrderRefusedError, Session
+from bot_traders.ports.exchange import Exchange, OrderRefusedError, Session, SessionExpiredError
 
 logger = logging.getLogger("bot")
 
 REFRESH_AFTER_SECONDS = 4.0  # a portfolio read is reused for this long
+# After a failed step the bot pauses, doubling each time (1 s, 2 s, 4 s ... 30 s), like the
+# stream's reconnect. Without it, 20 bots retrying a slow listing every candle kept order-service
+# saturated after a gateway restart (Phase 4: the abandoned listings piled up until it ran out of
+# memory). A step that works resets the pause.
+STEP_BACKOFF_MAX_SECONDS = 30.0
 CLOSED_REMEMBERED = 2_000  # finished order IDs kept, for a close that overtakes its A-05 answer
 SPREAD = (0.05, 0.95)  # orders go out between 5% and 95% of the interval
 
@@ -64,6 +69,7 @@ class Bot:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_order: OrderListener = lambda strategy, result, ticker: None,
+        listing_slots: asyncio.Semaphore | None = None,
     ) -> None:
         self.plan_ = plan
         self.name = plan.name
@@ -82,6 +88,10 @@ class Bot:
         self._refreshing = asyncio.Lock()
         self._closed: dict[str, None] = {}  # recently finished order IDs, oldest first
         self.busy: set[str] = set()  # tickers this bot is still acting on
+        self._signing_in = asyncio.Lock()
+        self._listing_slots = listing_slots or asyncio.Semaphore(1)
+        self._backoff = 0.0  # seconds; 0 while steps work
+        self._resume_at = 0.0  # no step before this time after a failure
 
     @property
     def strategy_name(self) -> str:
@@ -89,6 +99,18 @@ class Bot:
 
     async def login(self) -> None:
         self.session = await self._exchange.login(self.name)
+
+    async def ensure_session(self) -> None:
+        """Sign in again after the token was refused (sessions last 12 hours, A-03)."""
+        async with self._signing_in:
+            if self.session is None:
+                await self.login()
+
+    def _expired(self) -> None:
+        if self.session is not None:
+            logger.info("session expired: signing in again", extra={"bot": self.name})
+        self.session = None
+        self._reconcile = True  # what finished meanwhile is unknown
 
     def signed_in(self) -> Session:
         if self.session is None:
@@ -111,7 +133,8 @@ class Bot:
                 await self._list_open_orders()
 
     async def _list_open_orders(self) -> None:
-        orders = await self._exchange.open_orders(self.signed_in())
+        async with self._listing_slots:  # shared by the fleet: a few bots at a time
+            orders = await self._exchange.open_orders(self.signed_in())
         self._reconcile = False
         known = self.open_orders
         self.open_orders = {
@@ -131,11 +154,14 @@ class Bot:
         delay = 1.0
         while True:
             try:
+                await self.ensure_session()
                 async for message in self._exchange.portfolio_stream(self.signed_in()):
                     delay = 1.0
                     self.on_stream(message)
             except asyncio.CancelledError:
                 raise
+            except SessionExpiredError:
+                self._expired()
             except Exception as exc:
                 logger.warning(
                     "portfolio stream lost", extra={"bot": self.name, "error": repr(exc)}
@@ -185,20 +211,36 @@ class Bot:
         """Refresh, decide, and send this ticker's orders through the next interval."""
         if ticker in self.busy:
             return  # still busy with the previous candle: skip this one
+        if self._clock() < self._resume_at:
+            return  # backing off after a failure: give the exchange room to recover
         self.busy.add(ticker)
         try:
+            await self.ensure_session()
             await self.refresh()
             elapsed = 0.0
             for offset, intent in self.decide(ticker, market):
                 await self._sleep(offset - elapsed)
                 elapsed = offset
                 await self.execute(intent, market)
+            self._backoff = 0.0
+        except SessionExpiredError:
+            self._expired()  # the next step signs in first
         except Exception as exc:
-            logger.warning("bot step failed", extra={"bot": self.name, "error": repr(exc)})
+            self._backoff = min(self._backoff * 2 or 1.0, STEP_BACKOFF_MAX_SECONDS)
+            self._resume_at = self._clock() + self._backoff
+            logger.warning(
+                "bot step failed",
+                extra={"bot": self.name, "error": repr(exc), "retry_in_seconds": self._backoff},
+            )
         finally:
             self.busy.discard(ticker)
 
     async def execute(self, intent: Intent, market: MarketState) -> None:
+        if isinstance(intent, Requote):  # the new quote first: no moment without one
+            await self._place(intent.place, market)
+            for cancel in intent.cancels:
+                await self.execute(cancel, market)
+            return
         if isinstance(intent, Cancel):
             if intent.order_id in self.open_orders:
                 await self._exchange.cancel(self.signed_in(), intent.order_id)

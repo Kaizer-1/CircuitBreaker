@@ -11,13 +11,14 @@ scale, restart, do nothing), explaining itself in plain English on a live incide
 University Microservices Architecture course project. Textbook: *Microservices: Up and Running* (Mitra &
 Nadareishvili).
 
-> **Status: Phase 3 — a live, watchable market.** Phones join from a QR code and trade on a one-handed page; the
-> projector shows five live tickers with 5-second candles, the order book and the trades; 20 bots keep the market
-> moving. Market data is a read model built from the matching engine's events and pushed over WebSockets (snapshot,
-> then updates in sequence). Underneath, from Phase 2: an event-sourced matching engine that rebuilds its books after a
-> crash with an identical hash, exact settlement, and fail-closed release of orphaned reservations
-> ([ADR-0017](docs/adr/0017-fail-closed-orphan-release.md)). Time travel and the leaderboard come in Phase 4. See the
-> [roadmap](docs/07-roadmap.md).
+> **Status: Phase 4 — event sourcing you can watch.** The presenter drags a timeline back to any moment of the session
+> and sees the market exactly as it was, rebuilt from the matching engine's snapshots and events; replays a stretch at
+> up to 60×; and proves it with a state hash that matches the live engine's ("verified: hashes match"). A leaderboard
+> ranks the human traders, offensive nicknames are refused at join, and the presenter can hide the board. From Phase 3:
+> phones join from a QR code and trade, the projector shows five live tickers, 20 bots keep the market moving. From
+> Phase 2: an event-sourced matching engine that rebuilds its books after a crash with an identical hash, exact
+> settlement, and fail-closed release of orphaned reservations
+> ([ADR-0017](docs/adr/0017-fail-closed-orphan-release.md)). See the [roadmap](docs/07-roadmap.md).
 
 ## Quick start
 

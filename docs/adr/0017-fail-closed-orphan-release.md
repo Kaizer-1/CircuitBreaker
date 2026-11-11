@@ -97,6 +97,7 @@ So no timing assumption is left: crashes and delays of any length can only make 
 | portfolio-service is behind on `matching.v1` | Its sweeper skips that partition until it has caught up (see below), so it does not expire an order whose `OrderAccepted` is merely unread. |
 | order-service is down at 120 s | A-19 fails; the sweeper retries on its next cycle. |
 | A publish that hung (Redpanda down) | order-service stops waiting after a short attempt. Since Phase 3 the Kafka client also gives up on the message **10 s** after it was handed over and never sends it, and the relay starts no `OrderPlaced` send once the order is older than 50 s, so nothing the client holds reaches the broker after 60 s (see the note below). The expiry then finds an order the engine never saw → `OrderExpired`. |
+| Redpanda unreachable from order-service for a long time (minutes, hours, a laptop asleep) | Every cancel and expiry request waits in the outbox and is published when Redpanda returns, however long that took (note below). The sweeper asks again every 5 minutes while the engine has not answered; the money stays reserved until it does. |
 | A request that was already on the wire when the broker froze (paused, or a network split, rather than stopped) | No client can take it back: the broker may still append it when it resumes, at any time. If it lands before the expiry request the engine accepts it while the money is still reserved, then cancels it (`ORDER_EXPIRED`); if after, the tombstone refuses it. This is why the 60 s rule alone can never protect the money, and why fail-closed stays. |
 
 **Note: making the 60 s rule true (Phase 3).** In Phase 2, `make test-e2e` showed a send that hung while Redpanda was
@@ -112,6 +113,33 @@ a real Redpanda (stopped, then started again) prove both halves: an idempotent p
 late, the bounded one never does, and a send fails within its 10 s while the broker is down. Fail-closed stays as
 **defense in depth**: it covers what no client-side timeout can, a request that is already in the network when the
 broker freezes.
+
+**Note: no time limit for cancels and expiries (Phase 4).** During Phase 4 three market-maker bids on `DABBA` could
+never be cancelled: A-07 answered `409` "cancel already pending" for ever, and their cash stayed reserved. The cause was
+the outbox relay: it read only the last **15 minutes** of the outbox (one partition per minute), so a cancel still
+unpublished after a longer outage (here the laptop slept) was never sent again. A rejected *order* was fine (the 60 s
+rule rejects it), but a cancel or an expiry request must reach the engine however late, because until the engine
+answers, the trader's money stays reserved. That broke the money guarantee this ADR exists for. Three changes, each
+proven by a test:
+
+1. **The relay finds a row of any age.** The outbox keeps its minute partitions (reading them stays cheap, and the
+   relay never reads the tombstones of rows published long ago), but the relay now starts at a saved **cursor**
+   (table `outbox_cursor`): the oldest minute that may still hold a row. It moves the cursor only past minutes it has
+   read and found empty, and only once they are settled (older than 2 minutes: rows are always written at "now", so a
+   settled empty minute stays empty). A row waiting for 25 minutes or 2 days is read on every pass until it is sent.
+   A single "pending requests" partition would also be found at any age, but every published row would leave a
+   tombstone in it that each pass must read: the classic Cassandra queue anti-pattern.
+2. **A retry re-sends.** A-07 on an order whose cancel is pending, and A-19 asked again, put the **same** stored request
+   back in the outbox (same `event_id`) and try to publish it at once; A-07 answers `202` as the first time (no longer
+   `409`). The engine drops a second copy by `event_id` (`processed_commands`), so a request is acted on once.
+3. **The sweeper asks again** every 5 minutes while the engine has not answered an expiry request, without limit. A
+   request lost after it left order-service is sent again.
+
+Tests: order-service's relay keeps a cancel and an expiry through 25 minutes of failed passes; a real Cassandra keeps
+the cursor at a waiting row across a restart; a real Redpanda stopped for 25 (virtual) minutes receives both requests
+after it returns (with the old 15-minute look-back put back, it receives neither); and the system model in
+matching-engine's tests (the real engine) shows both orders closed and all money released after the outage, while the
+old rule keeps it locked for ever.
 
 **Sweeper scope.** Each portfolio-service replica only sweeps tickers whose `matching.v1` partition it currently
 consumes, and only while that partition has no lag. This is not needed for safety (the engine's answer is), but it
@@ -148,6 +176,8 @@ quickly (`REJECTED`, `PUBLISH_TIMEOUT`) that an order did not get through.
   start fresh each trading day.
 - ❌ An order that was accepted but whose `OrderAccepted` took more than 120 s to reach portfolio-service is cancelled
   (`ORDER_EXPIRED`). The sweeper scope above makes this rare.
+- ❌ Cancels and expiry requests have no time limit, so after a long outage the relay re-reads every minute partition
+  that still holds a row on each pass until it is sent. That is the price of never giving up on money.
 
 ## Viva Notes
 
@@ -167,6 +197,11 @@ partition. And `orders.v1` has one producer, order-service, which already has an
 **Q: What is a tombstone and why do you need one?**
 A: A stored event saying "this order ID is dead". If a delayed copy of the `OrderPlaced` arrives after the expiry,
 the engine sees the tombstone and refuses it, so the released money can never be used by that order.
+
+**Q: Why can a cancel or an expiry request never have a time limit, when an order can?**
+A: A rejected order costs the trader nothing: the 60 s rule says "it did not get through" and the money comes back
+through the expiry. A cancel or an expiry that is dropped leaves an order resting, or money reserved, for ever. So
+those two are retried until the engine answers (Phase 4 note).
 
 **Q: What does this cost?**
 A: If the engine is down, orphaned money stays locked until it returns. portfolio and order-service now call each other

@@ -1,7 +1,7 @@
 # portfolio-service
 
-> **Status:** Phase 3 — accounts, reservations, settlement, the fail-closed orphan sweeper and the live portfolio
-> WebSocket (Q-10) are built. The leaderboard (Q-11) answers `501` until Phase 4. Layout:
+> **Status:** Phase 4 — accounts, reservations, settlement, the fail-closed orphan sweeper, the live portfolio
+> WebSocket (Q-10) and the leaderboard (Q-11) are built. Layout:
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service) (package `portfolio_service`).
 
 | | |
@@ -25,7 +25,7 @@ matching engine confirms the order can never trade. A CQRS read model of trades 
 |---|---|
 | `domain/rules.py` | Pure money rules: `reserve`, `settle_buy`, `settle_sell`, `release`, `protection_price`, `portfolio_view` |
 | `application/portfolio.py` | Use cases A-02, A-06, A-09, Q-09; each runs in one transaction |
-| `application/sweeper.py` | Policy P-15: every 10 s, reservations with no `OrderAccepted` for 120 s → A-19 on order-service |
+| `application/sweeper.py` | Policy P-15: every 10 s, reservations with no `OrderAccepted` for 120 s → A-19 on order-service; asks again every 5 min until the engine answers |
 | `adapters/postgres.py` | The store: row locks (`FOR UPDATE`, accounts first, in trader-ID order), `CHECK` constraints, migrations |
 | `adapters/order_service_http.py` | A-19 `POST /internal/v1/order-expiries` |
 | `adapters/partitions.py` | Which `matching.v1` partition holds a ticker (the producers' murmur2 hash) |
@@ -84,8 +84,14 @@ then the event goes to `matching.v1.dlq`.
 Q-09 `GET /v1/portfolio` (`X-Trader-Id` from the gateway), WebSocket Q-10 `/v1/ws/portfolio` (messages in
 [api/README.md](../../api/README.md#q-10--v1wsportfolio-portfolio-service-roles-trader-bot); closed with `4401` without
 `X-Trader-Id`, `4404` for an unknown account), internal A-02 `POST /internal/v1/accounts`, A-06
-`POST /internal/v1/reservations`. Q-11 `GET /v1/leaderboard` is a `501` stub until Phase 4. Spec: [`api/portfolio-service.yaml`](../../api/portfolio-service.yaml). Settlement
-(A-09) is event-driven.
+`POST /internal/v1/reservations`, Q-11 `GET /v1/leaderboard?limit=&include_bots=`. Spec:
+[`api/portfolio-service.yaml`](../../api/portfolio-service.yaml). Settlement (A-09) is event-driven.
+
+**The leaderboard (Q-11)** ranks by net worth marked to market exactly as Q-09 values a portfolio (`domain/rules.py`
+`net_worth`, shared by both): cash plus every share at the last traded price, reserved ones included. Humans only by
+default, bots with `include_bots=true`, load-test accounts never. Ties share a rank and the next one skips (1, 1, 3),
+listed by nickname A to Z. `application/leaderboard.py` recomputes at most every 2 seconds per replica and audience;
+callers that arrive together wait for one computation. The presenter dashboard polls it every 2 seconds.
 
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 

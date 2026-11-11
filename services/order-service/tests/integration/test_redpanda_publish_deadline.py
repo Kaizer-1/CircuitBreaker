@@ -12,14 +12,12 @@ Run with `uv run pytest -m integration --no-cov` (Docker needed).
 """
 
 import asyncio
-import socket
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
 from testcontainers.core.container import DockerContainer
-from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
 from order_service.runtime.events import EventEnvelope, build_event
 from order_service.runtime.kafka import EventPublisher
@@ -28,29 +26,6 @@ from order_service.runtime.metrics import Metrics
 pytestmark = pytest.mark.integration
 TOPIC = "orders.v1"
 DELIVERY_TIMEOUT = 3.0  # the production value is 10 s; 3 s keeps the test short
-
-
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
-@pytest.fixture(scope="module")
-def redpanda() -> Iterator[tuple[DockerContainer, str]]:
-    port = free_port()
-    container = (
-        DockerContainer("redpandadata/redpanda:v26.2.6")
-        .with_bind_ports(port, port)
-        .with_command(
-            "redpanda start --mode dev-container --smp 1 --memory 512M --overprovisioned "
-            f"--kafka-addr PLAINTEXT://0.0.0.0:{port} "
-            f"--advertise-kafka-addr PLAINTEXT://127.0.0.1:{port}"
-        )
-        .waiting_for(LogMessageWaitStrategy("Successfully started Redpanda"))
-    )
-    with container:
-        yield container, f"127.0.0.1:{port}"
 
 
 def rpk(container: DockerContainer, bootstrap: str, *args: str) -> str:

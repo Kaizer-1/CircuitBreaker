@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """make demo-trade: two traders and a bot trade through the public gateway, end to end.
 
-1. Two humans join (A-01); bot-01 starts a bot session (A-03). Humans start with ₹1,00,000 and no
-   shares; bots also have shares (no short selling, so someone must sell first).
+1. Two traders, A and B, and bot-01 start sessions (A-03). A and B are load-test accounts
+   (load-21, load-22): they start like humans, with ₹1,00,000 and no shares, but are never ranked
+   on the leaderboard, so a demo trade never shows on the projector. They keep what they traded
+   until make demo-reset. Bots also have shares (no short selling, so someone must sell first).
 2. bot-01 sells 20 CHAIWALA at about ₹245.50; A bids 50 paise more → they trade at bot-01's price.
 3. A sells 10 at about ₹247.00; B bids 50 paise more → A and B trade at A's price.
 
@@ -23,10 +25,10 @@ from stack import (
     bot,
     engine_events,
     free_price,
-    join,
     live_book,
     rupees,
     settled,
+    tester,
     wait_until_ready,
 )
 
@@ -67,8 +69,11 @@ def main() -> int:
     wait_until_ready()
     start_sequence = live_book(TICKER)["sequence"]
 
-    a, b, seller = join("TraderA"), join("TraderB"), bot("bot-01")
-    print(f"  joined: {a.nickname} (A), {b.nickname} (B); bot session: {seller.nickname}")
+    a, b, seller = tester(21), tester(22), bot("bot-01")
+    print(
+        f"  sessions: {a.nickname} (A), {b.nickname} (B), {seller.nickname}"
+        "   (A and B are load-test accounts: never on the leaderboard)"
+    )
 
     p = free_price(TICKER, 24550)
     heading(

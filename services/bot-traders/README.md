@@ -28,8 +28,8 @@ Runs 20 bots in one process (asyncio): 4 market makers (always quote bids and as
 
 | Bots | Strategy | Tickers | What it does |
 |---|---|---|---|
-| `bot-01`…`bot-04` | Market maker | all 5 | Always one bid and one ask per ticker, 8 / 12 / 16 / 20 basis points from a fair price (the last close, leaning 2% towards the reference price and away from inventory it holds too much of). Re-quotes when the price moves or a quote is 6 candles old |
-| `bot-05`…`bot-10` | Momentum | 3 each | After a move of 8+ bp over 6 candles, a small MARKET order the same way |
+| `bot-01`…`bot-04` | Market maker | all 5 | Always one bid and one ask per ticker, 8 / 12 / 16 / 20 basis points from a fair price (the last close, leaning 5% towards the reference price every candle, and away from inventory it holds too much of by at most 15 basis points). Re-quotes when the price moves or a quote is 6 candles old |
+| `bot-05`…`bot-10` | Momentum | 3 each | After a move of 8+ bp and at least 3 ticks over 6 candles, a small MARKET order the same way |
 | `bot-11`…`bot-15` | Mean reversion | 3 each | When the price is 20+ bp away from its moving average (pulled 20% towards the reference), a LIMIT order against the move at the touch |
 | `bot-16`…`bot-20` | Noise | 2 each | Small random orders (half MARKET, half LIMIT within 0.3%) |
 
@@ -44,6 +44,26 @@ rounded up to the tick) plus 2%. An order the ledger holds back counts as `skipp
 say at once when an order traded or finished. It lists its open orders (Q-07) only at start-up and after the stream
 reconnects. That query reads one row per order in the trader's history, and polling it from 20 bots slowed order
 placement for everyone (p95 above 1 s; now about 30 ms).
+
+**Backing off after a failure.** A step that fails (a timeout, a 5xx) pauses that bot for 1 s, then 2, 4 … up to
+30 s; a step that works resets the pause. Found in Phase 4 after two hours of trading: a gateway restart made every bot
+list its open orders at once, each listing read up to 1,000 rows, the bots timed out and retried every candle, and the
+abandoned listings piled up in order-service until it ran out of memory (192 MiB) and restarted, again and again. With
+the back-off, the same restart costs about 45 seconds of failed steps and order-service's memory stays flat. On top of
+it, the fleet lets at most two bots list their open orders at once, and that one heavy call gets a 30-second timeout
+instead of the 5 seconds every other call gets, so the listings after a restart finish instead of timing out.
+
+**Sessions run out.** A bot session lasts 12 hours (A-03). When a call is refused (401) or the portfolio stream closes
+with `4401`, the bot drops its session and signs in again on its next step, then lists its open orders (it cannot know
+what finished meanwhile). Found in Phase 4: a stack left running for two days had every bot refused for ever.
+
+**Quoting both sides, always.** A market maker replaces a quote with one `Requote`: the new quote is placed first and
+the old one cancelled right after, at the same moment, so its side is never empty in between (before Phase 4 the
+cancel and the new quote went out at different moments of the interval: on average 3.4 of the 4 makers' quotes were
+on each side; now 3.8 to 4.0). A placement whose answer is lost (a timeout, a dropped connection) is asked again with
+the same `Idempotency-Key`, so order-service returns the order that may already exist and the bot keeps track of it
+instead of leaving a quote it never cancels. `scripts/bots_check.py` fails if a side holds fewer than 3.5 or more than
+4.5 maker quotes on average, or the two sides differ by more than one level.
 
 **Timing (an implementation detail).** Bots act on `CandleClosed` (policy P-09), on the 5s candles only. If every bot
 sent its orders the moment a candle closed, trades would come in a burst every 5 s. So each bot spreads that candle's
@@ -70,7 +90,15 @@ fleet reads each ticker's best bid and ask (Q-04) once per candle for all bots.
 | `GATEWAY_URL`, `BOT_SECRET` | | The public API and the A-03 bot secret (Compose: `http://api-gateway:8000`, the dev placeholder) |
 
 At the default activity, the simulated hour in the tests gives about 8 orders/s, 2.7 trades/s, spreads of 10–12 basis
-points and prices within a few percent of their reference. Through the gateway that is about 23 requests/s, well under
+points and prices within a few percent of their reference (the test fails outside ±10%; `scripts/bots_check.py` checks
+the same band live).
+
+**Phase 4 rebalance (prices ran away).** MONSOON (₹88.20, where one tick is 5.7 basis points) climbed 13–15% above its
+reference within a simulated hour in 3 of 5 runs. A market maker that had sold shares bid up to 30 basis points above
+its fair price to buy them back, the last price followed, and momentum took a two-tick wiggle for a trend. Three changes,
+none of them a price limit: the makers' fair price leans 5% (was 2%) towards the reference every candle, their inventory
+lean is at most 15 basis points (was 30), and momentum needs a move of at least 3 ticks. Over 12 simulated hours the
+worst excursion is now 5.3%, most stay within 2.6%. Through the gateway that is about 23 requests/s, well under
 the 50/s per bot token.
 
 ## Owned data

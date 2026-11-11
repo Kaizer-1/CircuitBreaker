@@ -1,4 +1,5 @@
-"""The outbox relay: retry after 5 s, never publish an OrderPlaced older than 60 s (ADR-0011)."""
+"""The outbox relay: retry after 5 s, never publish an OrderPlaced older than 60 s (ADR-0011), and
+never give up on a cancel or an expiry request (ADR-0017 note)."""
 
 from datetime import timedelta
 
@@ -115,13 +116,47 @@ async def test_a_row_already_sent_by_another_replica_is_just_a_duplicate(w: Worl
     assert [e.event_id for _, _, e in w.publisher.sent] == [entry.event.event_id] * 2
 
 
-async def test_rows_older_than_the_look_back_window_are_not_retried(w: World) -> None:
+async def test_cancels_and_expiries_have_no_time_limit(w: World) -> None:
+    # Until Phase 4 the relay looked back 15 minutes: after a longer outage a cancel was never sent,
+    # its order rested for ever and the money stayed reserved.
+    order = await w.place()
     w.publisher.down = True
-    order = await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CHAIWALA")
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+    await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CHAIWALA")
+    for _ in range(25):  # Redpanda down for 25 minutes; the relay keeps trying
+        w.clock.now += timedelta(minutes=1)
+        assert await w.relay.run_once() == 0
     w.publisher.down = False
-    w.clock.now += timedelta(minutes=16)
+    assert await w.relay.run_once() == 2
+    assert w.publisher.types() == ["OrderPlaced", "OrderCancelRequested", "OrderExpiryRequested"]
+    assert w.store.outbox == []
+
+
+async def test_the_relay_tells_the_store_how_far_back_rows_can_still_appear(w: World) -> None:
+    await w.relay.run_once()
+    assert w.store.settled_before == ["2026-11-20T10:40:01.248Z"]  # now - 2 min (clock margin)
+
+
+async def test_a_pending_cancel_of_an_order_that_finished_meanwhile_is_dropped(w: World) -> None:
+    order = await w.place()
+    w.publisher.down = True
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+    await w.orders.apply_matching_event(w.engine("OrderAccepted", order_id=order.order_id))
+    await w.orders.apply_matching_event(
+        w.engine(
+            "TradeExecuted",
+            buy_order_id=order.order_id,
+            sell_order_id="9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
+            quantity=50,
+            price_paise=24550,
+            buy_order_remaining_quantity=0,
+            sell_order_remaining_quantity=0,
+        )
+    )
+    w.publisher.down = False
+    w.clock.now += timedelta(seconds=10)
     assert await w.relay.run_once() == 0
-    assert order.known_order is False
+    assert w.publisher.types() == ["OrderPlaced"] and w.store.outbox == []
 
 
 async def test_a_failing_pass_is_logged_and_the_loop_goes_on(

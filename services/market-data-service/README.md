@@ -1,8 +1,8 @@
 # market-data-service
 
-> **Status:** Phase 3 — candles (5s, 1m, 5m), order-book depth, recent trades, last prices, `CandleClosed` and the live
-> market WebSocket (Q-06) are built. Time travel (Q-12) and replay (Q-13) are Phase 4; the chaos hooks (A-12, A-13)
-> Phase 7, and answer `501` until then. Layout:
+> **Status:** Phase 4 — candles (5s, 1m, 5m), order-book depth, recent trades, last prices,
+> `CandleClosed`, the live market WebSocket (Q-06), time travel (Q-12) and replay (Q-13) are built. The chaos hooks
+> (A-12, A-13) are Phase 7, and answer `501` until then. Layout:
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service) (package
 > `market_data_service`).
 
@@ -66,11 +66,38 @@ Schemas: [event catalog](../../docs/03-architecture/03-event-catalog.md). `tests
 
 Q-02 `GET /v1/instruments`, Q-03 `GET /v1/market/{ticker}/candles`, Q-04 `GET /v1/market/{ticker}/order-book`, Q-05
 `GET /v1/market/{ticker}/trades`; WebSocket Q-06 `/v1/ws/market/{ticker}` (messages in
-[api/README.md](../../api/README.md#q-06--v1wsmarketticker-market-data-service-any-role)). Phase 4: Q-12
-`GET /v1/time-travel/{ticker}`, Q-13 `/v1/ws/replay/{ticker}`. Phase 7: internal A-12 `POST /internal/v1/faults`, A-13
+[api/README.md](../../api/README.md#q-06--v1wsmarketticker-market-data-service-any-role)); Q-12
+`GET /v1/time-travel/{ticker}?at=` and the replay WebSocket Q-13 `/v1/ws/replay/{ticker}` (both below). Phase 7: internal A-12 `POST /internal/v1/faults`, A-13
 `DELETE /internal/v1/faults`. Spec: [`api/market-data-service.yaml`](../../api/market-data-service.yaml);
 `tests/contract/test_response_schemas.py` validates the answers and the WebSocket messages against it. Until the
 start-up catch-up is done the queries answer `503 DEPENDENCY_UNAVAILABLE` and the WebSocket closes with `1011`.
+
+**Time travel (Q-12)** rebuilds the whole book as it was at `at`: matching-engine's nearest snapshot at or before `at`
+(Q-15, with its finished and expired orders) plus the events after it up to `at` (Q-14), applied to a fresh
+`ReplayBook` (`domain/replay_book.py`, apply only, this service's own code). The answer carries the book's
+`state_hash`, computed by the engine's rule (a contract test checks the hash the engine's spec states for its example).
+**The proof:** when `at` is at or after the ticker's latest event, the engine's live book (Q-16) is read first, the
+rebuild stops at exactly its sequence, and `verification` says whether the hashes match. One sequence on both sides
+means the check works while bots trade.
+The 1-minute candles and recent trades come from this service's tables; the candle holding `at` is recomputed from the
+trades up to `at`. Each replica rebuilds at most 4 books at once and keeps one of those places for the admin role, so
+the presenter is never refused; beyond that, `503 OVERLOADED`. The book is a private copy: the live projection is never
+touched. `scripts/time_travel_check.py` measures seeks on the running stack (over a full hour of bot trading: 100
+seeks, p50 41 ms, p95 70 ms, slowest 143 ms; never more than 498 events applied after a snapshot).
+
+**Replay (Q-13)** (`application/replay.py`) rebuilds the book at `from` like time travel and sends it as the first
+frame, then walks the stored events up to `to`: one frame per command (same `causation_id`), after waiting the original
+time between commands divided by the speed. The viewer sends `pause`, `resume` and `speed`; market time is a `Pacer`
+that runs at speed × the wall clock and reacts at once. When market time reaches `to`, `end` carries the hash of the
+book at `to` (equal to Q-12's at `to`). At most 4 replays per replica, one place kept for the admin role (`1013` when
+full); a disconnect or more than 5 minutes paused ends the replay and frees its place. Checked on the running stack: 2
+minutes of bot trading at 60× gave 344 frames in 2.06 s, and the `end` hash equalled Q-12's at `to`.
+
+**Isolation, measured** (`make test-e2e`, 2026-11-12): four replays at once while the 20 bots trade (three traders and
+the presenter; a fourth trader is refused with `1013`, the presenter is not). Placing an order: p95 **24 ms** without
+replays, **20 ms** during the four, so the replays cost the live market nothing visible. Every live book still verified
+afterwards, and each replay ended on the hash Q-12 rebuilds at its `to`. The e2e bound is 500 ms, for slower CI
+runners.
 
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
@@ -80,7 +107,8 @@ Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards 
 ## Synchronous dependencies
 
 `matching-engine` `GET /internal/v1/snapshots/{ticker}` (Q-15) and `GET /internal/v1/events` (Q-14): the start-up
-catch-up, gap filling, and (Phase 4) time travel and replay. If the engine is down at start-up, the service retries and is
+catch-up, gap filling, time travel and replay; `GET /internal/v1/books/{ticker}` (Q-16) when a time-travel
+request reaches "now" (the proof below). If the engine is down at start-up, the service retries and is
 not ready; trading is not affected.
 
 ## Scaling and operations

@@ -50,6 +50,11 @@ paths:
       description: |
         **A-01** — Called by the web app after scanning the QR code. Opens a trading account with 1,00,000 rupees via
         portfolio-service (A-02) and returns a 12-hour access token with role `trader`. No password.
+
+        Nicknames are shown on the projector and the leaderboard, so a nickname containing a word on the gateway's
+        blocklist (offensive words in English and Hindi/Hinglish, matched after undoing leetspeak, underscores, digits
+        and repeated letters) is refused before any account exists: `422 VALIDATION_FAILED` with a polite `detail` and
+        a `nickname` field error.
       security: []
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
@@ -313,7 +318,7 @@ paths:
       summary: Cancel an order
       x-seeds-id: A-07
       x-upstream: order-service
-      description: '**A-07** — Proxied to order-service `DELETE /v1/orders/{order_id}`. Roles: trader, bot. Returns 202.'
+      description: '**A-07** — Proxied to order-service `DELETE /v1/orders/{order_id}`. Roles: trader, bot. Returns 202, also when repeated while the cancel is pending (it is sent again).'
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
       responses:
@@ -328,7 +333,7 @@ paths:
         '404':
           $ref: './shared/common.yaml#/components/responses/NotFound'
         '409':
-          description: Order cannot be cancelled.
+          description: Order cannot be cancelled (already FILLED, CANCELLED or REJECTED).
           content:
             application/problem+json:
               schema:
@@ -811,7 +816,7 @@ components:
         nickname:
           type: string
           pattern: '^[A-Za-z0-9_]{3,20}$'
-          description: 3–20 letters, digits or underscores. Must be unique.
+          description: 3–20 letters, digits or underscores. Must be unique and not on the nickname blocklist.
       additionalProperties: false
     BotSessionRequest:
       type: object

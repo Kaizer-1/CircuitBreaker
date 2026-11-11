@@ -1,9 +1,10 @@
 """The portfolio database (Postgres `portfolio`). Everything one use case does happens in one Tx."""
 
+from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
-from portfolio_service.domain.model import Account, Holding, Reservation
+from portfolio_service.domain.model import Account, AccountKind, Holding, Reservation
 
 
 class Tx(Protocol):
@@ -31,8 +32,14 @@ class Tx(Protocol):
 
     async def save_reservation(self, reservation: Reservation) -> None: ...
 
-    async def unconfirmed_reservations(self, created_before: str) -> list[Reservation]:
-        """ACTIVE, no OrderAccepted seen, no expiry requested yet, created before the given time."""
+    async def unconfirmed_reservations(
+        self, created_before: str, asked_before: str
+    ) -> list[Reservation]:
+        """ACTIVE, no OrderAccepted seen, created before `created_before`, and no expiry asked for
+        yet or last asked for before `asked_before`."""
+
+    async def standings(self, kinds: Sequence[AccountKind]) -> list[tuple[Account, list[Holding]]]:
+        """Every account of these kinds with its holdings (the leaderboard's input, Q-11)."""
 
     async def last_prices(self) -> dict[str, int]: ...
 
