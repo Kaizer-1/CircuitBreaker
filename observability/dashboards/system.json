@@ -560,7 +560,7 @@
     {
       "id": 28,
       "type": "timeseries",
-      "title": "Replicas per Deployment (desired vs ready)",
+      "title": "Replicas per Deployment",
       "description": "There is no autoscaler: replica changes here come from a person (kubectl scale) or, from Phase 7, the SRE agent's scale_deployment tool.",
       "datasource": {
         "type": "prometheus",
@@ -579,18 +579,8 @@
             "uid": "prometheus"
           },
           "expr": "max by (deployment) (kube_deployment_spec_replicas{namespace=\"$namespace\"})",
-          "legendFormat": "{{deployment}} desired",
+          "legendFormat": "{{deployment}}",
           "refId": "A",
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "max by (deployment) (kube_deployment_status_replicas_ready{namespace=\"$namespace\"})",
-          "legendFormat": "{{deployment}} ready",
-          "refId": "B",
           "range": true
         }
       ],
@@ -603,8 +593,9 @@
           "custom": {
             "drawStyle": "line",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "showPoints": "never",
+            "lineInterpolation": "stepAfter",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
@@ -619,9 +610,12 @@
       },
       "options": {
         "legend": {
-          "displayMode": "list",
+          "displayMode": "table",
           "placement": "bottom",
-          "calcs": []
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -680,6 +674,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
@@ -745,6 +740,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
@@ -810,12 +806,13 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "line+area"
+              "mode": "dashed"
             }
           },
           "min": 0,
@@ -885,6 +882,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
@@ -947,6 +945,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
@@ -955,7 +954,8 @@
               "mode": "off"
             }
           },
-          "min": 0
+          "min": 0,
+          "noValue": "no restarts"
         },
         "overrides": []
       },
@@ -1009,6 +1009,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "normal"
@@ -1084,6 +1085,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
@@ -1146,12 +1148,13 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "line+area"
+              "mode": "dashed"
             }
           },
           "min": 0,
@@ -1221,6 +1224,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"

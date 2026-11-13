@@ -644,8 +644,7 @@
                 "value": 0.5
               }
             ]
-          },
-          "decimals": 3
+          }
         },
         "overrides": []
       },
@@ -840,6 +839,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
@@ -922,12 +922,13 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "line+area"
+              "mode": "dashed"
             }
           },
           "min": 0,
@@ -997,6 +998,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "normal"
@@ -1059,12 +1061,13 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "line+area"
+              "mode": "dashed"
             }
           },
           "min": 0,
@@ -1134,6 +1137,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "normal"
@@ -1196,6 +1200,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "normal"
@@ -1204,7 +1209,8 @@
               "mode": "off"
             }
           },
-          "min": 0
+          "min": 0,
+          "noValue": "none refused"
         },
         "overrides": []
       },
@@ -1268,6 +1274,7 @@
             "lineWidth": 2,
             "fillOpacity": 10,
             "showPoints": "never",
+            "lineInterpolation": "linear",
             "spanNulls": true,
             "stacking": {
               "mode": "none"
