@@ -137,6 +137,10 @@ class EventConsumer:
         self._sleep = sleep
         self._consumer: Any = None
         self._lag: dict[tuple[str, int], int] = {}
+        # Start the dead-letter counters at 0: a counter that first appears at 1 has no increase()
+        # for Prometheus, and the DeadLetterMessages alert would miss the first dead letter.
+        for topic in self.topics:
+            metrics.events_dead_lettered_total.labels(service, topic)
         self.caught_up_once = False  # every assigned partition reached its end at least once
 
     # ------------------------------------------------- one message (testable without Kafka)
@@ -216,6 +220,7 @@ class EventConsumer:
             extra={"topic": delivery.topic, "offset": delivery.offset, "error": body["error"]},
         )
         await self._dead_letters(f"{delivery.topic}.dlq", delivery.key, json.dumps(body).encode())
+        self._metrics.events_dead_lettered_total.labels(self._service, delivery.topic).inc()
 
     # ------------------------------------------------------------------ the Kafka loop
 

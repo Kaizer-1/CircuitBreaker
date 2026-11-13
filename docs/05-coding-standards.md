@@ -179,7 +179,7 @@ presenter passcode (A-04), and `make status` signs in with the local placeholder
 **Standard metrics** (all services, labelled `service`, plus `route`, `method`, `status` where relevant):
 `http_requests_total`, `http_request_duration_seconds` (histogram), `http_requests_in_flight`,
 `events_published_total{topic,event_type}`, `events_consumed_total{topic,event_type}`,
-`event_processing_errors_total`, `consumer_lag_messages{topic,partition}`, plus Python process metrics
+`event_processing_errors_total`, `events_dead_lettered_total{topic}`, `consumer_lag_messages{topic,partition}`, plus Python process metrics
 (`process_resident_memory_bytes`, CPU). These names are what the alert rules and the SRE agent's evidence collector
 query, so they must not change without updating [06-chaos-scenarios.md](03-architecture/06-chaos-scenarios.md).
 

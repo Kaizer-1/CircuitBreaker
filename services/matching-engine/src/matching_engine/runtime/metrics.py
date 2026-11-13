@@ -62,6 +62,12 @@ class Metrics:
             ["service", "topic"],
             registry=self.registry,
         )
+        self.events_dead_lettered_total = Counter(
+            "events_dead_lettered_total",
+            "Messages sent to <topic>.dlq after failing (DeadLetterMessages alert).",
+            ["service", "topic"],
+            registry=self.registry,
+        )
         self.consumer_lag_messages = Gauge(
             "consumer_lag_messages",
             "Messages a consumer is behind the end of a partition.",
