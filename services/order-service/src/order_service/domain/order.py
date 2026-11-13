@@ -9,7 +9,7 @@ hung past the limit) becomes OPEN, because the engine is the source of truth for
 from dataclasses import dataclass
 from enum import StrEnum
 
-TICKERS = ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY")
+TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
 TICK_SIZE_PAISE = 5
 MAX_QUANTITY = 10_000
 PUBLISH_TIMEOUT_SECONDS = 60  # ADR-0011: the relay never publishes an older OrderPlaced

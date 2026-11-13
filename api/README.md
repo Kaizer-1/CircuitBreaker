@@ -130,7 +130,7 @@ unknown ticker, `1011` while market-data is still rebuilding from the event stor
 | server → client | `order_closed` | `{ order_id, status: FILLED \| CANCELLED, cancel_reason: USER_REQUESTED \| UNFILLED_MARKET_ORDER \| SELF_TRADE_PREVENTED \| ORDER_EXPIRED \| null }` |
 
 ```json
-{"type": "fill", "data": {"order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12", "trade_id": "a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d", "ticker": "CHAIWALA", "side": "BUY", "price_paise": 24550, "quantity": 20, "order_remaining_quantity": 30, "executed_at": "2026-11-20T10:42:01.263Z"}}
+{"type": "fill", "data": {"order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12", "trade_id": "a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d", "ticker": "CALVERA", "side": "BUY", "price_paise": 24550, "quantity": 20, "order_remaining_quantity": 30, "executed_at": "2026-11-20T10:42:01.263Z"}}
 ```
 
 After a trade the phone receives `fill` (and `order_closed` if the order is done), then the new `portfolio`. Only the
@@ -193,6 +193,8 @@ Phase 4 feedback (proving time travel exact to an audience): Q-15 returns the sn
 (`closed`, matching-engine spec 1.2.0); Q-12 returns the rebuilt book's `state_hash` and, at "now", a `verification`
 against the live engine book (market-data spec 1.1.0); Q-13 gained the `speed` message, the `end` hash and every fill per
 frame (`trades`).
+CI feedback (2026-11-14): Q-12 at "now" is answered at the live book's sequence even when the engine traded after
+market-data read its clock, instead of leaving `verification` null (market-data spec 1.1.1).
 
 ## Error code catalog
 
@@ -221,6 +223,17 @@ frame (`trades`).
 | `OVERLOADED` | 503 | Service at its concurrency limit (traffic spike) |
 | `INTERNAL_ERROR` | 500 | Unexpected failure; no internals are leaked, quote the `correlation_id` |
 | `NOT_IMPLEMENTED` | 501 | The operation is in the spec but not built yet (the Phase 1 stubs) |
+
+## Changelog
+
+Changes to shared reference data that do not change any API version. Spec versions (`info.version`) record
+changes to operations and schemas.
+
+<!-- retired-names:begin 2026-11-14 -->
+| Date | Change | Why it stays v1 |
+|---|---|---|
+| 2026-11-14 | Ticker enum and examples renamed: `CHAIWALA` → `CALVERA`, `JUGAAD` → `KORVIN`, `DABBA` → `ASTRYX`, `MONSOON` → `HELIOR`, `FILMY` → `TAVIRA` (company names too; reference prices unchanged). Details and the reason: [overview §3](../docs/00-overview.md#3-the-instruments-stocks). | Reference data, changed before any release: no client outside this repository has ever used the old values. |
+<!-- retired-names:end -->
 
 ## Viva Notes
 

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-TICKERS = ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY")
+TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
 TICK_SIZE_PAISE = 5
 MAX_QUANTITY = 10_000
 

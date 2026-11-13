@@ -7,14 +7,14 @@ cash >= reserved cash >= 0, and per ticker quantity >= reserved quantity >= 0.
 from dataclasses import dataclass
 from enum import StrEnum
 
-TICKERS = ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY")
+TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
 # The starting prices used before any trade (docs/00-overview.md section 3).
 REFERENCE_PRICES = {
-    "CHAIWALA": 24550,
-    "JUGAAD": 118000,
-    "DABBA": 41275,
-    "MONSOON": 8820,
-    "FILMY": 53005,
+    "CALVERA": 24550,
+    "KORVIN": 118000,
+    "ASTRYX": 41275,
+    "HELIOR": 8820,
+    "TAVIRA": 53005,
 }
 TICK_SIZE_PAISE = 5
 HUMAN_STARTING_CASH = 10_000_000  # ₹1,00,000

@@ -76,7 +76,7 @@ async def test_a_cancel_and_an_expiry_are_delivered_after_a_25_minute_outage(
     clock = Clock(datetime.now(UTC) - timedelta(minutes=30))
     orders = Orders(store, FakePortfolio(), publisher, environment="dev", clock=clock)
     relay = OutboxRelay(store, publisher, clock=clock, attempt_seconds=0.5)
-    request = OrderRequest("CHAIWALA", Side.BUY, OrderType.LIMIT, 50, 24600)
+    request = OrderRequest("CALVERA", Side.BUY, OrderType.LIMIT, 50, 24600)
     order = await orders.place(RAJU, request, correlation_id="c")
     assert (await store.get(order.order_id)).published  # type: ignore[union-attr]
 
@@ -85,7 +85,7 @@ async def test_a_cancel_and_an_expiry_are_delivered_after_a_25_minute_outage(
     try:
         clock.now += timedelta(seconds=30)
         await orders.cancel(RAJU, order.order_id, correlation_id="c")  # the trader cancels
-        await orders.request_expiry(ORPHAN, RAJU, "CHAIWALA")  # the sweeper asks
+        await orders.request_expiry(ORPHAN, RAJU, "CALVERA")  # the sweeper asks
         for _ in range(25):  # 25 minutes of outage, the relay trying every minute
             clock.now += timedelta(minutes=1)
             assert await relay.run_once() == 0

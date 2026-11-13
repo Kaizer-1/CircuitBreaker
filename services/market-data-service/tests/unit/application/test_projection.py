@@ -18,7 +18,7 @@ class World:
         self.clock = Clock()
         self.exchange = Exchange(clock=self.clock)
         self.events = FakeEventStore()
-        self.events.events["CHAIWALA"] = self.exchange.log  # the engine stores everything
+        self.events.events["CALVERA"] = self.exchange.log  # the engine stores everything
         self.store = InMemoryMarketStore()
         self.publisher = RecordingPublisher()
         self.caught_up = True
@@ -57,7 +57,7 @@ async def w() -> World:
 async def test_a_fresh_start_with_no_history_is_ready_and_flat_at_the_reference_price(
     w: World,
 ) -> None:
-    market = w.projection.markets["CHAIWALA"]
+    market = w.projection.markets["CALVERA"]
     assert w.projection.ready and market.sequence == 0
     assert market.last_price_paise == 24550
     w.clock.now += timedelta(seconds=11)
@@ -72,7 +72,7 @@ async def test_events_apply_in_order_and_a_repeat_changes_nothing(w: World) -> N
     await w.deliver_all()
     saves = w.store.saves
     await w.deliver_all()  # every event again
-    market = w.projection.markets["CHAIWALA"]
+    market = w.projection.markets["CALVERA"]
     assert market.sequence == 3 and market.last_price_paise == 24600  # accepted, accepted, traded
     assert [t.quantity for t in market.recent] == [10]
     assert w.store.saves == saves
@@ -83,7 +83,7 @@ async def test_a_gap_is_filled_from_the_event_store_before_the_newer_event(w: Wo
     w.trade(24700, 5)
     reads = w.events.reads
     await w.projection.handle(w.exchange.log[-1])  # sequence 6 arrives first: 1-5 are missing
-    market = w.projection.markets["CHAIWALA"]
+    market = w.projection.markets["CALVERA"]
     assert market.sequence == 6
     assert [t.price_paise for t in market.recent] == [24700, 24600]
     assert w.events.reads == reads + 1  # one read of the event store fills the gap
@@ -92,16 +92,16 @@ async def test_a_gap_is_filled_from_the_event_store_before_the_newer_event(w: Wo
 async def test_every_event_is_saved_with_its_sequence_before_the_next(w: World) -> None:
     w.trade(24600, 10)
     await w.deliver_all()
-    row = w.store.rows["CHAIWALA"]
+    row = w.store.rows["CALVERA"]
     assert row.sequence == 3 and row.last_price_paise == 24600
-    assert [t.sequence for t in w.store.trade_rows["CHAIWALA"]] == [3]
+    assert [t.sequence for t in w.store.trade_rows["CALVERA"]] == [3]
 
 
 async def test_a_store_outage_is_waited_out_and_nothing_is_lost(w: World) -> None:
     w.trade(24600, 10)
     w.store.down = True
     await w.deliver_all()
-    assert w.store.rows["CHAIWALA"].sequence == 3
+    assert w.store.rows["CALVERA"].sequence == 3
 
 
 async def test_the_clock_closes_candles_only_while_the_feed_is_caught_up(w: World) -> None:
@@ -131,12 +131,12 @@ async def test_candle_closed_has_the_deterministic_id_and_the_catalog_fields(w: 
     await w.deliver_all()
     w.clock.now += timedelta(seconds=6)
     await w.projection.tick()
-    [(topic, key, event)] = [s for s in w.publisher.sent if s[1] == "CHAIWALA"]
+    [(topic, key, event)] = [s for s in w.publisher.sent if s[1] == "CALVERA"]
     start = event.data["bucket_start"]
-    assert (topic, key, start) == ("candles.v1", "CHAIWALA", "2026-11-20T10:42:00Z")
+    assert (topic, key, start) == ("candles.v1", "CALVERA", "2026-11-20T10:42:00Z")
     assert event.data["bucket_end"] == "2026-11-20T10:42:05Z"
-    assert event.event_id == deterministic_event_id(f"CHAIWALA|5s|{start}")
-    assert event.correlation_id == f"candle-CHAIWALA-5s-{start}"
+    assert event.event_id == deterministic_event_id(f"CALVERA|5s|{start}")
+    assert event.correlation_id == f"candle-CALVERA-5s-{start}"
 
 
 async def test_redpanda_down_drops_candle_closed_but_keeps_the_stored_candle(w: World) -> None:
@@ -146,20 +146,20 @@ async def test_redpanda_down_drops_candle_closed_but_keeps_the_stored_candle(w: 
     w.clock.now += timedelta(seconds=6)
     await w.projection.tick()
     bucket = int(w.clock.now.replace(second=0).timestamp() * 1000)
-    assert w.store.candle_rows[("CHAIWALA", "5s", bucket)].volume == 10
+    assert w.store.candle_rows[("CALVERA", "5s", bucket)].volume == 10
     assert format_bucket(bucket) == "2026-11-20T10:42:00Z"
 
 
 async def test_a_malformed_event_is_dead_lettered_and_skipped(w: World) -> None:
     bad = build_event(
         "TradeExecuted",
-        {"sequence": 1, "ticker": "CHAIWALA"},  # no price, no quantity
+        {"sequence": 1, "ticker": "CALVERA"},  # no price, no quantity
         producer="matching-engine",
         environment="dev",
         correlation_id="x",
     )
     await w.projection.handle(bad)
-    assert w.projection.markets["CHAIWALA"].sequence == 1
+    assert w.projection.markets["CALVERA"].sequence == 1
     assert [topic for topic, _ in w.publisher.raw] == ["matching.v1.dlq"]
 
 
@@ -180,13 +180,13 @@ async def test_a_restart_rebuilds_exactly_the_same_market(w: World) -> None:
     await w.deliver_all()
     w.clock.now += timedelta(seconds=10)
     await w.projection.tick()
-    before = w.projection.markets["CHAIWALA"]
+    before = w.projection.markets["CALVERA"]
 
-    w.events.snapshots["CHAIWALA"] = w.exchange.snapshot()
+    w.events.snapshots["CALVERA"] = w.exchange.snapshot()
     again = w.new_projection()
     await again.start()
     await again.tick()  # the same clock: closes what the first one had closed
-    after = again.markets["CHAIWALA"]
+    after = again.markets["CALVERA"]
     assert after.sequence == before.sequence
     assert after.depth_levels(10) == before.depth_levels(10)
     assert list(after.recent) == list(before.recent)
@@ -203,11 +203,11 @@ async def test_a_start_from_scratch_rebuilds_the_market_from_the_event_store(w: 
         w.trade(price, 7)
         w.clock.now += timedelta(seconds=6)
     await w.deliver_all()
-    live = w.projection.markets["CHAIWALA"]
+    live = w.projection.markets["CALVERA"]
     w.store = InMemoryMarketStore()
     rebuilt = w.new_projection()
     await rebuilt.start()
-    again = rebuilt.markets["CHAIWALA"]
+    again = rebuilt.markets["CALVERA"]
     assert again.sequence == live.sequence and list(again.recent) == list(live.recent)
     assert again.series and live.series
     assert again.series["5s"].candles(0, 10**15) == live.series["5s"].candles(0, 10**15)
@@ -215,9 +215,9 @@ async def test_a_start_from_scratch_rebuilds_the_market_from_the_event_store(w: 
 
 async def test_catch_up_takes_depth_from_the_snapshot_and_later_events(w: World) -> None:
     w.exchange.place(B, "SELL", 5, 24800)
-    w.events.snapshots["CHAIWALA"] = w.exchange.snapshot()  # sequence 1
+    w.events.snapshots["CALVERA"] = w.exchange.snapshot()  # sequence 1
     w.exchange.place(B, "SELL", 4, 24900)
     fresh = w.new_projection()
     await fresh.start()
-    _, asks = fresh.markets["CHAIWALA"].depth_levels(10)
+    _, asks = fresh.markets["CALVERA"].depth_levels(10)
     assert [(a.price_paise, a.quantity) for a in asks] == [(24800, 5), (24900, 4)]

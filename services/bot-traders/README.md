@@ -93,7 +93,7 @@ At the default activity, the simulated hour in the tests gives about 8 orders/s,
 points and prices within a few percent of their reference (the test fails outside ±10%; `scripts/bots_check.py` checks
 the same band live).
 
-**Phase 4 rebalance (prices ran away).** MONSOON (₹88.20, where one tick is 5.7 basis points) climbed 13–15% above its
+**Phase 4 rebalance (prices ran away).** HELIOR (₹88.20, where one tick is 5.7 basis points) climbed 13–15% above its
 reference within a simulated hour in 3 of 5 runs. A market maker that had sold shares bid up to 30 basis points above
 its fair price to buy them back, the last price followed, and momentum took a two-tick wiggle for a trend. Three changes,
 none of them a price limit: the makers' fair price leans 5% (was 2%) towards the reference every candle, their inventory

@@ -17,7 +17,7 @@ from order_service.ports.portfolio import DependencyUnavailableError, Reservatio
 from order_service.runtime.jsonlog import correlation_id_var
 from order_service.runtime.metrics import Metrics
 
-REQUEST = OrderRequest("CHAIWALA", Side.BUY, OrderType.LIMIT, 50, 24600)
+REQUEST = OrderRequest("CALVERA", Side.BUY, OrderType.LIMIT, 50, 24600)
 ORDER, RAJU = "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12", "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d"
 
 
@@ -49,7 +49,7 @@ async def test_a_reservation_returns_its_id_and_protection_price() -> None:
     assert seen[0] == {
         "order_id": ORDER,
         "trader_id": RAJU,
-        "ticker": "CHAIWALA",
+        "ticker": "CALVERA",
         "side": "BUY",
         "order_type": "LIMIT",
         "quantity": 50,

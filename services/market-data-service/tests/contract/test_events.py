@@ -60,11 +60,11 @@ async def test_the_catalog_examples_of_matching_v1_are_applied() -> None:
     w = World()
     await w.projection.start()
     accepted, traded = example("OrderAccepted"), example("TradeExecuted")
-    w.events.events["CHAIWALA"] = []  # the catalog example's sequences start at 1041
-    w.projection.markets["CHAIWALA"].sequence = 1040
+    w.events.events["CALVERA"] = []  # the catalog example's sequences start at 1041
+    w.projection.markets["CALVERA"].sequence = 1040
     for event in (accepted, traded):
         await w.projection.handle(event)
-    market = w.projection.markets["CHAIWALA"]
+    market = w.projection.markets["CALVERA"]
     assert market.sequence == 1042 and market.last_price_paise == 24550
     bids, _ = market.depth_levels(10)
     assert [(b.price_paise, b.quantity) for b in bids] == [(24600, 30)]  # 50 accepted, 20 traded
@@ -73,9 +73,9 @@ async def test_the_catalog_examples_of_matching_v1_are_applied() -> None:
 async def test_events_market_data_does_not_show_still_advance_the_sequence() -> None:
     w = World()
     await w.projection.start()
-    w.events.events["CHAIWALA"] = []
+    w.events.events["CALVERA"] = []
     for name, sequence in (("OrderCancelRejected", 1103), ("OrderExpired", 1188)):
-        w.projection.markets["CHAIWALA"].sequence = sequence - 1
+        w.projection.markets["CALVERA"].sequence = sequence - 1
         await w.projection.handle(example(name))
-        assert w.projection.markets["CHAIWALA"].sequence == sequence
+        assert w.projection.markets["CALVERA"].sequence == sequence
     assert w.publisher.raw == []  # nothing dead-lettered

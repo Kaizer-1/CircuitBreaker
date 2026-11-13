@@ -21,13 +21,13 @@ describe('a WebSocket channel', () => {
   it('puts the token in the URL, answers pings and passes other messages on', () => {
     const got: unknown[] = []
     openStream({
-      path: '/v1/ws/market/DABBA',
+      path: '/v1/ws/market/ASTRYX',
       token: 'a b',
       onMessage: (m) => got.push(m),
       WebSocketImpl: FakeSocket as never,
     })
     const ws = FakeSocket.all[0]
-    expect(ws.url).toMatch(/\/v1\/ws\/market\/DABBA\?access_token=a%20b$/)
+    expect(ws.url).toMatch(/\/v1\/ws\/market\/ASTRYX\?access_token=a%20b$/)
     ws.onmessage!({ data: '{"type":"ping"}' })
     ws.onmessage!({ data: '{"type":"trade","data":{"sequence":3}}' })
     ws.onmessage!({ data: 'not json' })

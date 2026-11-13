@@ -26,7 +26,7 @@ from order_service.ports.portfolio import DependencyUnavailableError
 from order_service.runtime.jsonlog import correlation_id_var
 from order_service.runtime.problem import FieldError, problem_response
 
-Ticker = Literal["CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY"]
+Ticker = Literal["CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA"]
 StatusFilter = Literal[
     "open", "PENDING", "OPEN", "PARTIALLY_FILLED", "FILLED", "CANCELLED", "REJECTED"
 ]

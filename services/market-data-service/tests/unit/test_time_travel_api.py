@@ -67,11 +67,11 @@ def live(exchange: Exchange) -> FakeLiveBooks:
 def app(settings: Settings, exchange: Exchange, live: FakeLiveBooks) -> FastAPI:
     app = create_app(settings, readiness_checks=[])
     events = FakeEventStore()
-    events.events["CHAIWALA"] = exchange.log
+    events.events["CALVERA"] = exchange.log
     now = ms(exchange.as_of or "") + 60_000
     latest = SimpleNamespace(as_of_ms=ms(exchange.as_of or ""))  # the live read model's last event
     app.state.projection = SimpleNamespace(
-        ready=True, now_ms=lambda: now, markets={"CHAIWALA": latest}
+        ready=True, now_ms=lambda: now, markets={"CALVERA": latest}
     )
     app.state.time_travel = TimeTravel(events, InMemoryMarketStore(), live=live)
     return app
@@ -84,7 +84,7 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 
 def get(client: TestClient, at: str, headers: dict[str, str] | None = None) -> Any:
-    return client.get("/v1/time-travel/CHAIWALA", params={"at": at}, headers=headers or TRADER)
+    return client.get("/v1/time-travel/CALVERA", params={"at": at}, headers=headers or TRADER)
 
 
 def test_the_answer_is_the_book_at_t_with_its_hash(client: TestClient, exchange: Exchange) -> None:
@@ -131,6 +131,40 @@ def test_the_proof_holds_while_the_market_keeps_trading(
     body = get(client, exchange.as_of or "").json()
     assert body["as_of_sequence"] == captured.sequence < exchange.sequence
     assert body["verification"]["matches"] is True
+
+
+def test_now_is_proved_even_when_the_engine_traded_after_our_clock_was_read(
+    client: TestClient, exchange: Exchange, live: FakeLiveBooks
+) -> None:
+    # "Now" (a second ahead, as the screen asks) is clamped to market-data's clock; a bot trade
+    # that lands between that and the Q-16 read makes the live book newer than the clamped
+    # moment. The proof must still be given, at the live book's sequence (CI caught the race).
+    now = ms(exchange.as_of or "") + 60_000  # the fixture's market-data clock
+    exchange.advance(61)
+    exchange.place("c", "SELL", 2, 495)  # after `now`
+    captured = live.capture()
+    body = get(client, stamp(now + 1_000)).json()
+    assert body["verification"] == {
+        "live_sequence": captured.sequence,
+        "live_state_hash": captured.state_hash,
+        "matches": True,
+    }
+    assert (body["as_of_sequence"], body["state_hash"]) == (captured.sequence, captured.state_hash)
+
+
+def test_a_past_moment_is_never_moved_forward_to_the_live_book(
+    client: TestClient, exchange: Exchange, live: FakeLiveBooks
+) -> None:
+    # T after the read model's last event but before market-data's clock (the read model lags):
+    # that is the past, so the answer is the book at T even though the engine has moved on.
+    at = exchange.as_of or ""
+    sequence_at_t = exchange.sequence
+    exchange.advance(30)
+    exchange.place("c", "SELL", 2, 495)
+    live.capture()
+    body = get(client, at).json()
+    assert body["as_of_sequence"] == sequence_at_t
+    assert body["verification"] is None
 
 
 def test_a_rebuild_that_differs_from_the_live_book_says_so(

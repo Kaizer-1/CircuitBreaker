@@ -75,6 +75,7 @@ async def get_market_at(
             detail=f"at={at} is in the future.",
             instance=request.url.path,
         )
+    asked_for_now = moment >= now  # "now", give or take the clock skew allowed above
     moment = min(moment, now)
     slots: Slots = request.app.state.rebuild_slots
     if not slots.try_acquire(admin=is_admin(request.headers.get("x-role"))):
@@ -88,7 +89,8 @@ async def get_market_at(
     try:
         # A moment at or after the live market's last event is "now": prove the rebuild exact.
         live = projection.markets[ticker].as_of_ms
-        market = await time_travel.market_at(ticker, moment, verify=live is None or moment >= live)
+        verify = asked_for_now or live is None or moment >= live
+        market = await time_travel.market_at(ticker, moment, verify=verify, now=asked_for_now)
     except httpx.HTTPError as exc:
         logger.warning("event store unavailable", extra={"error": repr(exc)})
         return problem_response(

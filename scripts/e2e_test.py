@@ -68,7 +68,7 @@ from stack import (
 
 FINAL = ("FILLED", "CANCELLED", "REJECTED")
 ROOT = Path(__file__).resolve().parents[1]
-TICKERS = ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY")
+TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
 # Placing an order while four replays run. Measured on the dev laptop with the bots trading
 # (2026-11-12): p95 24 ms without replays, 20 ms during four, so replays cost nothing visible.
 # The bound leaves room for a slower CI runner.
@@ -100,22 +100,22 @@ def test_place_trade_settle() -> None:
     a, b, seller = tester(11), tester(12), bot("bot-01")
     cancel_everything([a, b])  # orders left by an earlier, interrupted run
     a0, b0 = a.portfolio(), b.portfolio()
-    p = free_price("CHAIWALA", 24550)  # nobody else's resting order can take part
+    p = free_price("CALVERA", 24550)  # nobody else's resting order can take part
     sell = seller.place("SELL", 20, p)
     buy = a.place("BUY", 20, p + 5)  # willing to pay 5 paise more: pays the resting price
     assert buy["status"] == "PENDING"
     settled(seller, sell["order_id"])
     filled = settled(a, buy["order_id"])
     assert (filled["filled_quantity"], filled["average_fill_price_paise"]) == (20, p)
-    q = free_price("CHAIWALA", p + 150)
+    q = free_price("CALVERA", p + 150)
     a_sell, b_buy = a.place("SELL", 10, q), b.place("BUY", 10, q + 5)
     settled(a, a_sell["order_id"])
     settled(b, b_buy["order_id"])
     pa, pb = a.portfolio(), b.portfolio()
     assert (pa["cash_paise"], pa["reserved_cash_paise"]) == (a0["cash_paise"] - 20 * p + 10 * q, 0)
     assert (pb["cash_paise"], pb["reserved_cash_paise"]) == (b0["cash_paise"] - 10 * q, 0)
-    assert held(pa, "CHAIWALA") == held(a0, "CHAIWALA") + 10
-    assert held(pb, "CHAIWALA") == held(b0, "CHAIWALA") + 10
+    assert held(pa, "CALVERA") == held(a0, "CALVERA") + 10
+    assert held(pb, "CALVERA") == held(b0, "CALVERA") + 10
     TESTERS.update({a.trader_id, b.trader_id})
 
 
@@ -123,7 +123,7 @@ def test_place_trade_settle() -> None:
 
 
 def test_crash_recovery_by_hash() -> None:
-    ticker = "DABBA"
+    ticker = "ASTRYX"
     rng = random.Random(42)  # noqa: S311 (a reproducible workload, not cryptography)
     testers = [tester(13 + n) for n in range(3)]
     bots = [bot("bot-11"), bot("bot-12")]
@@ -232,7 +232,7 @@ def test_orphan_rule_is_fail_closed() -> None:
         {
             "order_id": lost_order,
             "trader_id": c.trader_id,
-            "ticker": "CHAIWALA",
+            "ticker": "CALVERA",
             "side": "BUY",
             "order_type": "LIMIT",
             "quantity": 10,
@@ -243,7 +243,7 @@ def test_orphan_rule_is_fail_closed() -> None:
     compose("stop", "redpanda")
     began = time.monotonic()
     try:
-        stuck = c.place("BUY", 5, free_price("CHAIWALA", 24000))  # can never meet a resting ask
+        stuck = c.place("BUY", 5, free_price("CALVERA", 24000))  # can never meet a resting ask
         assert stuck["status"] == "PENDING"
         rejected = wait_for(
             "the unpublished order to be REJECTED",
@@ -274,7 +274,7 @@ def test_orphan_rule_is_fail_closed() -> None:
     print(
         f"     released {time.monotonic() - began:.0f} s after the start, once the engine answered"
     )
-    events = engine_events("CHAIWALA")
+    events = engine_events("CALVERA")
     lost = [e["event_type"] for e in events if e["data"].get("order_id") == lost_order]
     assert lost == ["OrderExpired"], lost  # never seen by the engine: a tombstone
     late = [
@@ -291,7 +291,7 @@ def test_orphan_rule_is_fail_closed() -> None:
     # A late copy of the lost order (a relay that hung): the tombstone refuses it.
     produce(
         "orders.v1",
-        "CHAIWALA",
+        "CALVERA",
         {
             "event_id": str(uuid.uuid4()),
             "event_type": "OrderPlaced",
@@ -304,7 +304,7 @@ def test_orphan_rule_is_fail_closed() -> None:
             "data": {
                 "order_id": lost_order,
                 "trader_id": c.trader_id,
-                "ticker": "CHAIWALA",
+                "ticker": "CALVERA",
                 "side": "BUY",
                 "order_type": "LIMIT",
                 "quantity": 10,
@@ -317,9 +317,7 @@ def test_orphan_rule_is_fail_closed() -> None:
     )
     time.sleep(5)
     kinds = [
-        e["event_type"]
-        for e in engine_events("CHAIWALA")
-        if e["data"].get("order_id") == lost_order
+        e["event_type"] for e in engine_events("CALVERA") if e["data"].get("order_id") == lost_order
     ]
     assert kinds == ["OrderExpired"], kinds
     assert c.portfolio()["cash_paise"] == start_cash
@@ -378,7 +376,7 @@ def test_time_travel_rebuilds_three_moments_exactly() -> None:
     viewer = tester(17)
     TESTERS.add(viewer.trader_id)
     moments = []
-    for ticker in ("CHAIWALA", "DABBA", "MONSOON"):
+    for ticker in ("CALVERA", "ASTRYX", "HELIOR"):
         while True:
             time.sleep(3)
             book = live_book(ticker)
@@ -431,10 +429,10 @@ def test_a_replay_ends_on_the_rebuilt_hash_and_plays_every_fill() -> None:
     now = datetime.now(UTC)
     start, until = iso(now - timedelta(seconds=150)), iso(now - timedelta(seconds=30))
     began = time.monotonic()
-    replay = play(open_replay(viewer.token, "CHAIWALA", start, until, 60))
+    replay = play(open_replay(viewer.token, "CALVERA", start, until, 60))
     took = time.monotonic() - began
     assert replay.close_code == 1000 and replay.end is not None, replay.close_code
-    first, last = at(viewer, "CHAIWALA", start), at(viewer, "CHAIWALA", until)
+    first, last = at(viewer, "CALVERA", start), at(viewer, "CALVERA", until)
     assert (replay.end["as_of_sequence"], replay.end["state_hash"]) == (
         last["as_of_sequence"],
         last["state_hash"],
@@ -444,7 +442,7 @@ def test_a_replay_ends_on_the_rebuilt_hash_and_plays_every_fill() -> None:
     replayed = [t["trade_id"] for f in replay.frames for t in f.get("trades") or []]
     live = [
         e["data"]["trade_id"]
-        for e in engine_events("CHAIWALA", after=first["as_of_sequence"])
+        for e in engine_events("CALVERA", after=first["as_of_sequence"])
         if e["event_type"] == "TradeExecuted"
         and e["data"]["sequence"] <= replay.end["as_of_sequence"]
     ]
@@ -486,18 +484,18 @@ def test_replays_are_isolated_from_live_trading() -> None:
     watchers = [tester(n) for n in (23, 24, 25, 26)]
     for t in (trader, *watchers):
         TESTERS.add(t.trader_id)
-    quiet = order_latencies(trader, "JUGAAD", 30)
+    quiet = order_latencies(trader, "KORVIN", 30)
 
     now = datetime.now(UTC)
     start, until = iso(now - timedelta(minutes=6)), iso(now - timedelta(minutes=1))
-    tickers = ("CHAIWALA", "DABBA", "MONSOON", "FILMY")
+    tickers = ("CALVERA", "ASTRYX", "HELIOR", "TAVIRA")
     sockets: list[WebSocket] = []
     for watcher, ticker in zip(watchers[:3], tickers, strict=False):
         sockets.append(open_replay(watcher.token, ticker, start, until, 10))
         assert sockets[-1].receive() is not None  # playing: its place is taken
-    refused = play(open_replay(watchers[3].token, "FILMY", start, until, 10))
+    refused = play(open_replay(watchers[3].token, "TAVIRA", start, until, 10))
     assert refused.close_code == 1013, f"a fourth trader replay got {refused.close_code}"
-    sockets.append(open_replay(admin_token(), "FILMY", start, until, 10))  # the presenter
+    sockets.append(open_replay(admin_token(), "TAVIRA", start, until, 10))  # the presenter
     assert sockets[-1].receive() is not None
 
     results: list[Replay | None] = [None] * len(sockets)
@@ -508,7 +506,7 @@ def test_replays_are_isolated_from_live_trading() -> None:
     readers = [threading.Thread(target=finish, args=(n,)) for n in range(len(sockets))]
     for r in readers:
         r.start()
-    busy = order_latencies(trader, "JUGAAD", 30)
+    busy = order_latencies(trader, "KORVIN", 30)
     for r in readers:
         r.join(timeout=120)
 

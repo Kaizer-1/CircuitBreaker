@@ -32,7 +32,7 @@ def app(settings: Settings, exchange: Exchange) -> FastAPI:
     settings.replay_pause_limit_seconds = 0.3
     app = create_app(settings, readiness_checks=[])
     events = FakeEventStore()
-    events.events["CHAIWALA"] = exchange.log
+    events.events["CALVERA"] = exchange.log
     now = ms(exchange.as_of or "") + 3_600_000
     app.state.projection = SimpleNamespace(ready=True, now_ms=lambda: now, markets={})
     app.state.time_travel = TimeTravel(events, store_for(exchange))
@@ -45,7 +45,7 @@ def client(app: FastAPI) -> Iterator[TestClient]:
         yield c
 
 
-def url(start: str, end: str, speed: Any = 60, ticker: str = "CHAIWALA") -> str:
+def url(start: str, end: str, speed: Any = 60, ticker: str = "CALVERA") -> str:
     return f"/v1/ws/replay/{ticker}?from={start}&to={end}&speed={speed}"
 
 
@@ -101,7 +101,7 @@ def test_a_replay_streams_frames_then_end_and_closes_normally(
         (lambda s, e: url(s, "2099-01-01T00:00:00Z"), 4422),  # to in the future
         (lambda s, e: url(s, stamp(ms(s) + 31 * 60_000)), 4422),  # more than 30 minutes
         (lambda s, e: url(s, e).replace("Z&", "&", 1), 4422),  # no UTC offset
-        (lambda s, e: "/v1/ws/replay/CHAIWALA", 4422),  # nothing given
+        (lambda s, e: "/v1/ws/replay/CALVERA", 4422),  # nothing given
     ],
 )
 def test_bad_requests_are_closed_with_a_code_that_says_why(

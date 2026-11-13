@@ -73,7 +73,7 @@ class Trader:
         return {"Authorization": f"Bearer {self.token}"}
 
     def place(
-        self, side: str, quantity: int, price: int | None, ticker: str = "CHAIWALA"
+        self, side: str, quantity: int, price: int | None, ticker: str = "CALVERA"
     ) -> dict[str, Any]:
         order = {
             "ticker": ticker,
@@ -183,7 +183,7 @@ def settled(
     return result
 
 
-def live_book(ticker: str = "CHAIWALA") -> dict[str, Any]:
+def live_book(ticker: str = "CALVERA") -> dict[str, Any]:
     result: dict[str, Any] = http("GET", f"{ENGINE}/internal/v1/books/{ticker}")
     return result
 
@@ -199,7 +199,7 @@ def free_price(ticker: str, around: int) -> int:
     return min(max(around, low), high)
 
 
-def engine_events(ticker: str = "CHAIWALA", after: int = 0) -> list[dict[str, Any]]:
+def engine_events(ticker: str = "CALVERA", after: int = 0) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     while True:
         page = http(

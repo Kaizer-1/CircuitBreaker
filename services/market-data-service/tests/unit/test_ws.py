@@ -64,7 +64,7 @@ class Market:
         self.clock = Clock()
         self.exchange = Exchange(clock=self.clock)
         events = FakeEventStore()
-        events.events["CHAIWALA"] = self.exchange.log
+        events.events["CALVERA"] = self.exchange.log
         self.projection = MarketProjection(
             InMemoryMarketStore(),
             events,
@@ -93,13 +93,13 @@ async def test_a_client_that_reconnects_ends_with_the_same_state_as_one_that_nev
     m = Market()
     await m.projection.start()
     steady = ClientView()
-    snapshot, s_sub = m.hub.subscribe("CHAIWALA")
+    snapshot, s_sub = m.hub.subscribe("CALVERA")
     steady.apply(snapshot)
 
     flaky = ClientView()
     for _ in range(40):
         await m.step()
-    snapshot, f_sub = m.hub.subscribe("CHAIWALA")
+    snapshot, f_sub = m.hub.subscribe("CALVERA")
     flaky.apply(snapshot)
     for _ in range(40):
         await m.step()
@@ -107,14 +107,14 @@ async def test_a_client_that_reconnects_ends_with_the_same_state_as_one_that_nev
     m.hub.unsubscribe(f_sub)  # the phone loses its connection; what is sent meanwhile is lost
     for _ in range(60):
         await m.step()
-    snapshot, f_sub = m.hub.subscribe("CHAIWALA")  # reconnect: a fresh snapshot first
+    snapshot, f_sub = m.hub.subscribe("CALVERA")  # reconnect: a fresh snapshot first
     flaky.apply(snapshot)
     for _ in range(40):
         await m.step()
     steady.drain(s_sub)
     flaky.drain(f_sub)
 
-    market = m.projection.markets["CHAIWALA"]
+    market = m.projection.markets["CALVERA"]
     assert len(market.recent) > 50  # enough trades that the tape had to be resynced
     assert flaky.book == steady.book
     assert flaky.book is not None and flaky.book["as_of_sequence"] == market.sequence
@@ -132,9 +132,9 @@ async def test_the_snapshot_and_the_first_update_never_overlap_or_leave_a_gap() 
     await m.projection.start()
     for _ in range(10):
         await m.step()
-    snapshot, sub = m.hub.subscribe("CHAIWALA")
+    snapshot, sub = m.hub.subscribe("CALVERA")
     at = snapshot["data"]["order_book"]["as_of_sequence"]
-    assert at == m.projection.markets["CHAIWALA"].sequence
+    assert at == m.projection.markets["CALVERA"].sequence
     await m.step()
     trades = [msg["data"] for msg in _drain(sub) if msg["type"] == "trade"]
     assert all(t["sequence"] > at for t in trades)
@@ -143,7 +143,7 @@ async def test_the_snapshot_and_the_first_update_never_overlap_or_leave_a_gap() 
 async def test_a_client_too_far_behind_is_marked_for_closing() -> None:
     m = Market()
     await m.projection.start()
-    _, sub = m.hub.subscribe("CHAIWALA")
+    _, sub = m.hub.subscribe("CALVERA")
     for _ in range(QUEUE_LIMIT + 1):
         sub.send({"type": "ping"})
     assert sub.lagging
@@ -185,7 +185,7 @@ def test_an_unknown_ticker_is_closed_with_4404(live: Any) -> None:
 def test_while_starting_the_stream_closes_with_1011(settings: Settings) -> None:
     with TestClient(create_app(settings, readiness_checks=[])) as client:
         with (
-            client.websocket_connect("/v1/ws/market/CHAIWALA") as ws,
+            client.websocket_connect("/v1/ws/market/CALVERA") as ws,
             pytest.raises(WebSocketDisconnect) as e,
         ):
             ws.receive_json()
@@ -194,7 +194,7 @@ def test_while_starting_the_stream_closes_with_1011(settings: Settings) -> None:
 
 def test_snapshot_first_then_trades_book_and_pings(live: Any) -> None:
     client, m = live
-    with client.websocket_connect("/v1/ws/market/CHAIWALA") as ws:
+    with client.websocket_connect("/v1/ws/market/CALVERA") as ws:
         first = ws.receive_json()
         assert first["type"] == "snapshot"
         assert set(first["data"]) == {"order_book", "last_price_paise", "candles", "recent_trades"}
@@ -214,7 +214,7 @@ def test_snapshot_first_then_trades_book_and_pings(live: Any) -> None:
 
 def test_no_pong_closes_the_connection(live: Any) -> None:
     client, _ = live
-    with client.websocket_connect("/v1/ws/market/CHAIWALA") as ws:
+    with client.websocket_connect("/v1/ws/market/CALVERA") as ws:
         ws.receive_json()  # snapshot
         with pytest.raises(WebSocketDisconnect):
             while True:
@@ -223,7 +223,7 @@ def test_no_pong_closes_the_connection(live: Any) -> None:
 
 def test_subscribe_chooses_the_candle_intervals(live: Any) -> None:
     client, m = live
-    with client.websocket_connect("/v1/ws/market/CHAIWALA") as ws:
+    with client.websocket_connect("/v1/ws/market/CALVERA") as ws:
         ws.receive_json()
         ws.send_json({"type": "subscribe", "data": {"intervals": ["1m", "nonsense"]}})
         ws.send_text("not json")  # ignored

@@ -122,7 +122,7 @@ async def test_cancels_and_expiries_have_no_time_limit(w: World) -> None:
     order = await w.place()
     w.publisher.down = True
     await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
-    await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CHAIWALA")
+    await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CALVERA")
     for _ in range(25):  # Redpanda down for 25 minutes; the relay keeps trying
         w.clock.now += timedelta(minutes=1)
         assert await w.relay.run_once() == 0

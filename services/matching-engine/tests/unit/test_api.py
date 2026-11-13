@@ -49,7 +49,7 @@ def client(settings: Settings, engine: MatchingEngine) -> Iterator[TestClient]:
 def test_q16_returns_the_live_book_in_priority_order_with_its_hash(
     client: TestClient, engine: MatchingEngine
 ) -> None:
-    body = client.get("/internal/v1/books/CHAIWALA").json()
+    body = client.get("/internal/v1/books/CALVERA").json()
     assert body["sequence"] == 4
     assert body["bids"] == [
         {
@@ -65,44 +65,44 @@ def test_q16_returns_the_live_book_in_priority_order_with_its_hash(
         }
     ]
     assert [lv["price_paise"] for lv in body["asks"]] == [24700]
-    assert body["state_hash"] == engine.book("CHAIWALA").state_hash()
+    assert body["state_hash"] == engine.book("CALVERA").state_hash()
 
 
 def test_q16_of_an_empty_book_is_sequence_0(client: TestClient) -> None:
-    body = client.get("/internal/v1/books/FILMY").json()
+    body = client.get("/internal/v1/books/TAVIRA").json()
     assert (body["sequence"], body["bids"], body["asks"]) == (0, [], [])
     assert body["as_of"].endswith("Z")
 
 
 def test_q14_pages_through_events_in_sequence_order(client: TestClient) -> None:
-    first = client.get("/internal/v1/events", params={"ticker": "CHAIWALA", "limit": 3}).json()
+    first = client.get("/internal/v1/events", params={"ticker": "CALVERA", "limit": 3}).json()
     assert [e["data"]["sequence"] for e in first["events"]] == [1, 2, 3]
     assert (first["next_after_sequence"], first["has_more"]) == (3, True)
     rest = client.get(
-        "/internal/v1/events", params={"ticker": "CHAIWALA", "after_sequence": 3}
+        "/internal/v1/events", params={"ticker": "CALVERA", "after_sequence": 3}
     ).json()
     assert [e["event_type"] for e in rest["events"]] == ["OrderAccepted"]
     assert (rest["next_after_sequence"], rest["has_more"]) == (4, False)
-    empty = client.get("/internal/v1/events", params={"ticker": "JUGAAD"}).json()
+    empty = client.get("/internal/v1/events", params={"ticker": "KORVIN"}).json()
     assert (empty["events"], empty["next_after_sequence"], empty["has_more"]) == ([], None, False)
 
 
 def test_q14_stops_at_until(client: TestClient) -> None:
     before = client.get(
-        "/internal/v1/events", params={"ticker": "CHAIWALA", "until": "2026-11-20T10:00:00Z"}
+        "/internal/v1/events", params={"ticker": "CALVERA", "until": "2026-11-20T10:00:00Z"}
     ).json()
     assert before["events"] == []
 
 
 def test_q14_rejects_an_unknown_ticker_and_a_bad_limit(client: TestClient) -> None:
     assert client.get("/internal/v1/events", params={"ticker": "NOPE"}).status_code == 422
-    bad = client.get("/internal/v1/events", params={"ticker": "CHAIWALA", "limit": 5000})
+    bad = client.get("/internal/v1/events", params={"ticker": "CALVERA", "limit": 5000})
     assert bad.status_code == 422
 
 
 def test_q15_returns_the_latest_snapshot_at_or_before_a_time(client: TestClient) -> None:
     body = client.get(
-        "/internal/v1/snapshots/CHAIWALA", params={"at": "2026-11-20T11:00:00Z"}
+        "/internal/v1/snapshots/CALVERA", params={"at": "2026-11-20T11:00:00Z"}
     ).json()
     assert body["sequence"] == 3  # every 2 events: taken after the 2-event command (seq 2-3)
     assert body["bids"][0]["orders"][0]["remaining_quantity"] == 30
@@ -113,9 +113,9 @@ def test_q15_returns_the_latest_snapshot_at_or_before_a_time(client: TestClient)
 
 
 def test_q15_without_a_snapshot_yet_is_an_empty_book_at_sequence_0(client: TestClient) -> None:
-    body = client.get("/internal/v1/snapshots/DABBA", params={"at": "2026-11-20T11:00:00Z"}).json()
+    body = client.get("/internal/v1/snapshots/ASTRYX", params={"at": "2026-11-20T11:00:00Z"}).json()
     assert body == {
-        "ticker": "DABBA",
+        "ticker": "ASTRYX",
         "sequence": 0,
         "as_of": "2026-11-20T11:00:00.000Z",
         "bids": [],
@@ -126,8 +126,8 @@ def test_q15_without_a_snapshot_yet_is_an_empty_book_at_sequence_0(client: TestC
 
 def test_while_the_books_are_rebuilding_the_reads_say_so(settings: Settings) -> None:
     with TestClient(create_app(settings, readiness_checks=[])) as c:
-        assert c.get("/internal/v1/books/CHAIWALA").status_code == 404
-        events = c.get("/internal/v1/events", params={"ticker": "CHAIWALA"})
+        assert c.get("/internal/v1/books/CALVERA").status_code == 404
+        events = c.get("/internal/v1/events", params={"ticker": "CALVERA"})
         assert (events.status_code, events.json()["code"]) == (503, "DEPENDENCY_UNAVAILABLE")
-        snapshot = c.get("/internal/v1/snapshots/CHAIWALA", params={"at": "2026-11-20T11:00:00Z"})
+        snapshot = c.get("/internal/v1/snapshots/CALVERA", params={"at": "2026-11-20T11:00:00Z"})
         assert snapshot.status_code == 503

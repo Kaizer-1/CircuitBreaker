@@ -42,14 +42,14 @@ def test_the_catalog_examples_settle_a_trade() -> None:
         assert d["seller_trader_id"] == seeded_trader_id("bot-03")
         await service.create_reservation(
             ReservationRequest(
-                d["buy_order_id"], RAJU, "CHAIWALA", Side.BUY, OrderType.LIMIT, 50, 24600
+                d["buy_order_id"], RAJU, "CALVERA", Side.BUY, OrderType.LIMIT, 50, 24600
             )
         )
         await service.create_reservation(
             ReservationRequest(
                 d["sell_order_id"],
                 d["seller_trader_id"],
-                "CHAIWALA",
+                "CALVERA",
                 Side.SELL,
                 OrderType.LIMIT,
                 20,
@@ -72,7 +72,7 @@ def test_the_catalog_example_of_order_expired_releases_a_reservation() -> None:
         expired = example("OrderExpired")
         await service.create_reservation(
             ReservationRequest(
-                expired.data["order_id"], RAJU, "CHAIWALA", Side.BUY, OrderType.LIMIT, 5, 24600
+                expired.data["order_id"], RAJU, "CALVERA", Side.BUY, OrderType.LIMIT, 5, 24600
             )
         )
         assert await service.apply_event(expired)

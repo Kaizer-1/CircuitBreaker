@@ -178,12 +178,12 @@ price; everything else is plain signage.
 
 **Type:** **Doto** (a dot-matrix face, for the LED numerals only) + **Barlow Condensed** (signage: tickers, headings,
 buttons) + **Barlow** (table numbers with tabular figures, body). *Why:* the dot-matrix numerals are the board; a
-condensed grotesque is the lettering painted on Indian street and station signs, and it fits long tickers like
-CHAIWALA into narrow columns. Doto's decimal point is drawn as a small cross, so the mockup draws its own square LED
+condensed grotesque is the lettering painted on Indian street and station signs, and it fits tickers of up to 8
+letters into narrow columns. Doto's decimal point is drawn as a small cross, so the mockup draws its own square LED
 dot instead.
 
 **Numbers and the price flash:** an LED change blanks the digits for 120 ms, then lights them green or red for about
-a second before they return to amber, like a real board updating (DABBA in the strip is shown in its red state). Table
+a second before they return to amber, like a real board updating (ASTRYX in the strip is shown in its red state). Table
 numbers are plain Barlow, right-aligned.
 
 **Why it fits a projector:** amber-on-black is the highest-impact look in a dim room and instantly says "stock
@@ -210,8 +210,8 @@ Condensed** (panel titles, column headers, key labels). *Why:* a terminal is mon
 sans for the labels keeps headers short so the data gets the space.
 
 **Numbers and the price flash:** a change lights its cell's background dark green or dark red for 600 ms with the number
-at full brightness (MONSOON's last price and the newest trade are shown lit). The dashboard has a command line
-(`> CHAIWALA EQUITY GP`), an F-key bar (F1 MARKET … F8 JOIN … F12 SYSTEM) and a status line. On the phone the F-keys
+at full brightness (HELIOR's last price and the newest trade are shown lit). The dashboard has a command line
+(`> CALVERA EQUITY GP`), an F-key bar (F1 MARKET … F8 JOIN … F12 SYSTEM) and a status line. On the phone the F-keys
 become the bottom tab bar.
 
 **Why it fits a projector:** it shows the most information per screen (all five instruments with bid, ask, high, low

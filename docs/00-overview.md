@@ -21,7 +21,7 @@ We want a system that is:
 **CircuitBreaker is a self-healing simulated stock exchange.**
 
 - **Human traders** scan a **QR code** on the projector, pick a nickname, and receive **₹1,00,000** of
-  virtual money. They buy and sell five fictional Indian-flavoured stocks from their phones.
+  virtual money. They buy and sell five fictional company stocks from their phones.
 - **20 bot traders** trade automatically so the market is always moving, even with no humans.
 - A **matching engine** pairs buy and sell orders fairly using **price-time priority**
   (best price first; at the same price, whoever came first).
@@ -42,13 +42,29 @@ We want a system that is:
 
 All five companies are fictional. Prices are in Indian Rupees (INR). Each "lot" is 1 share.
 
-| Ticker | Company | Reference price | Story |
+| Ticker | Company | Reference price | Business |
 |---|---|---|---|
-| `CHAIWALA` | Chaiwala Beverages Ltd | ₹245.50 | India's favourite (fictional) cutting-chai chain |
-| `JUGAAD` | Jugaad Technologies Ltd | ₹1,180.00 | Frugal-innovation software house |
-| `DABBA` | Dabba Logistics Ltd | ₹412.75 | Lunchbox delivery, now with drones |
-| `MONSOON` | Monsoon Power Ltd | ₹88.20 | Hydro and solar power producer |
-| `FILMY` | Filmy Studios Ltd | ₹530.05 | Film studio with a song in every release |
+| `CALVERA` | Calvera Consumer Ltd | ₹245.50 | Packaged foods and beverages |
+| `KORVIN` | Korvin Technologies Ltd | ₹1,180.00 | IT services and software |
+| `ASTRYX` | Astryx Logistics Ltd | ₹412.75 | Warehousing and express freight |
+| `HELIOR` | Helior Power Ltd | ₹88.20 | Solar and hydro power producer |
+| `TAVIRA` | Tavira Media Ltd | ₹530.05 | Film, streaming and broadcast |
+
+**Why these names.** The demo crashes a stock on a projector, so the companies must look credible on an exchange
+screen and must not be mistaken for a real listed company. Each name is invented, one per sector, and at most 8
+characters (the widest the screens are laid out for). Before choosing them we checked that none is a real symbol or a
+well-known company: NSE by exact match against its official equity and SME symbol lists, BSE through its official
+scrip search (active and suspended securities by name, symbol and code), and the web for real companies with the
+same or a close name. BSE's delisted securities were not fully checked (only the first page of that list).
+
+<!-- retired-names:begin 2026-11-14 -->
+> **Amended 2026-11-14 (reference data, within v1).** The instruments were renamed from playful names to the
+> professional ones above, before any release, keeping each slot's reference price: `CHAIWALA` (Chaiwala Beverages
+> Ltd) → `CALVERA`, `JUGAAD` (Jugaad Technologies Ltd) → `KORVIN`, `DABBA` (Dabba Logistics Ltd) → `ASTRYX`,
+> `MONSOON` (Monsoon Power Ltd) → `HELIOR`, `FILMY` (Filmy Studios Ltd) → `TAVIRA`. Reason: the playful names looked
+> unprofessional in the final presentation. The API versions did not change (see the changelog in `api/README.md`);
+> `tools/check_retired_names.py` (in `make lint` and CI) fails if an old name appears outside a dated note like this.
+<!-- retired-names:end -->
 
 The **reference price** is the starting price used before any trade has happened.
 
@@ -135,7 +151,7 @@ Terms are grouped by topic. Every document uses these exact meanings.
 
 | Term | Meaning |
 |---|---|
-| **Ticker** | Short code for a stock, e.g. `CHAIWALA`. |
+| **Ticker** | Short code for a stock, e.g. `CALVERA`. |
 | **Instrument** | Anything that can be traded; here, one of the five stocks. |
 | **Order** | An instruction to buy or sell a quantity of a ticker. |
 | **Side** | `BUY` or `SELL`. |

@@ -62,7 +62,7 @@ async def store(session: Any) -> CassandraEventStore:
     return s
 
 
-def event(sequence: int, at: datetime, ticker: str = "CHAIWALA") -> Any:
+def event(sequence: int, at: datetime, ticker: str = "CALVERA") -> Any:
     return build_event(
         "OrderExpired",
         {
@@ -83,20 +83,20 @@ async def test_events_are_read_back_in_sequence_across_day_partitions(
     store: CassandraEventStore,
 ) -> None:
     for n in range(1, 7):  # three on day 1, three on day 2: two (ticker, day) partitions
-        await store.append("CHAIWALA", [event(n, DAY1 + timedelta(seconds=n - 1))], f"cmd-{n}")
-    got = await store.events_after("CHAIWALA", 0)
+        await store.append("CALVERA", [event(n, DAY1 + timedelta(seconds=n - 1))], f"cmd-{n}")
+    got = await store.events_after("CALVERA", 0)
     assert [e.data["sequence"] for e in got] == [1, 2, 3, 4, 5, 6]
-    assert [e.data["sequence"] for e in await store.events_after("CHAIWALA", 4)] == [5, 6]
-    assert await store.events_after("JUGAAD", 0) == []
+    assert [e.data["sequence"] for e in await store.events_after("CALVERA", 4)] == [5, 6]
+    assert await store.events_after("KORVIN", 0) == []
 
 
 async def test_events_after_honours_limit_and_until(store: CassandraEventStore) -> None:
     for n in range(1, 6):
-        await store.append("CHAIWALA", [event(n, DAY1 + timedelta(seconds=n))], f"cmd-{n}")
-    page = await store.events_after("CHAIWALA", 1, limit=2)
+        await store.append("CALVERA", [event(n, DAY1 + timedelta(seconds=n))], f"cmd-{n}")
+    page = await store.events_after("CALVERA", 1, limit=2)
     assert [e.data["sequence"] for e in page] == [2, 3]
     until = (DAY1 + timedelta(seconds=3)).isoformat().replace("+00:00", "Z")
-    assert [e.data["sequence"] for e in await store.events_after("CHAIWALA", 0, until=until)] == [
+    assert [e.data["sequence"] for e in await store.events_after("CALVERA", 0, until=until)] == [
         1,
         2,
         3,
@@ -105,9 +105,9 @@ async def test_events_after_honours_limit_and_until(store: CassandraEventStore) 
 
 async def test_the_command_id_is_recorded_with_its_events(store: CassandraEventStore) -> None:
     assert await store.is_processed("cmd-1") is False
-    await store.append("CHAIWALA", [event(1, DAY1)], "cmd-1")
+    await store.append("CALVERA", [event(1, DAY1)], "cmd-1")
     assert await store.is_processed("cmd-1") is True
-    await store.append("CHAIWALA", [], "cmd-refused")  # a refused command: no events, but processed
+    await store.append("CALVERA", [], "cmd-refused")  # a refused command: no events, but processed
     assert await store.is_processed("cmd-refused") is True
 
 
@@ -115,7 +115,7 @@ async def test_the_latest_snapshot_at_or_before_a_time(store: CassandraEventStor
     def snap(sequence: int, at: datetime) -> dict[str, Any]:
         stamp = at.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         return {
-            "ticker": "CHAIWALA",
+            "ticker": "CALVERA",
             "sequence": sequence,
             "as_of": stamp,
             "bids": [],
@@ -123,20 +123,20 @@ async def test_the_latest_snapshot_at_or_before_a_time(store: CassandraEventStor
             "closed": [],
         }
 
-    assert await store.latest_snapshot("CHAIWALA") is None
-    await store.save_snapshot("CHAIWALA", snap(500, DAY1))
-    await store.save_snapshot("CHAIWALA", snap(1000, DAY1 + timedelta(minutes=5)))
-    latest = await store.latest_snapshot("CHAIWALA")
+    assert await store.latest_snapshot("CALVERA") is None
+    await store.save_snapshot("CALVERA", snap(500, DAY1))
+    await store.save_snapshot("CALVERA", snap(1000, DAY1 + timedelta(minutes=5)))
+    latest = await store.latest_snapshot("CALVERA")
     assert latest is not None and latest["sequence"] == 1000
     at = (DAY1 + timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
-    earlier = await store.latest_snapshot("CHAIWALA", at)
+    earlier = await store.latest_snapshot("CALVERA", at)
     assert earlier is not None and earlier["sequence"] == 500
 
 
 async def test_the_publish_cursor_round_trips(store: CassandraEventStore) -> None:
-    assert await store.publish_cursor("CHAIWALA") == 0
-    await store.set_publish_cursor("CHAIWALA", 42)
-    assert await store.publish_cursor("CHAIWALA") == 42
+    assert await store.publish_cursor("CALVERA") == 0
+    await store.set_publish_cursor("CALVERA", 42)
+    assert await store.publish_cursor("CALVERA") == 42
 
 
 async def test_an_engine_restarted_against_real_cassandra_rebuilds_the_same_books(
@@ -181,7 +181,7 @@ async def test_reads_under_load_return_every_event_once_in_order_and_rebuild_exa
     the hash the live book had at T, for many T.
     """
     rng = random.Random(4)
-    tickers = ("CHAIWALA", "JUGAAD")
+    tickers = ("CALVERA", "KORVIN")
     clock = iter(DAY1 - timedelta(hours=1) + timedelta(milliseconds=10 * n) for n in count())
     publisher = RecordingPublisher()
     engine = MatchingEngine(
@@ -262,9 +262,9 @@ async def test_the_snapshot_pick_reads_the_right_one_among_many(store: Cassandra
     for n in range(1, 31):  # a snapshot every minute for half an hour
         at = DAY1 - timedelta(minutes=31 - n)
         await store.save_snapshot(
-            "CHAIWALA",
+            "CALVERA",
             {
-                "ticker": "CHAIWALA",
+                "ticker": "CALVERA",
                 "sequence": 100 * n,
                 "as_of": stamp(at),
                 "bids": [],
@@ -272,12 +272,10 @@ async def test_the_snapshot_pick_reads_the_right_one_among_many(store: Cassandra
                 "closed": [],
             },
         )
-    newest = await store.latest_snapshot("CHAIWALA")
+    newest = await store.latest_snapshot("CALVERA")
     assert newest is not None and newest["sequence"] == 3000
-    exact = await store.latest_snapshot("CHAIWALA", stamp(DAY1 - timedelta(minutes=21)))
+    exact = await store.latest_snapshot("CALVERA", stamp(DAY1 - timedelta(minutes=21)))
     assert exact is not None and exact["sequence"] == 1000  # taken exactly at T counts
-    between = await store.latest_snapshot(
-        "CHAIWALA", stamp(DAY1 - timedelta(minutes=20, seconds=1))
-    )
+    between = await store.latest_snapshot("CALVERA", stamp(DAY1 - timedelta(minutes=20, seconds=1)))
     assert between is not None and between["sequence"] == 1000
-    assert await store.latest_snapshot("CHAIWALA", stamp(DAY1 - timedelta(hours=2))) is None
+    assert await store.latest_snapshot("CALVERA", stamp(DAY1 - timedelta(hours=2))) is None

@@ -71,7 +71,7 @@ sequenceDiagram
     participant OC as Cassandra (order_service keyspace)
     participant RP as Redpanda
 
-    T->>GW: POST /v1/orders  BUY 50 CHAIWALA LIMIT 24600 paise  (A-05)
+    T->>GW: POST /v1/orders  BUY 50 CALVERA LIMIT 24600 paise  (A-05)
     GW->>GW: Verify JWT, apply rate limit, add X-Trader-Id and X-Correlation-Id
     GW->>OS: POST /v1/orders
     OS->>OS: Validate ticker, quantity > 0, price multiple of 5 paise
@@ -84,7 +84,7 @@ sequenceDiagram
     else reservation created
         PS-->>OS: 201 reservation_id, reserved_cash_paise
         OS->>OC: Append OrderPlaced, status PENDING, published=false
-        OS->>RP: Publish OrderPlaced to orders.v1 (key = CHAIWALA)
+        OS->>RP: Publish OrderPlaced to orders.v1 (key = CALVERA)
         OS->>OC: Mark event published
         OS-->>GW: 202 Accepted  order_id, status PENDING
         GW-->>T: 202 Accepted
@@ -108,7 +108,7 @@ sequenceDiagram
 
 ## 3. A trade executes (J-31, J-32 → A-08, A-09)
 
-Continuing from diagram 2. A resting SELL of 20 CHAIWALA at ₹245.50 (by `Bot-03`) is in the book.
+Continuing from diagram 2. A resting SELL of 20 CALVERA at ₹245.50 (by `Bot-03`) is in the book.
 
 ```mermaid
 sequenceDiagram
@@ -122,11 +122,11 @@ sequenceDiagram
     actor T as Trader (web)
     participant BT as bot-traders
 
-    RP->>ME: OrderPlaced  BUY 50 CHAIWALA LIMIT 24600  (orders.v1)
+    RP->>ME: OrderPlaced  BUY 50 CALVERA LIMIT 24600  (orders.v1)
     ME->>ME: Assign sequence numbers, match by price-time priority (A-08)
     Note over ME: Best ask 24550 is at or below 24600, so trade 20 at 24550<br/>(the resting order's price). 30 remain and rest as a bid.
     ME->>EC: Append batch: OrderAccepted (seq 1041), TradeExecuted (seq 1042)
-    ME->>RP: Publish both to matching.v1 (key = CHAIWALA)
+    ME->>RP: Publish both to matching.v1 (key = CALVERA)
     par order status
         RP->>OS: TradeExecuted
         OS->>OS: Status PARTIALLY_FILLED, filled 20, remaining 30
@@ -137,7 +137,7 @@ sequenceDiagram
     and market data
         RP->>MD: OrderAccepted, TradeExecuted
         MD->>MD: Update last price, 5s/1m/5m candles, depth, trades
-        MD-->>T: WebSocket /v1/ws/market/CHAIWALA  trade, candle, book
+        MD-->>T: WebSocket /v1/ws/market/CALVERA  trade, candle, book
     end
     Note over MD,BT: When a candle interval ends
     MD->>RP: Publish CandleClosed to candles.v1
@@ -214,19 +214,19 @@ sequenceDiagram
     participant EC as Cassandra (matching_engine keyspace)
     participant MC as Cassandra (market_data keyspace)
 
-    A->>GW: GET /v1/time-travel/CHAIWALA?at=2026-11-20T10:42:15Z  (Q-12)
+    A->>GW: GET /v1/time-travel/CALVERA?at=2026-11-20T10:42:15Z  (Q-12)
     GW->>MD: forward (with the caller's role)
     alt 4 rebuilds already running (1 place kept for the admin role)
         MD-->>A: 503 OVERLOADED
     end
     opt at is now (at or after market-data's latest event): the proof
-        MD->>ME: GET /internal/v1/books/CHAIWALA  (Q-16)
+        MD->>ME: GET /internal/v1/books/CALVERA  (Q-16)
         ME-->>MD: live sequence S and its state_hash
     end
-    MD->>ME: GET /internal/v1/snapshots/CHAIWALA?at=10:42:15  (Q-15)
+    MD->>ME: GET /internal/v1/snapshots/CALVERA?at=10:42:15  (Q-15)
     ME->>EC: Latest snapshot taken at or before 10:42:15
     ME-->>MD: Snapshot at sequence 4000 (book and closed orders as of 10:41:50)
-    MD->>ME: GET /internal/v1/events?ticker=CHAIWALA&after_sequence=4000&until=10:42:15  (Q-14)
+    MD->>ME: GET /internal/v1/events?ticker=CALVERA&after_sequence=4000&until=10:42:15  (Q-14)
     ME->>EC: Range read by sequence
     ME-->>MD: Events 4001 to 4187 (paged, up to sequence S for the proof)
     MD->>MD: Apply events to a fresh in-memory book (no matching, just apply results), then hash it
@@ -235,7 +235,7 @@ sequenceDiagram
     GW-->>A: 200
 
     Note over A,MD: Replay stream (Q-13)
-    A->>GW: WebSocket /v1/ws/replay/CHAIWALA?from=10:40&to=10:45&speed=10
+    A->>GW: WebSocket /v1/ws/replay/CALVERA?from=10:40&to=10:45&speed=10
     GW->>MD: upgrade and proxy
     alt 4 replays already playing (1 place kept for the admin role)
         MD-->>A: close 1013 (try again later)
@@ -365,7 +365,7 @@ sequenceDiagram
         OS->>OC: Append OrderExpiryRequested to the outbox (event_id = UUIDv5 of the order_id)
         OS-->>PS: 202 Accepted
         PS->>PG: set expiry_requested_at (money still reserved)
-        OS->>RP: OrderExpiryRequested to orders.v1 (key = CHAIWALA)
+        OS->>RP: OrderExpiryRequested to orders.v1 (key = CALVERA)
     end
     RP->>ME: OrderExpiryRequested, after any OrderPlaced already in that partition (policy P-14)
     alt engine never saw the order

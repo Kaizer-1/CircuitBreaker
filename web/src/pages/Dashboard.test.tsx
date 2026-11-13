@@ -18,11 +18,11 @@ vi.mock('../market/hooks', async (original) => {
   return {
     ...real,
     useMarkets: () => ({
-      CHAIWALA: market(),
-      JUGAAD: market(),
-      DABBA: market(),
-      MONSOON: market(),
-      FILMY: market(),
+      CALVERA: market(),
+      KORVIN: market(),
+      ASTRYX: market(),
+      HELIOR: market(),
+      TAVIRA: market(),
     }),
     useInstruments: () => [],
   }

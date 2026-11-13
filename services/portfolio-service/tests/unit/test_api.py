@@ -32,7 +32,7 @@ def reserve(client: TestClient, trader: str, **overrides: object) -> Any:
     body = {
         "order_id": oid(1),
         "trader_id": trader,
-        "ticker": "CHAIWALA",
+        "ticker": "CALVERA",
         "side": "BUY",
         "order_type": "LIMIT",
         "quantity": 50,
@@ -93,7 +93,7 @@ def test_a6_refuses_margin_and_short_selling(client: TestClient) -> None:
 def test_a6_market_orders_get_a_protection_price(client: TestClient) -> None:
     raju = join(client)
     body = reserve(
-        client, raju, order_type="MARKET", limit_price_paise=None, ticker="MONSOON", quantity=100
+        client, raju, order_type="MARKET", limit_price_paise=None, ticker="HELIOR", quantity=100
     ).json()
     assert (body["protection_price_paise"], body["reserved_cash_paise"]) == (9705, 970_500)
 

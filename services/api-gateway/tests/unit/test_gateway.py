@@ -217,7 +217,7 @@ def test_the_proxy_sets_identity_from_the_token_and_never_from_the_client(
     with _client(settings, upstream) as client:
         response = client.post(
             "/v1/orders?dry_run=1",
-            json={"ticker": "DABBA"},
+            json={"ticker": "ASTRYX"},
             headers=bearer()
             | {"X-Trader-Id": "forged", "X-Role": "admin", "X-Correlation-Id": "client-set"},
         )

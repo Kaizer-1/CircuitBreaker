@@ -45,41 +45,41 @@ def test_ticks_round_the_right_way_and_never_below_one_tick() -> None:
 
 
 def test_order_shapes_the_exchange_refuses() -> None:
-    assert valid_shape(Place("CHAIWALA", "BUY", 0, 24550)) == "VALIDATION_FAILED"
-    assert valid_shape(Place("CHAIWALA", "BUY", 10_001, 24550)) == "VALIDATION_FAILED"
-    assert valid_shape(Place("CHAIWALA", "BUY", 1, 24552)) == "INVALID_TICK_SIZE"
+    assert valid_shape(Place("CALVERA", "BUY", 0, 24550)) == "VALIDATION_FAILED"
+    assert valid_shape(Place("CALVERA", "BUY", 10_001, 24550)) == "VALIDATION_FAILED"
+    assert valid_shape(Place("CALVERA", "BUY", 1, 24552)) == "INVALID_TICK_SIZE"
     assert valid_shape(Place("NOPE", "BUY", 1, 24550)) == "UNKNOWN_TICKER"
-    assert valid_shape(Place("CHAIWALA", "SELL", 1, None)) is None
+    assert valid_shape(Place("CALVERA", "SELL", 1, None)) is None
 
 
 def portfolio(cash: int, shares: int = 0) -> dict[str, Any]:
     return {
         "available_cash_paise": cash,
-        "holdings": [{"ticker": "CHAIWALA", "quantity": shares, "available_quantity": shares}],
+        "holdings": [{"ticker": "CALVERA", "quantity": shares, "available_quantity": shares}],
     }
 
 
 def test_the_ledger_keeps_placed_orders_aside_until_a_portfolio_read_includes_them() -> None:
     ledger = Ledger()
     ledger.refresh(portfolio(100_000, shares=10), requested_at=0)
-    buy = Place("CHAIWALA", "BUY", 3, 24550)
+    buy = Place("CALVERA", "BUY", 3, 24550)
     assert ledger.refusal(buy, 24550) is None
     ledger.hold(buy, 24550, answered_at=1)
     assert ledger.available_cash() == 100_000 - 73_650
-    assert ledger.refusal(Place("CHAIWALA", "BUY", 2, 24550), 24550) == "INSUFFICIENT_FUNDS"
-    ledger.hold(Place("CHAIWALA", "SELL", 8, 25000), 24550, answered_at=1)
-    assert ledger.refusal(Place("CHAIWALA", "SELL", 3, 25000), 24550) == "INSUFFICIENT_SHARES"
+    assert ledger.refusal(Place("CALVERA", "BUY", 2, 24550), 24550) == "INSUFFICIENT_FUNDS"
+    ledger.hold(Place("CALVERA", "SELL", 8, 25000), 24550, answered_at=1)
+    assert ledger.refusal(Place("CALVERA", "SELL", 3, 25000), 24550) == "INSUFFICIENT_SHARES"
     # A read requested before the answers may not include them: they stay set aside.
     ledger.refresh(portfolio(100_000, shares=10), requested_at=0.5)
     assert ledger.available_cash() == 100_000 - 73_650
     # A read requested after them includes them: the portfolio's own numbers count.
     ledger.refresh(portfolio(26_350, shares=2), requested_at=2)
-    assert (ledger.available_cash(), ledger.available_shares("CHAIWALA")) == (26_350, 2)
+    assert (ledger.available_cash(), ledger.available_shares("CALVERA")) == (26_350, 2)
 
 
 def test_a_market_buy_is_costed_above_what_portfolio_reserves() -> None:
     ledger = Ledger()
-    cost = ledger.cost(Place("MONSOON", "BUY", 100, None), 8820)
+    cost = ledger.cost(Place("HELIOR", "BUY", 100, None), 8820)
     assert cost > 100 * 9705  # 9705 is what portfolio-service reserves per share
 
 
@@ -92,7 +92,7 @@ def seeded() -> Any:
 
 def view(**fields: Any) -> TickerView:
     base: dict[str, Any] = {
-        "ticker": "CHAIWALA",
+        "ticker": "CALVERA",
         "closes": deque([24550] * 30),
         "best_bid": 24540,
         "best_ask": 24560,
@@ -120,14 +120,14 @@ def test_a_market_maker_keeps_a_good_quote_and_replaces_a_stale_one() -> None:
     mm = MarketMaker(half_spread_bps=10)
     bid = next(q for q in quotes(mm.decide(view(), seeded())) if q.side == "BUY")
     resting = OpenOrder(
-        "o1", "CHAIWALA", "BUY", bid.limit_price_paise, bid.quantity, placed_candle=9
+        "o1", "CALVERA", "BUY", bid.limit_price_paise, bid.quantity, placed_candle=9
     )
     again = mm.decide(view(open_orders=[resting]), seeded())
     assert not any(q.side == "BUY" for q in quotes(again))  # keeps it
     moved = mm.decide(view(open_orders=[resting], closes=deque([25000] * 30)), seeded())
     [requote] = [i for i in moved if isinstance(i, Requote) and i.place.side == "BUY"]
     # The price moved: a new bid, sent together with the cancel of the old one (no gap).
-    assert requote.cancels == (Cancel("o1", "CHAIWALA"),)
+    assert requote.cancels == (Cancel("o1", "CALVERA"),)
     assert not any(isinstance(i, Cancel) for i in moved)
 
 
@@ -145,7 +145,7 @@ def test_a_market_maker_long_on_shares_quotes_lower_to_sell_them() -> None:
 
 
 def test_a_market_maker_short_of_shares_never_bids_far_above_its_fair_price() -> None:
-    # Phase 4: bidding up to 30 bp above fair to buy back shares fed a run-away price on MONSOON.
+    # Phase 4: bidding up to 30 bp above fair to buy back shares fed a run-away price on HELIOR.
     mm = MarketMaker(half_spread_bps=8)
     short = mm.decide(view(shares_held=0), seeded())
     [bid] = [q.limit_price_paise for q in quotes(short) if q.side == "BUY"]
@@ -165,12 +165,10 @@ def test_a_market_makers_fair_price_leans_towards_the_reference() -> None:
 
 
 def test_momentum_needs_three_ticks_on_a_cheap_ticker() -> None:
-    # MONSOON is 8820 paise: 8 basis points is 7 paise, under 2 ticks of 5 paise.
+    # HELIOR is 8820 paise: 8 basis points is 7 paise, under 2 ticks of 5 paise.
     always = Momentum(chance=1.0)
-    wiggle = view(
-        ticker="MONSOON", closes=deque([8820] * 10 + [8830]), best_bid=8815, best_ask=8835
-    )
-    trend = view(ticker="MONSOON", closes=deque([8820] * 10 + [8835]), best_bid=8830, best_ask=8840)
+    wiggle = view(ticker="HELIOR", closes=deque([8820] * 10 + [8830]), best_bid=8815, best_ask=8835)
+    trend = view(ticker="HELIOR", closes=deque([8820] * 10 + [8835]), best_bid=8830, best_ask=8840)
     assert always.decide(wiggle, seeded()) == []
     assert [i.side for i in always.decide(trend, seeded()) if isinstance(i, Place)] == ["BUY"]
 
@@ -191,9 +189,9 @@ def test_mean_reversion_leans_against_the_move_with_limit_orders() -> None:
 
 
 def test_noise_cancels_its_old_orders() -> None:
-    old = OpenOrder("o1", "CHAIWALA", "BUY", 24500, 5, placed_candle=1)
+    old = OpenOrder("o1", "CALVERA", "BUY", 24500, 5, placed_candle=1)
     intents = Noise(chance=0.0).decide(view(open_orders=[old]), seeded())
-    assert intents == [Cancel("o1", "CHAIWALA")]
+    assert intents == [Cancel("o1", "CALVERA")]
 
 
 def test_the_roster_has_the_documented_mix_of_twenty_bots() -> None:
@@ -203,7 +201,7 @@ def test_the_roster_has_the_documented_mix_of_twenty_bots() -> None:
     assert (kinds.count("market_maker"), kinds.count("momentum")) == (4, 6)
     assert (kinds.count("mean_reversion"), kinds.count("noise")) == (5, 5)
     assert all(
-        set(p.tickers) == {"CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY"} for p in plans[:4]
+        set(p.tickers) == {"CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA"} for p in plans[:4]
     )  # market makers quote every ticker
 
 
@@ -246,16 +244,16 @@ async def test_the_fleet_acts_once_per_fresh_5s_candle() -> None:
     fleet = Fleet(
         SimExchange(clock), seed=1, wall_clock=lambda: now, clock=clock.clock, sleep=clock.sleep
     )
-    assert await fleet.on_candle(candle("CHAIWALA", now)) is False  # not started yet
+    assert await fleet.on_candle(candle("CALVERA", now)) is False  # not started yet
     await fleet.start()
-    fresh = candle("CHAIWALA", now - timedelta(seconds=1))
+    fresh = candle("CALVERA", now - timedelta(seconds=1))
     assert await fleet.on_candle(fresh) is True
     assert await fleet.on_candle(fresh) is False  # the same event again
-    assert await fleet.on_candle(candle("CHAIWALA", now - timedelta(seconds=30))) is False  # stale
+    assert await fleet.on_candle(candle("CALVERA", now - timedelta(seconds=30))) is False  # stale
     assert (
-        await fleet.on_candle(candle("CHAIWALA", now, interval="1m")) is False
+        await fleet.on_candle(candle("CALVERA", now, interval="1m")) is False
     )  # not the heartbeat
-    assert fleet.market["CHAIWALA"].closes[-1] == 24600
+    assert fleet.market["CALVERA"].closes[-1] == 24600
     fleet.stop()
 
 
@@ -266,7 +264,7 @@ async def test_market_makers_quote_at_start_up_so_the_first_buyer_finds_a_seller
     await fleet.start()
     await clock.run_until(6)
     await fleet.wait_idle()
-    for ticker in ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY"):
+    for ticker in ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA"):
         bid, ask = exchange.best(ticker)
         assert bid is not None and ask is not None and bid < ask
 
@@ -303,10 +301,10 @@ async def test_the_gateway_adapter_speaks_the_public_api() -> None:
         gateway = GatewayExchange("http://gateway/", "s3cret", client)
         session = await gateway.login("bot-01")
         assert session == Session("bot-01", "b0b0", "tok")
-        placed = await gateway.place(session, Place("CHAIWALA", "BUY", 5, 24550))
+        placed = await gateway.place(session, Place("CALVERA", "BUY", 5, 24550))
         assert placed["order_id"] == "o1"  # after waiting out one 429
         with pytest.raises(OrderRefusedError) as refused:
-            await gateway.place(session, Place("CHAIWALA", "BUY", 99, None))
+            await gateway.place(session, Place("CALVERA", "BUY", 99, None))
         assert refused.value.code == "INSUFFICIENT_FUNDS"
         await gateway.cancel(session, "o1")  # already finished: not an error
         assert await gateway.open_orders(session) == []
@@ -316,7 +314,7 @@ async def test_the_gateway_adapter_speaks_the_public_api() -> None:
         len({r.headers["Idempotency-Key"] for r in orders}) == len(orders) - 1
     )  # 429 retry reuses
     market = json.loads(orders[-1].content)
-    assert market == {"ticker": "CHAIWALA", "side": "BUY", "order_type": "MARKET", "quantity": 99}
+    assert market == {"ticker": "CALVERA", "side": "BUY", "order_type": "MARKET", "quantity": 99}
 
 
 # ------------------------------------------------------------------ the Q-10 stream
@@ -342,8 +340,8 @@ async def test_fills_and_closes_on_the_stream_keep_the_open_orders_right() -> No
 
     bot = Bot(roster()[0], SimExchange(VirtualTime()), seeded())
     bot.open_orders = {
-        "a": OpenOrder("a", "CHAIWALA", "BUY", 24500, 10, 1),
-        "b": OpenOrder("b", "CHAIWALA", "SELL", 24600, 10, 1),
+        "a": OpenOrder("a", "CALVERA", "BUY", 24500, 10, 1),
+        "b": OpenOrder("b", "CALVERA", "SELL", 24600, 10, 1),
     }
     bot.on_stream({"type": "fill", "data": {"order_id": "a", "order_remaining_quantity": 4}})
     bot.on_stream({"type": "order_closed", "data": {"order_id": "b", "status": "CANCELLED"}})
@@ -363,7 +361,7 @@ async def test_a_close_that_overtakes_the_order_answer_is_not_forgotten() -> Non
     bot.on_stream(
         {"type": "order_closed", "data": {"order_id": "0dde0000-0000-4000-8000-000000000001"}}
     )
-    await bot.execute(Place("CHAIWALA", "BUY", 1, 24000), MarketState([24550]))
+    await bot.execute(Place("CALVERA", "BUY", 1, 24000), MarketState([24550]))
     assert bot.open_orders == {}  # it finished before the A-05 answer came back
 
 
@@ -410,7 +408,7 @@ async def test_a_failing_bot_backs_off_instead_of_retrying_every_candle() -> Non
     for second in range(0, 120, 5):  # a candle every 5 s for two minutes
         exchange.time.now = float(second)
         before = exchange.listings_tried
-        await bot.act("CHAIWALA", market)
+        await bot.act("CALVERA", market)
         if exchange.listings_tried > before:
             tried_at.append(exchange.time.now)
     # 1 s, 2 s, 4 s ... between tries, rounded up to the next candle, never more than 30 s apart.
@@ -422,7 +420,7 @@ async def test_a_failing_bot_backs_off_instead_of_retrying_every_candle() -> Non
     exchange.healthy = True  # order-service recovered
     tries = exchange.listings_tried
     exchange.time.now = 1_000.0
-    acting = asyncio.create_task(bot.act("CHAIWALA", market))
+    acting = asyncio.create_task(bot.act("CALVERA", market))
     await exchange.time.run_until(1_005.0)  # the step's orders go out over the interval
     await acting
     assert exchange.listings_tried == tries + 1 and bot._backoff == 0.0  # the pause is reset
@@ -464,7 +462,7 @@ async def test_a_bot_whose_session_expired_signs_in_again_and_carries_on() -> No
 
     async def step(at: float) -> None:
         exchange.time.now = at
-        acting = asyncio.create_task(bot.act("CHAIWALA", market))
+        acting = asyncio.create_task(bot.act("CALVERA", market))
         await exchange.time.run_until(at + 5)
         await acting
 
@@ -489,7 +487,7 @@ async def test_a_requote_places_the_new_quote_before_it_cancels_the_old_one() ->
     await bot.login()
     await bot.refresh()
     market = MarketState([24550])
-    await bot.execute(Place("CHAIWALA", "BUY", 5, 24500), market)
+    await bot.execute(Place("CALVERA", "BUY", 5, 24500), market)
     [old] = list(bot.open_orders)
     calls: list[str] = []
     real_place, real_cancel = exchange.place, exchange.cancel
@@ -503,9 +501,7 @@ async def test_a_requote_places_the_new_quote_before_it_cancels_the_old_one() ->
         await real_cancel(session, order_id)
 
     exchange.place, exchange.cancel = place, cancel  # type: ignore[method-assign,assignment]
-    await bot.execute(
-        Requote(Place("CHAIWALA", "BUY", 5, 24510), (Cancel(old, "CHAIWALA"),)), market
-    )
+    await bot.execute(Requote(Place("CALVERA", "BUY", 5, 24510), (Cancel(old, "CALVERA"),)), market)
     assert calls == ["place", "cancel"]
     assert old not in bot.open_orders and len(bot.open_orders) == 1
 
@@ -522,7 +518,7 @@ async def test_a_lost_answer_is_asked_again_with_the_same_key_so_no_order_is_orp
     async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
         gateway = GatewayExchange("http://gateway/", "s3cret", client)
         placed = await gateway.place(
-            Session("bot-01", "b0b0", "tok"), Place("JUGAAD", "SELL", 3, 118000)
+            Session("bot-01", "b0b0", "tok"), Place("KORVIN", "SELL", 3, 118000)
         )
     assert placed["order_id"] == "o7"
     assert (

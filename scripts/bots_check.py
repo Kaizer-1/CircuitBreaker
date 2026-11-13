@@ -18,7 +18,7 @@
   printed but not judged: mean reversion and noise lean one way for a minute or two by design
   (measured: up to two levels either way within a minute, bids on one ticker while asks on another);
 - every ticker's price stays within BAND (±10%) of its reference price for the whole run, read
-  from the 1m candles' highs and lows (Phase 4: MONSOON once ran 13 to 15% above its reference
+  from the 1m candles' highs and lows (Phase 4: HELIOR once ran 13 to 15% above its reference
   within an hour; bot-traders README, "Phase 4 rebalance"). Its drift (first to last price) is
   printed. Run it for 30 minutes to check the band: `python3 scripts/bots_check.py 1800`.
 
@@ -49,7 +49,7 @@ MAKERS = {f"b0b0b0b0-{n:04d}-4000-8000-{n:012d}" for n in range(1, 5)}  # bot-01
 BOTS = os.environ.get("BOTS", "http://localhost:8005")
 # On Kubernetes (python3 scripts/k8s.py run bots_check.py): read the pods' logs in this namespace.
 K8S_NAMESPACE = os.environ.get("K8S_NAMESPACE", "")
-TICKERS = ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY")
+TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
 SERVICES = (
     "api-gateway",
     "order-service",

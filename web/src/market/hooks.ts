@@ -89,11 +89,11 @@ export function usePortfolio(
  * never changes, so the five hooks are always called in the same order. */
 export function useMarkets(token: string | null): Record<Ticker, [MarketView, StreamState]> {
   return {
-    CHAIWALA: useMarket('CHAIWALA', token),
-    JUGAAD: useMarket('JUGAAD', token),
-    DABBA: useMarket('DABBA', token),
-    MONSOON: useMarket('MONSOON', token),
-    FILMY: useMarket('FILMY', token),
+    CALVERA: useMarket('CALVERA', token),
+    KORVIN: useMarket('KORVIN', token),
+    ASTRYX: useMarket('ASTRYX', token),
+    HELIOR: useMarket('HELIOR', token),
+    TAVIRA: useMarket('TAVIRA', token),
   }
 }
 

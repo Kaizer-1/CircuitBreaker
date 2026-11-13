@@ -3,7 +3,7 @@
 // its three faces (live with the proof, paused at a marked move, replaying at 10×), and the phone
 // at 390×844.
 // A trader joins through the real join page (as RajuTrader; the page adds a suffix only if that
-// name is taken), buys some CHAIWALA and leaves a resting order, so the phone has something to show.
+// name is taken), buys some CALVERA and leaves a resting order, so the phone has something to show.
 //
 // The main shots show demo day: /config.js is answered with a LAN address (SHOT_PUBLIC_BASE_URL,
 // default the hotspot example from docs/08-developer-setup.md), and dashboard-<theme>-qr-warning.png
@@ -170,18 +170,18 @@ const session = await joinAs(nickname)
 const twin = await joinAs(nickname) // the same name again: the page adds a short suffix
 if (!twin.suffix) throw new Error(`a second ${nickname} joined without a suffix`)
 
-const book = await call('GET', '/v1/market/CHAIWALA/order-book', null, session.token)
+const book = await call('GET', '/v1/market/CALVERA/order-book', null, session.token)
 await call(
   'POST',
   '/v1/orders',
-  { ticker: 'CHAIWALA', side: 'BUY', order_type: 'MARKET', quantity: 20 },
+  { ticker: 'CALVERA', side: 'BUY', order_type: 'MARKET', quantity: 20 },
   session.token,
 )
 const below = Math.round(((book.best_bid_paise ?? 24500) * 0.99) / 5) * 5
 await call(
   'POST',
   '/v1/orders',
-  { ticker: 'CHAIWALA', side: 'BUY', order_type: 'LIMIT', quantity: 5, limit_price_paise: below },
+  { ticker: 'CALVERA', side: 'BUY', order_type: 'LIMIT', quantity: 5, limit_price_paise: below },
   session.token,
 )
 

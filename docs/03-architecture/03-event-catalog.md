@@ -113,7 +113,7 @@ Shared definitions used below:
 ```json
 {
   "$defs": {
-    "ticker":      { "type": "string", "enum": ["CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY"] },
+    "ticker":      { "type": "string", "enum": ["CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA"] },
     "side":        { "type": "string", "enum": ["BUY", "SELL"] },
     "order_type":  { "type": "string", "enum": ["LIMIT", "MARKET"] },
     "price_paise": { "type": "integer", "minimum": 5, "multipleOf": 5, "description": "Price in paise; multiple of the 5-paise tick" },
@@ -184,7 +184,7 @@ A trader's order passed validation and its cash or shares are reserved. It is no
   "data": {
     "order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12",
     "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
-    "ticker": "CHAIWALA",
+    "ticker": "CALVERA",
     "side": "BUY",
     "order_type": "LIMIT",
     "quantity": 50,
@@ -231,7 +231,7 @@ The owner asked to cancel an order. Whether it *can* be cancelled is decided by 
   "data": {
     "order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12",
     "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
-    "ticker": "CHAIWALA",
+    "ticker": "CALVERA",
     "requested_at": "2026-11-20T10:43:10.001Z"
   }
 }
@@ -280,7 +280,7 @@ after reserving but before storing it; it sends the request anyway.
   "data": {
     "order_id": "6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
     "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
-    "ticker": "CHAIWALA",
+    "ticker": "CALVERA",
     "requested_at": "2026-11-20T10:46:12.405Z"
   }
 }
@@ -337,7 +337,7 @@ The engine took the order into processing for its ticker. Any trades it causes f
   "causation_id": "0b8f6a52-7d1e-4c55-9a43-1f2d3c4b5a61",
   "data": {
     "sequence": 1041,
-    "ticker": "CHAIWALA",
+    "ticker": "CALVERA",
     "order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12",
     "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
     "side": "BUY",
@@ -398,7 +398,7 @@ different traders (self-trade prevention, see `OrderCancelled`).
   "causation_id": "0b8f6a52-7d1e-4c55-9a43-1f2d3c4b5a61",
   "data": {
     "sequence": 1042,
-    "ticker": "CHAIWALA",
+    "ticker": "CALVERA",
     "trade_id": "a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d",
     "price_paise": 24550,
     "quantity": 20,
@@ -461,7 +461,7 @@ The rest of an order was removed from the book (or, for an incoming order, never
   "causation_id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d",
   "data": {
     "sequence": 1077,
-    "ticker": "CHAIWALA",
+    "ticker": "CALVERA",
     "order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12",
     "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
     "side": "BUY",
@@ -509,7 +509,7 @@ held (including an expired one, see `OrderExpired`) and a request whose `trader_
   "causation_id": "6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e",
   "data": {
     "sequence": 1103,
-    "ticker": "CHAIWALA",
+    "ticker": "CALVERA",
     "order_id": "4e5f6a7b-8c9d-4e0f-8a1b-2c3d4e5f6a7b",
     "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
     "reason": "ALREADY_FILLED",
@@ -561,7 +561,7 @@ may release its reservation ([ADR-0017](../adr/0017-fail-closed-orphan-release.m
   "causation_id": "a3b049e7-35d5-56e3-ad80-2b3bf48b3763",
   "data": {
     "sequence": 1188,
-    "ticker": "CHAIWALA",
+    "ticker": "CALVERA",
     "order_id": "6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
     "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
     "expired_at": "2026-11-20T10:46:12.430Z"
@@ -581,7 +581,7 @@ volume 0) so charts and bots have no gaps.
 - **Producer:** `market-data-service` **Consumers:** `bot-traders` (policy P-09)
 - **Key:** `ticker`
 - **Deterministic `event_id`:** UUIDv5 (URL namespace) of `ticker|interval|bucket_start`, e.g.
-  `CHAIWALA|1m|2026-11-20T10:42:00Z`. If several market-data replicas emit the same candle, consumers deduplicate it.
+  `CALVERA|1m|2026-11-20T10:42:00Z`. If several market-data replicas emit the same candle, consumers deduplicate it.
   A candle corrected by a late trade (the engine republishing after a crash) is sent again with the same ID, so
   consumers ignore the correction; the stored candle (Q-03) is the corrected one.
 
@@ -614,10 +614,10 @@ volume 0) so charts and bots have no gaps.
   "occurred_at": "2026-11-20T10:43:00.002Z",
   "producer": "market-data-service",
   "environment": "prod",
-  "correlation_id": "candle-CHAIWALA-1m-2026-11-20T10:42:00Z",
+  "correlation_id": "candle-CALVERA-1m-2026-11-20T10:42:00Z",
   "causation_id": null,
   "data": {
-    "ticker": "CHAIWALA",
+    "ticker": "CALVERA",
     "interval": "1m",
     "bucket_start": "2026-11-20T10:42:00Z",
     "bucket_end": "2026-11-20T10:43:00Z",

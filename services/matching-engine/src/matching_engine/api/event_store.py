@@ -14,7 +14,7 @@ from matching_engine.domain.model import PriceLevel
 from matching_engine.runtime.events import format_timestamp
 from matching_engine.runtime.problem import problem_response
 
-Ticker = Literal["CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY"]
+Ticker = Literal["CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA"]
 
 router = APIRouter()
 

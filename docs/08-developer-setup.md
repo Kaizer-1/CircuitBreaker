@@ -233,6 +233,7 @@ stores in kind, which will need much more; we will re-measure then. The limits a
 | After changing a Cassandra role or password, services cannot log in | The Cassandra data volume still holds the old roles | `make reset` (wipes data) and `make up` |
 | `make doctor` says Node is too old although you installed a newer one | An older Homebrew Node formula is still linked | `brew unlink node@20 && brew link --overwrite --force node@24`, then open a new terminal |
 | `make lint` fails with `DRIFT` | A file that must be identical in every service was changed in one | Change `services/order-service` (the template) and run `python3 tools/check_template_drift.py --sync`, or revert; see [§6](#6-how-the-services-are-built) |
+| `make lint` fails with "still use a retired instrument name" | An old ticker or company name (renamed 2026-11-14) is back in a file or file name | Use the current tickers ([overview §3](00-overview.md#3-the-instruments-stocks)); old names may appear only inside a dated history note fenced by `retired-names:begin YYYY-MM-DD` and `retired-names:end` (`tools/check_retired_names.py`) |
 | The pre-commit hook rejects a commit | Lint error, a secret was detected, or `private/` / `CLAUDE.md` was staged | Read the message; `git restore --staged <file>` for the last case |
 | The presenter dashboard says "QR points to localhost. Phones can't join." | `PUBLIC_BASE_URL` is not set, or is `localhost` (the Compose default) | [§10](#10-phones-on-a-hotspot-demo-day): set it to the laptop's LAN address and restart `web` |
 | A phone cannot open the join address | Not on the same network, the network isolates its clients, or the laptop's firewall blocks Docker | [§10](#10-phones-on-a-hotspot-demo-day), "If a phone cannot connect" |
@@ -291,7 +292,7 @@ Only port 5173 needs to be reachable. The page calls the API on the same address
 **not a secure context**, unlike `localhost`, so the page runs exactly as on a phone. A **secure context** is a page
 served over https or from localhost; browsers keep some APIs (for example `crypto.randomUUID`) for secure contexts
 only. In both skins at 390×844, as test account `load-13` (never on the leaderboard), the check:
-- buys 1 CHAIWALA at market through the order ticket and waits for it in Holdings;
+- buys 1 CALVERA at market through the order ticket and waits for it in Holdings;
 - sends the same order key again and expects no second order;
 - taps each F-key tab;
 - fails on any console error.

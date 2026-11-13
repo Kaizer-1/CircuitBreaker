@@ -5,7 +5,7 @@
 export type StreamState = 'connecting' | 'live' | 'reconnecting' | 'closed'
 
 export interface StreamOptions {
-  path: string // e.g. /v1/ws/market/CHAIWALA
+  path: string // e.g. /v1/ws/market/CALVERA
   token: string
   onMessage: (message: { type: string; data?: unknown }) => void
   onState?: (state: StreamState) => void

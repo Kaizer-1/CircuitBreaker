@@ -77,7 +77,7 @@ async def test_fill_and_order_closed_carry_the_api_readme_fields(w: World) -> No
         "data": {
             "order_id": oid(1),
             "trade_id": fill["data"]["trade_id"],
-            "ticker": "CHAIWALA",
+            "ticker": "CALVERA",
             "side": "BUY",
             "price_paise": 24550,
             "quantity": 20,
@@ -144,7 +144,7 @@ async def test_a_price_move_revalues_only_holders_and_only_once_per_second(w: Wo
     await w.hubs[0].view(raju_sub)  # what the socket sends on connect
     await w.hubs[0].view(meera_sub)
     bot04 = seeded_trader_id("bot-04")
-    for n in range(3):  # three trades between bots move CHAIWALA's price
+    for n in range(3):  # three trades between bots move CALVERA's price
         await w.service.create_reservation(buy(10 + n, bot04, 1, 24700 + n * 5))
         await w.service.create_reservation(sell(20 + n, BOT03, 1, 24700 + n * 5))
         await w.service.apply_event(trade(10 + n, bot04, 20 + n, BOT03, 1, 24700 + n * 5, 0, 0))
@@ -152,7 +152,7 @@ async def test_a_price_move_revalues_only_holders_and_only_once_per_second(w: Wo
     await w.hubs[0].revalue()
     [message] = drain(raju_sub)
     assert message["data"]["holdings"][0]["last_price_paise"] == 24710
-    assert drain(meera_sub) == []  # Meera holds no CHAIWALA
+    assert drain(meera_sub) == []  # Meera holds no CALVERA
     await w.hubs[0].revalue()
     assert drain(raju_sub) == []  # no move since: nothing to send
 
@@ -165,6 +165,6 @@ async def test_after_a_lost_listen_connection_every_socket_is_refreshed(w: World
 
 
 async def test_a_change_round_trips_through_its_json_payload() -> None:
-    change = Change("t", "CHAIWALA", ({"type": "fill", "data": {"x": 1}},))
+    change = Change("t", "CALVERA", ({"type": "fill", "data": {"x": 1}},))
     assert Change.from_json(change.to_json()) == change
     assert len(change.to_json()) < 8000  # Postgres NOTIFY's payload limit

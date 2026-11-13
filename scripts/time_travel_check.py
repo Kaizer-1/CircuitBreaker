@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 
 from stack import ADMIN_PASSCODE, ENGINE, GATEWAY, http
 
-TICKERS = ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY")
+TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
 TARGET_SECONDS = 2.0
 
 

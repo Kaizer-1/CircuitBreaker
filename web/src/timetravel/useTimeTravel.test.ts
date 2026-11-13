@@ -11,12 +11,12 @@ const HASH = 'c'.repeat(64)
 
 function answer(at: string, verification: TimeTravelView['verification'] = null): TimeTravelView {
   return {
-    ticker: 'CHAIWALA',
+    ticker: 'CALVERA',
     at,
     as_of_sequence: 100,
     last_price_paise: 24500,
     order_book: {
-      ticker: 'CHAIWALA',
+      ticker: 'CALVERA',
       as_of_sequence: 100,
       as_of: at,
       best_bid_paise: null,
@@ -60,7 +60,7 @@ afterEach(() => vi.restoreAllMocks())
 
 function setup() {
   const replay = new FakeReplay()
-  const hook = renderHook(() => useTimeTravel('token', 'CHAIWALA', () => NOW, replay.open))
+  const hook = renderHook(() => useTimeTravel('token', 'CALVERA', () => NOW, replay.open))
   return { replay, hook }
 }
 
@@ -70,10 +70,10 @@ describe('useTimeTravel', () => {
     act(() => hook.result.current.seek(T))
     expect(hook.result.current.state.mode).toBe('seeking')
     await waitFor(() => expect(hook.result.current.state.mode).toBe('paused'))
-    expect(timeTravel).toHaveBeenCalledWith('token', 'CHAIWALA', iso(T))
+    expect(timeTravel).toHaveBeenCalledWith('token', 'CALVERA', iso(T))
     expect(api.candlesBetween).toHaveBeenCalledWith(
       'token',
-      'CHAIWALA',
+      'CALVERA',
       '5s',
       iso(T - 10 * 60_000),
       iso(T),
@@ -86,7 +86,7 @@ describe('useTimeTravel', () => {
     const { hook } = setup()
     act(() => hook.result.current.seekNow())
     await waitFor(() => expect(hook.result.current.state.mode).toBe('paused'))
-    expect(timeTravel).toHaveBeenCalledWith('token', 'CHAIWALA', iso(NOW + 1_000))
+    expect(timeTravel).toHaveBeenCalledWith('token', 'CALVERA', iso(NOW + 1_000))
     expect(hook.result.current.state.verification?.matches).toBe(true)
   })
 
@@ -100,7 +100,7 @@ describe('useTimeTravel', () => {
     expect(replay.options).toMatchObject({ from: iso(T), to: iso(NOW - 1_000), speed: 60 })
 
     act(() => hook.result.current.pause())
-    await waitFor(() => expect(timeTravel).toHaveBeenLastCalledWith('token', 'CHAIWALA', iso(T)))
+    await waitFor(() => expect(timeTravel).toHaveBeenLastCalledWith('token', 'CALVERA', iso(T)))
     act(() => hook.result.current.play()) // resumes the same replay
     act(() => hook.result.current.setSpeed(10))
     expect(replay.sent).toEqual(['pause', 'resume', 'speed 10'])
@@ -132,7 +132,7 @@ describe('useTimeTravel', () => {
     act(() => replay.options?.onMessage({ type: 'end', data: end }))
     expect(hook.result.current.state.mode).toBe('ended')
     await waitFor(() => expect(hook.result.current.state.replay?.matches).toBe(true))
-    expect(timeTravel).toHaveBeenLastCalledWith('token', 'CHAIWALA', end.to)
+    expect(timeTravel).toHaveBeenLastCalledWith('token', 'CALVERA', end.to)
   })
 
   it('a full replica (1013) is said in words, and the screen stays where it was', async () => {
@@ -171,7 +171,7 @@ describe('useTimeTravel', () => {
     await waitFor(() => expect(hook.result.current.state.mode).toBe('paused'))
     act(() => hook.result.current.verify())
     await waitFor(() => expect(hook.result.current.state.verification?.matches).toBe(true))
-    expect(timeTravel).toHaveBeenLastCalledWith('token', 'CHAIWALA', iso(NOW + 1_000))
+    expect(timeTravel).toHaveBeenLastCalledWith('token', 'CALVERA', iso(NOW + 1_000))
     expect([hook.result.current.state.mode, hook.result.current.state.view?.at]).toEqual([
       'paused',
       T,

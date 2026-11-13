@@ -13,7 +13,7 @@ from tests.unit.application.test_orders import MEERA, RAJU, World
 
 ME = {"X-Trader-Id": RAJU}
 LIMIT_BUY = {
-    "ticker": "CHAIWALA",
+    "ticker": "CALVERA",
     "side": "BUY",
     "order_type": "LIMIT",
     "quantity": 50,
@@ -128,7 +128,7 @@ def test_a19_accepts_an_expiry_request_with_202(client: TestClient) -> None:
     body = {
         "order_id": "6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
         "trader_id": RAJU,
-        "ticker": "CHAIWALA",
+        "ticker": "CALVERA",
     }
     response = client.post("/internal/v1/order-expiries", json=body)
     assert response.status_code == 202
@@ -143,5 +143,5 @@ def test_while_the_store_is_not_ready_every_operation_says_503(settings: Setting
         assert c.get("/v1/orders", headers=ME).status_code == 503
         assert c.get(f"/v1/orders/{RAJU}", headers=ME).status_code == 503
         assert c.delete(f"/v1/orders/{RAJU}", headers=ME).status_code == 503
-        body = {"order_id": RAJU, "trader_id": RAJU, "ticker": "CHAIWALA"}
+        body = {"order_id": RAJU, "trader_id": RAJU, "ticker": "CALVERA"}
         assert c.post("/internal/v1/order-expiries", json=body).status_code == 503

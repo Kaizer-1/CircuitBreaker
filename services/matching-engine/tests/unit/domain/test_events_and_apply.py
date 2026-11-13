@@ -32,11 +32,11 @@ def test_sequences_start_at_1_and_are_consecutive_with_no_gaps() -> None:
 
 
 def test_each_ticker_has_its_own_sequence() -> None:
-    a, b = Market("CHAIWALA"), Market("JUGAAD")
+    a, b = Market("CALVERA"), Market("KORVIN")
     a.submit_all(limit(1, ALICE, "BUY", 1, 24600), limit(2, ALICE, "BUY", 1, 24600))
-    b.submit_all(limit(3, ALICE, "BUY", 1, 118000, ticker="JUGAAD"))
+    b.submit_all(limit(3, ALICE, "BUY", 1, 118000, ticker="KORVIN"))
     assert [e.sequence for e in a.log] == [1, 2]
-    assert [(e.sequence, e.ticker) for e in b.log] == [(1, "JUGAAD")]
+    assert [(e.sequence, e.ticker) for e in b.log] == [(1, "KORVIN")]
 
 
 def test_every_event_carries_the_commands_id_as_causation_and_its_correlation_id() -> None:
@@ -94,7 +94,7 @@ def test_applying_order_expired_only_marks_the_id_as_dead() -> None:
     assert m.book.status_of(oid(2)) is OrderState.EXPIRED
 
 
-def _replay(events: list[MarketEvent], ticker: str = "CHAIWALA") -> OrderBook:
+def _replay(events: list[MarketEvent], ticker: str = "CALVERA") -> OrderBook:
     book = OrderBook(ticker)
     for event in events:
         book.apply(event)
@@ -115,7 +115,7 @@ def test_apply_refuses_an_event_for_another_ticker() -> None:
     m = Market()
     m.submit_all(limit(1, BOB, "SELL", 8, 24550))
     with pytest.raises(CorruptEventError, match="ticker"):
-        _replay(m.log, ticker="JUGAAD")
+        _replay(m.log, ticker="KORVIN")
 
 
 def test_apply_refuses_a_trade_or_cancel_for_an_order_that_is_not_in_the_book() -> None:
@@ -126,7 +126,7 @@ def test_apply_refuses_a_trade_or_cancel_for_an_order_that_is_not_in_the_book() 
         _replay([accepted_1, dataclasses.replace(trade, sequence=2)])
     cancelled = OrderCancelled(
         sequence=2,
-        ticker="CHAIWALA",
+        ticker="CALVERA",
         event_id="e1",
         occurred_at=T0,
         causation_id=None,
@@ -151,7 +151,7 @@ def test_apply_refuses_remaining_quantities_that_do_not_add_up() -> None:
         _replay([accepted_1, accepted_2, wrong])
     wrong_cancel_size = OrderCancelled(
         sequence=2,
-        ticker="CHAIWALA",
+        ticker="CALVERA",
         event_id="e2",
         occurred_at=T0,
         causation_id=None,
@@ -186,7 +186,7 @@ def test_apply_refuses_an_event_type_it_does_not_know() -> None:
 
     mystery = Mystery(
         sequence=1,
-        ticker="CHAIWALA",
+        ticker="CALVERA",
         event_id="e",
         occurred_at=T0,
         causation_id=None,

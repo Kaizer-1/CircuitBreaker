@@ -1,7 +1,7 @@
 // The public API's market, order and portfolio calls (api/api-gateway.yaml), and their shapes
 // (from api/market-data-service.yaml, api/order-service.yaml, api/portfolio-service.yaml).
 
-export const TICKERS = ['CHAIWALA', 'JUGAAD', 'DABBA', 'MONSOON', 'FILMY'] as const
+export const TICKERS = ['CALVERA', 'KORVIN', 'ASTRYX', 'HELIOR', 'TAVIRA'] as const
 export type Ticker = (typeof TICKERS)[number]
 export type Side = 'BUY' | 'SELL'
 export type OrderType = 'LIMIT' | 'MARKET'

@@ -36,7 +36,7 @@ def trade(sequence: int, buy: str, sell: str, quantity: int, left: tuple[int, in
 
 
 def test_events_build_the_book_in_price_time_priority_with_every_finished_order() -> None:
-    book = ReplayBook("CHAIWALA")
+    book = ReplayBook("CALVERA")
     book.apply("OrderAccepted", accepted(1, "s1", "SELL", 20, 24550), T)
     book.apply("OrderAccepted", accepted(2, "s2", "SELL", 10, 24550), T)
     book.apply("OrderAccepted", accepted(3, "b1", "BUY", 5, 24500), T)
@@ -59,7 +59,7 @@ def test_events_build_the_book_in_price_time_priority_with_every_finished_order(
 
 
 def test_depth_shows_the_best_levels_first_and_aggregates_each_price() -> None:
-    book = ReplayBook("CHAIWALA")
+    book = ReplayBook("CALVERA")
     for n, (side, qty, price) in enumerate(
         [("BUY", 5, 100), ("BUY", 7, 105), ("BUY", 1, 105), ("SELL", 3, 110), ("SELL", 4, 120)],
         start=1,
@@ -75,7 +75,7 @@ def test_a_rebuild_from_a_snapshot_continues_exactly_like_the_original() -> None
     exchange.place("b", "BUY", 4, 500)
     snap = exchange.snapshot()
     book = ReplayBook.from_snapshot(
-        "CHAIWALA",
+        "CALVERA",
         sequence=snap.sequence,
         as_of=snap.as_of,
         bids=snap.bids,
@@ -90,10 +90,10 @@ def test_a_rebuild_from_a_snapshot_continues_exactly_like_the_original() -> None
 
 def test_sequence_0_is_the_empty_book_before_any_event_whatever_as_of_q15_sent() -> None:
     book = ReplayBook.from_snapshot(
-        "FILMY", sequence=0, as_of="2026-11-20T11:00:00.000Z", bids=[], asks=[], closed=[]
+        "TAVIRA", sequence=0, as_of="2026-11-20T11:00:00.000Z", bids=[], asks=[], closed=[]
     )
     assert book.canonical()["as_of"] is None
-    assert book.state_hash() == ReplayBook("FILMY").state_hash() == Exchange("FILMY").state_hash()
+    assert book.state_hash() == ReplayBook("TAVIRA").state_hash() == Exchange("TAVIRA").state_hash()
 
 
 @pytest.mark.parametrize(
@@ -129,14 +129,14 @@ def test_sequence_0_is_the_empty_book_before_any_event_whatever_as_of_q15_sent()
 def test_history_that_does_not_fit_together_is_refused(
     events: list[tuple[str, Any]], message: str
 ) -> None:
-    book = ReplayBook("CHAIWALA")
+    book = ReplayBook("CALVERA")
     with pytest.raises(CorruptHistoryError, match=message):
         for event_type, data in events:
             book.apply(event_type, data, T)
 
 
 def test_there_is_no_hash_while_a_market_order_is_half_matched() -> None:
-    book = ReplayBook("CHAIWALA")
+    book = ReplayBook("CALVERA")
     book.apply("OrderAccepted", accepted(1, "m1", "BUY", 5, None), T)
     with pytest.raises(CorruptHistoryError, match="market order"):
         book.state_hash()

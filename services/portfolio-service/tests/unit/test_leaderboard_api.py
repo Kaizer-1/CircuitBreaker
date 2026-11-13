@@ -91,7 +91,7 @@ def board(client: TestClient, **params: Any) -> Any:
 
 
 def buy_from_a_bot(service: PortfolioService, trader: str, n: int, qty: int, price: int) -> None:
-    """The trader buys `qty` CHAIWALA at `price` from bot-01 (reserve, accept, trade)."""
+    """The trader buys `qty` CALVERA at `price` from bot-01 (reserve, accept, trade)."""
     bot = next(a for a in asyncio.run(_accounts(service)) if a.nickname == "bot-01").trader_id
     asyncio.run(service.create_reservation(buy(n, trader, qty, price)))
     asyncio.run(service.create_reservation(sell(n + 1, bot, qty, price)))
@@ -126,7 +126,7 @@ def test_a_price_move_changes_the_board_on_the_next_refresh(
     client: TestClient, service: PortfolioService, monotonic: Clock
 ) -> None:
     meera, raju = join(service, "Meera"), join(service, "Raju")
-    buy_from_a_bot(service, meera, 1, 100, 24_500)  # Meera holds 100 CHAIWALA bought at ₹245.00
+    buy_from_a_bot(service, meera, 1, 100, 24_500)  # Meera holds 100 CALVERA bought at ₹245.00
     first = board(client)
     assert [(e["rank"], e["nickname"]) for e in first["entries"]] == [(1, "Meera"), (1, "Raju")]
 

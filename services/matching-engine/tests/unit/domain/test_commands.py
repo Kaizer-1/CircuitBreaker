@@ -58,10 +58,10 @@ def test_a_quantity_outside_1_to_10000_is_refused(quantity: int) -> None:
 
 
 def test_a_command_for_another_ticker_is_refused_by_this_book() -> None:
-    m = Market("CHAIWALA")
-    refused_with_no_change(m, limit(1, ALICE, "BUY", 1, 24600, ticker="JUGAAD"), "ticker")
-    refused_with_no_change(m, cancel(1, ALICE, ticker="JUGAAD"), "ticker")
-    refused_with_no_change(m, expire(1, ALICE, ticker="JUGAAD"), "ticker")
+    m = Market("CALVERA")
+    refused_with_no_change(m, limit(1, ALICE, "BUY", 1, 24600, ticker="KORVIN"), "ticker")
+    refused_with_no_change(m, cancel(1, ALICE, ticker="KORVIN"), "ticker")
+    refused_with_no_change(m, expire(1, ALICE, ticker="KORVIN"), "ticker")
 
 
 def test_a_command_of_an_unknown_kind_is_refused() -> None:

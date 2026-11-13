@@ -27,8 +27,8 @@ from matching_engine.domain.model import (
 from tests.builders import ALICE, BOB, CARA, DEV, T0, oid
 
 TRADERS = (ALICE, BOB, CARA, DEV)
-TICKERS = ("CHAIWALA", "JUGAAD")
-REFERENCE = {"CHAIWALA": 24550, "JUGAAD": 118000}
+TICKERS = ("CALVERA", "KORVIN")
+REFERENCE = {"CALVERA": 24550, "KORVIN": 118000}
 START_CASH = 5_000_000  # paise each: enough for most orders, not all (some get rejected)
 START_SHARES = 300  # of each ticker each: sellers need shares (no short selling)
 TICK = 5
