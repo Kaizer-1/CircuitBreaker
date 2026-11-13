@@ -258,8 +258,12 @@ flowchart LR
 both environments and every service on its own (`global.only`, as Argo CD will), the platform charts with our
 values, schema validation of every object against Kubernetes 1.37 (kubeconform, including the Prometheus Operator's
 ServiceMonitor and PrometheusRule), and the alert rules' unit tests (promtool). The full system on kind
-(`make test-k8s`) runs in CI only when a pull request is labelled `k8s-smoke`, because it needs most of a runner's
-memory and about 20 minutes.
+(`make test-k8s`) does **not** fit GitHub's standard runner for a private repository (measured on PR #4: 2 CPUs,
+7.9 GB): the pods' CPU *requests* add up to about 3.1 cores (prod services and stores 1.8, Kubernetes itself 0.95,
+monitoring and Traefik 0.35), so the scheduler leaves Cassandra, Redpanda and the gateway `Pending`. A CI-only
+profile with smaller requests and no monitoring would fit, but would test a different system from the one we demo.
+So `make test-k8s` runs on the laptop, and in CI only when a pull request is labelled `k8s-smoke` (for a larger
+runner).
 
 **Argo CD settings that matter** (full reasoning in [ADR-0014](../adr/0014-gitops-with-argo-cd.md)):
 

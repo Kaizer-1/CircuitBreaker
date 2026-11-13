@@ -1,7 +1,8 @@
 # The whole system on kind inside a GitHub runner: make test-k8s (cluster, images, every pod ready, demo trade,
 # bots for 2 minutes, trades/s on the dashboard, one order followed in Loki). Not on every pull request: label
-# a pull request `k8s-smoke` (or start it from the Actions tab once it is on main). It also measures whether the
-# runner has the memory and time for it (docs/03-architecture/07-deployment-and-environments.md, "CI").
+# a pull request `k8s-smoke` (or start it from the Actions tab once it is on main). Measured on PR #4: the standard
+# private-repo runner (2 CPUs, 7.9 GB) is too small: the pods' CPU requests add up to ~3.1 cores, so some stay
+# Pending. Point `runs-on` at a larger runner to use it (docs/03-architecture/07-deployment-and-environments.md).
 name: Kubernetes smoke (kind)
 
 on:
