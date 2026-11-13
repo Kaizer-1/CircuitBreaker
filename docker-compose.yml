@@ -121,7 +121,7 @@ services:
       - "5433:5432" # host port 5433 so a Postgres you installed yourself on 5432 is never confused with this one
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./dev/postgres/01-portfolio.sql:/docker-entrypoint-initdb.d/01-portfolio.sql:ro
+      - ./dev/postgres/01-portfolio.sh:/docker-entrypoint-initdb.d/01-portfolio.sh:ro
     mem_limit: 256m
     restart: unless-stopped
     healthcheck:
