@@ -1,0 +1,8 @@
+image: postgres:16.15 # the Compose image (Docker official image, PostgreSQL License)
+storage: 1Gi
+# App names allowed to connect (5432).
+allowFrom: []
+resources:
+  # Measured in Compose under the bots: 83 MiB.
+  requests: {cpu: 100m, memory: 96Mi}
+  limits: {cpu: 1000m, memory: 256Mi}

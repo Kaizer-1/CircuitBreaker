@@ -236,6 +236,159 @@ def build_images(names: list[str]) -> dict[str, str]:
     return tags
 
 
+# ------------------------------------------------------------------- the system, per environment
+
+CHART = ROOT / "charts" / "circuitbreaker"
+RELEASE = "circuitbreaker"
+# Host port of each environment's ingress (infra/kind/cluster.yaml).
+ENV_PORTS = {"prod": 80, "staging": 8090}
+# The local-development placeholders from docker-compose.yml (never real secrets); an environment
+# variable overrides each. Phase 6: Terraform's environment module creates these Secrets instead.
+DEV_SECRETS = {
+    "jwt-secret": {"value": ("JWT_SECRET", "cb-dev-jwt-secret-for-local-compose-only")},
+    "bot-secret": {"value": ("BOT_SECRET", "cb-dev-bot-secret")},
+    "admin-passcode": {"value": ("ADMIN_PASSCODE", "cb-dev-admin-passcode")},
+    "cassandra-admin": {"password": ("CASSANDRA_ADMIN_PASSWORD", "cassandra")},
+    "postgres-admin": {"password": ("POSTGRES_ADMIN_PASSWORD", "postgres")},
+    "order-service-db": {"password": ("ORDER_SERVICE_DB_PASSWORD", "cb_dev_order_service")},
+    "matching-engine-db": {"password": ("MATCHING_ENGINE_DB_PASSWORD", "cb_dev_matching_engine")},
+    "market-data-service-db": {"password": ("MARKET_DATA_DB_PASSWORD", "cb_dev_market_data")},
+    "sre-agent-db": {"password": ("SRE_AGENT_DB_PASSWORD", "cb_dev_sre_agent")},
+    "portfolio-service-db": {"password": ("PORTFOLIO_DB_PASSWORD", "cb_dev_portfolio")},
+}
+
+
+def public_base_url(env: str) -> str:
+    """Where phones reach this environment: PUBLIC_BASE_URL, else localhost (the QR box warns)."""
+    port = ENV_PORTS[env]
+    default = "http://localhost" if port == 80 else f"http://localhost:{port}"
+    return os.environ.get("PUBLIC_BASE_URL", default).rstrip("/")
+
+
+def ensure_namespace(name: str) -> None:
+    manifest = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": name}}
+    run(kubectl("apply", "-f", "-"), input_text=json.dumps(manifest), capture=True)
+
+
+def apply_secrets(env: str) -> None:
+    items = []
+    for name, keys in DEV_SECRETS.items():
+        data = {key: os.environ.get(var, default) for key, (var, default) in keys.items()}
+        items.append(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {
+                    "name": name,
+                    "namespace": env,
+                    "labels": {"circuitbreaker.io/dev": "true"},
+                },
+                "type": "Opaque",
+                "stringData": data,
+            }
+        )
+    manifest = {"apiVersion": "v1", "kind": "List", "items": items}
+    run(kubectl("apply", "-f", "-"), input_text=json.dumps(manifest), capture=True)
+
+
+def values_files(env: str, overrides: dict[str, dict[str, object]]) -> list[str]:
+    """deploy/envs/<env>/global.yaml, each service's file, then this run's overrides (last wins)."""
+    env_dir = ROOT / "deploy" / "envs" / env
+    files = [
+        env_dir / "global.yaml",
+        *sorted(f for f in env_dir.glob("*.yaml") if f.name != "global.yaml"),
+    ]
+    generated = ROOT / "build" / "k8s" / f"values-{env}.json"
+    generated.parent.mkdir(parents=True, exist_ok=True)
+    generated.write_text(json.dumps(overrides, indent=2) + "\n")  # JSON is YAML
+    args: list[str] = []
+    for f in [*files, generated]:
+        args += ["-f", str(f)]
+    return args
+
+
+def deploy(env: str, extra: dict[str, dict[str, object]] | None = None) -> None:
+    tags = json.loads(TAGS_FILE.read_text()) if TAGS_FILE.exists() else {}
+    if not tags:
+        sys.exit("no images built yet: run make k8s-images")
+    overrides: dict[str, dict[str, object]] = {
+        "global": {"environment": env, "publicBaseUrl": public_base_url(env)},
+        **{name: {"image": {"tag": tag}} for name, tag in tags.items()},
+    }
+    for key, value in (extra or {}).items():
+        overrides.setdefault(key, {}).update(value)
+    step(f"namespace {env}: Secrets (local placeholders) and the umbrella chart")
+    ensure_namespace(env)
+    apply_secrets(env)
+    run(
+        [
+            "helm",
+            "upgrade",
+            "--install",
+            RELEASE,
+            str(CHART),
+            "--kube-context",
+            CONTEXT,
+            "--namespace",
+            env,
+            *values_files(env, overrides),
+        ],
+        capture=True,
+    )
+
+
+def pods_not_ready(namespace: str) -> list[str]:
+    out = json.loads(run(kubectl("get", "pods", "-n", namespace, "-o", "json"), capture=True))
+    waiting = []
+    for pod in out["items"]:
+        name, phase = pod["metadata"]["name"], pod["status"].get("phase")
+        if phase == "Succeeded":
+            continue
+        ready = any(
+            c["type"] == "Ready" and c["status"] == "True"
+            for c in pod["status"].get("conditions", [])
+        )
+        if phase != "Running" or not ready:
+            statuses = pod["status"].get("containerStatuses") or []
+            reason = next(
+                (s["state"]["waiting"]["reason"] for s in statuses if "waiting" in s["state"]),
+                phase,
+            )
+            waiting.append(f"{name} ({reason})")
+    # A rollout is done only when every replica runs the new template (old pods may still be ready).
+    workloads = json.loads(
+        run(kubectl("get", "deployments,statefulsets", "-n", namespace, "-o", "json"), capture=True)
+    )
+    for w in workloads["items"]:
+        spec, status = w["spec"], w.get("status", {})
+        want = spec.get("replicas", 1)
+        done = (
+            status.get("observedGeneration", 0) >= w["metadata"]["generation"]
+            and status.get("updatedReplicas", 0) == want
+            and status.get("readyReplicas", 0) == want
+            and status.get("replicas", 0) == want
+        )
+        if not done:
+            waiting.append(f"{w['kind'].lower()}/{w['metadata']['name']} (rolling out)")
+    return waiting
+
+
+def wait_ready(namespace: str, timeout: float = 600) -> float:
+    start = time.monotonic()
+    last = ""
+    while True:
+        waiting = pods_not_ready(namespace)
+        if not waiting:
+            return time.monotonic() - start
+        if time.monotonic() - start > timeout:
+            sys.exit(f"not ready after {timeout:.0f} s in {namespace}: {', '.join(waiting)}")
+        line = f"   waiting for {len(waiting)}: {', '.join(sorted(waiting))}"
+        if line != last:
+            print(line, flush=True)
+            last = line
+        time.sleep(3)
+
+
 # --------------------------------------------------------------------------- commands
 
 
@@ -248,7 +401,11 @@ def cmd_up(args: argparse.Namespace) -> None:
     if not args.skip_images:
         step("images")
         build_images(list(IMAGES))
-    print(f"\ncluster '{CLUSTER}' is up (kubectl context {CONTEXT})")
+    deploy(args.env)
+    step(f"waiting until every pod in {args.env} is ready")
+    took = wait_ready(args.env)
+    url = public_base_url(args.env)
+    print(f"\nall pods in {args.env} ready ({took:.0f} s).  {url}/   (kubectl context {CONTEXT})")
 
 
 def cmd_down(_: argparse.Namespace) -> None:

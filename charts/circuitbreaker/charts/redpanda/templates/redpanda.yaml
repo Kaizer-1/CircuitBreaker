@@ -1,0 +1,117 @@
+{{- $only := .Values.global.only | default "" -}}
+{{- if or (eq $only "") (eq $only "redpanda") }}
+# One Redpanda broker (the event bus, ADR-0003) with the same settings as docker-compose.yml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+  labels: {app.kubernetes.io/name: redpanda, app.kubernetes.io/part-of: circuitbreaker}
+spec:
+  selector: {app.kubernetes.io/name: redpanda}
+  ports:
+    - {name: kafka, port: 9092, targetPort: kafka}
+    - {name: admin, port: 9644, targetPort: admin}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+  labels: {app.kubernetes.io/name: redpanda, app.kubernetes.io/part-of: circuitbreaker}
+spec:
+  serviceName: redpanda
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: redpanda}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: redpanda, app.kubernetes.io/part-of: circuitbreaker}
+    spec:
+      enableServiceLinks: false
+      securityContext:
+        fsGroup: 101 # the image's redpanda user can write the volume
+      containers:
+        - name: redpanda
+          image: {{ .Values.image }}
+          args:
+            - redpanda
+            - start
+            - --smp=1
+            - --memory=512M
+            - --reserve-memory=0M
+            - --overprovisioned
+            - --node-id=0
+            - --check=false
+            - --kafka-addr=internal://0.0.0.0:9092
+            # Clients reach the broker as redpanda:9092 in this namespace, exactly as in Compose.
+            - --advertise-kafka-addr=internal://redpanda:9092
+          ports:
+            - {name: kafka, containerPort: 9092}
+            - {name: admin, containerPort: 9644}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/redpanda/data}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            tcpSocket: {port: admin}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: ["bash", "-c", "rpk cluster health | grep -qE 'Healthy:\\s+true'"]
+            periodSeconds: 10
+            timeoutSeconds: 10
+          livenessProbe:
+            tcpSocket: {port: kafka}
+            periodSeconds: 20
+            failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: {{ .Values.storage }}}
+---
+# The topics from the event catalog, by the same script Compose runs (dev/redpanda/create-topics.sh, linked into
+# files/). Idempotent. The name carries a hash of the script, so a changed script runs again on the next install.
+{{- $script := .Files.Get "files/create-topics.sh" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redpanda-init
+  labels: {app.kubernetes.io/name: redpanda-init, app.kubernetes.io/part-of: circuitbreaker}
+data:
+  create-topics.sh: {{ $script | quote }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redpanda-init-{{ include "redpanda.initPod" . | sha256sum | trunc 8 }}
+  labels: {app.kubernetes.io/name: redpanda-init, app.kubernetes.io/part-of: circuitbreaker}
+spec:
+  backoffLimit: 10
+{{- include "redpanda.initPod" . }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redpanda
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: redpanda}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range .Values.allowFrom }}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: {{ . }}}
+        {{- end }}
+      ports:
+        - port: kafka
+    # Prometheus reads the broker's metrics on the admin port.
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ .Values.global.observabilityNamespace }}}
+      ports:
+        - port: admin
+{{- end }}

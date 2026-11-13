@@ -1,0 +1,20 @@
+{{- if and (include "service.enabled" .) .Values.metrics.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor") }}
+# Tells Prometheus (kube-prometheus-stack, namespace observability) to scrape this service's /metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "service.name" . }}
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "service.selector" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.metrics.path }}
+      interval: {{ .Values.metrics.interval }}
+      # The metrics carry their own `service` label (coding standards section 7); keep it rather than renaming it
+      # to exported_service. Prometheus adds namespace, pod and container itself.
+      honorLabels: true
+{{- end }}

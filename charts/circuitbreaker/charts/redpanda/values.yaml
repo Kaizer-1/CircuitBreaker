@@ -1,0 +1,8 @@
+image: redpandadata/redpanda:v26.2.6 # the Compose image (Business Source License, free; ADR-0018)
+storage: 2Gi
+# App names allowed to connect (Kafka API 9092).
+allowFrom: []
+resources:
+  # --memory 512M for Seastar; the rest is the process around it. Measured in Compose under the bots: 440 MiB.
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {cpu: 1000m, memory: 896Mi}

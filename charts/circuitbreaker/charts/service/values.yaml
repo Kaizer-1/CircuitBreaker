@@ -1,0 +1,60 @@
+# Defaults for ONE service. The umbrella chart sets these per service under the service's name
+# (charts/circuitbreaker/values.yaml); deploy/envs/<env>/<service>.yaml overrides them per environment.
+
+enabled: true
+
+image:
+  # <global.image.registry>/<repository>:<tag>; the tag defaults to global.image.tag (set by make k8s-up).
+  repository: ""
+  tag: ""
+
+replicas: 1
+# RollingUpdate (no downtime: maxUnavailable 0, maxSurge 1) or Recreate. Recreate is for the single-writer
+# services (matching-engine, bot-traders, sre-agent): two copies side by side, even for seconds, would both write.
+strategy: RollingUpdate
+
+port: 8000
+
+# Plain settings, rendered into the service's ConfigMap and loaded as environment variables.
+env: {}
+# Secret settings: NAME -> {secret, key}. The Secrets are created outside the chart (make k8s-up now,
+# Terraform's environment module from Phase 6), never stored in Git.
+secretEnv: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 96Mi
+  limits:
+    cpu: 1000m
+    memory: 256Mi
+
+probes:
+  # Liveness: restart a truly stuck process. /healthz never checks dependencies, so a database outage cannot cause
+  # a restart loop.
+  liveness:
+    path: /healthz
+    periodSeconds: 10
+    failureThreshold: 3
+  # Readiness: only receive traffic while dependencies work (/readyz checks the service's own store and topics).
+  readiness:
+    path: /readyz
+    periodSeconds: 5
+    failureThreshold: 3
+  # Startup: liveness waits until the process has answered once (up to periodSeconds x failureThreshold).
+  startup:
+    path: /healthz
+    periodSeconds: 2
+    failureThreshold: 30
+
+networkPolicy:
+  # App names (label app.kubernetes.io/name) allowed to call this service on its port.
+  allowFrom: []
+  # Let the ingress controller in (web and the public API only).
+  allowIngressController: false
+
+metrics:
+  # A ServiceMonitor for Prometheus (rendered only when the cluster has the CRD).
+  enabled: true
+  path: /metrics
+  interval: 10s

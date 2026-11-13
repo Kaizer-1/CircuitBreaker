@@ -1,0 +1,5 @@
+# market-data-service in staging. Empty tag = the one make k8s-up built. From Phase 6, CI writes the image tag here, one
+# commit per service per environment, and Argo CD deploys it (ADR-0014).
+market-data-service:
+  image:
+    tag: ""

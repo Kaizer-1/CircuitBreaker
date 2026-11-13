@@ -1,0 +1,4 @@
+# Settings for every service in prod (the live demo audience).
+# make k8s-up env=prod passes this file and the per-service files next to it to the umbrella chart.
+global:
+  environment: prod

@@ -1,0 +1,94 @@
+{{- $only := .Values.global.only | default "" -}}
+{{- if or (eq $only "") (eq $only "postgres") }}
+# One Postgres server holding portfolio-service's read model (ADR-0006), as in docker-compose.yml.
+{{- $init := .Files.Get "files/01-portfolio.sh" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  labels: {app.kubernetes.io/name: postgres, app.kubernetes.io/part-of: circuitbreaker}
+data:
+  # Linked from dev/postgres/: runs once, on the first start of an empty data directory.
+  01-portfolio.sh: {{ $init | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels: {app.kubernetes.io/name: postgres, app.kubernetes.io/part-of: circuitbreaker}
+spec:
+  selector: {app.kubernetes.io/name: postgres}
+  ports:
+    - {name: postgres, port: 5432, targetPort: postgres}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels: {app.kubernetes.io/name: postgres, app.kubernetes.io/part-of: circuitbreaker}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: postgres}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: postgres, app.kubernetes.io/part-of: circuitbreaker}
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: postgres
+          image: {{ .Values.image }}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ .Values.global.secrets.postgresAdmin }}, key: password}}
+            - name: PORTFOLIO_DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: portfolio-service-db, key: password}}
+            # A subdirectory, so the volume's root can hold other entries without upsetting initdb.
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports:
+            - {name: postgres, containerPort: 5432}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            exec: {command: ["pg_isready", "-U", "postgres", "-d", "postgres"]}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            exec: {command: ["pg_isready", "-U", "postgres", "-d", "postgres"]}
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: ["pg_isready", "-U", "postgres", "-d", "postgres"]}
+            periodSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: init
+          configMap: {name: postgres-init}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: {{ .Values.storage }}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: postgres}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range .Values.allowFrom }}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: {{ . }}}
+        {{- end }}
+      ports:
+        - port: postgres
+{{- end }}

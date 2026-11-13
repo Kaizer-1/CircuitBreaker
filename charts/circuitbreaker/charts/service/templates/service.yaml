@@ -1,0 +1,24 @@
+{{- if include "service.enabled" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "service.name" . }}
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "service.selector" . | nindent 4 }}
+  ports:
+    # Port 8000 like in Docker Compose (web: 8080), so http://order-service:8000 works in both.
+    - name: http
+      port: {{ .Values.port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "service.name" . }}
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+{{- end }}
