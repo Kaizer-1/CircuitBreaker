@@ -1,0 +1,27 @@
+{{- $only := .Values.global.only | default "" -}}
+{{- if or (eq $only "") (eq $only "ingress") }}
+# The way in from outside the cluster (Traefik, ADR-0018): the public API and its WebSockets go to the gateway,
+# everything else to the web app. No host name, so phones reach it by the laptop's LAN address. Each environment
+# has its own entry point (host port): prod 80, staging 8090 (infra/platform/traefik.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: circuitbreaker
+  labels: {app.kubernetes.io/part-of: circuitbreaker}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.global.ingressEntryPoint }}
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          # /v1/... including /v1/ws/... (Traefik passes the WebSocket upgrade through).
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service: {name: api-gateway, port: {number: 8000}}
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: web, port: {number: 8080}}
+{{- end }}

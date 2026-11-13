@@ -258,6 +258,38 @@ DEV_SECRETS = {
 }
 
 
+# Third-party charts, pinned (ADR-0018): (release, chart, repo, version, namespace, values file).
+PLATFORM = [
+    ("traefik", "traefik", "https://traefik.github.io/charts", "42.3.1", "traefik", "traefik.yaml"),
+]
+
+
+def install_platform() -> None:
+    for release, chart, repo, version, namespace, values in PLATFORM:
+        step(f"{release} (chart {chart} {version}, namespace {namespace})")
+        run(
+            [
+                "helm",
+                "upgrade",
+                "--install",
+                release,
+                chart,
+                "--repo",
+                repo,
+                "--version",
+                version,
+                "--kube-context",
+                CONTEXT,
+                "--namespace",
+                namespace,
+                "--create-namespace",
+                "-f",
+                str(ROOT / "infra" / "platform" / values),
+            ],
+            capture=True,
+        )
+
+
 def public_base_url(env: str) -> str:
     """Where phones reach this environment: PUBLIC_BASE_URL, else localhost (the QR box warns)."""
     port = ENV_PORTS[env]
@@ -401,9 +433,10 @@ def cmd_up(args: argparse.Namespace) -> None:
     if not args.skip_images:
         step("images")
         build_images(list(IMAGES))
+    install_platform()
     deploy(args.env)
-    step(f"waiting until every pod in {args.env} is ready")
-    took = wait_ready(args.env)
+    step(f"waiting until every pod in {args.env} and the platform is ready")
+    took = sum(wait_ready(ns) for ns in [*sorted({p[4] for p in PLATFORM}), args.env])
     url = public_base_url(args.env)
     print(f"\nall pods in {args.env} ready ({took:.0f} s).  {url}/   (kubectl context {CONTEXT})")
 
@@ -448,6 +481,67 @@ def cmd_images(args: argparse.Namespace) -> None:
     build_images(names)
 
 
+# Internal APIs the check scripts read directly (Compose maps them to host ports 8002-8005). On the
+# cluster they are reached by port-forward, which enters the pod's own network namespace, so the
+# NetworkPolicies (which keep every other pod out) do not apply to it.
+FORWARDS = {
+    "ENGINE": ("matching-engine", 18002),
+    "MARKET": ("market-data-service", 18003),
+    "PORTFOLIO": ("portfolio-service", 18004),
+    "BOTS": ("bot-traders", 18005),
+}
+
+
+def port_open(port: int) -> bool:
+    import socket
+
+    with socket.socket() as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+def cmd_run(args: argparse.Namespace) -> None:
+    """Run one of the stack scripts (demo_trade.py, bots_check.py, ...) against an environment."""
+    env = dict(os.environ)
+    port = ENV_PORTS[args.env]
+    env["GATEWAY"] = "http://localhost" if port == 80 else f"http://localhost:{port}"
+    env["K8S_NAMESPACE"] = args.env
+    forwards = []
+    try:
+        for var, (service, local) in FORWARDS.items():
+            forwards.append(
+                subprocess.Popen(  # noqa: S603 (fixed command)
+                    kubectl("port-forward", "-n", args.env, f"svc/{service}", f"{local}:8000"),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            )
+            env[var] = f"http://localhost:{local}"
+        deadline = time.monotonic() + 15
+        while not all(port_open(local) for _, local in FORWARDS.values()):
+            if time.monotonic() > deadline:
+                sys.exit("port-forwards did not open")
+            time.sleep(0.2)
+        script = ROOT / "scripts" / args.script
+        code = subprocess.run([sys.executable, str(script), *args.args], env=env, check=False)  # noqa: S603
+        sys.exit(code.returncode)
+    finally:
+        for proc in forwards:
+            proc.terminate()
+
+
+def cmd_bots(args: argparse.Namespace) -> None:
+    """Turn the 20 bots on or off (make k8s-bots / k8s-bots-stop), like make bots in Compose."""
+    settings = {
+        "BOTS_ENABLED": "false" if args.stop else "true",
+        "BOT_RANDOM_SEED": args.seed,
+        "BOT_ACTIVITY": args.activity,
+    }
+    deploy(args.env, {"bot-traders": {"env": settings}})
+    wait_ready(args.env)
+    print("20 bots trading" if not args.stop else "bots stopped", f"in {args.env}")
+
+
 def cmd_reset(args: argparse.Namespace) -> None:
     if os.environ.get("CONFIRM") != "yes":
         answer = input(
@@ -474,6 +568,17 @@ def main() -> None:
     images.add_argument("services", nargs="*")
     images.set_defaults(func=cmd_images)
     sub.add_parser("reset").set_defaults(func=cmd_reset)
+    run_ = sub.add_parser("run", help="run a scripts/ check against the cluster")
+    run_.add_argument("--env", choices=["prod", "staging"], default="prod")
+    run_.add_argument("script")
+    run_.add_argument("args", nargs=argparse.REMAINDER)
+    run_.set_defaults(func=cmd_run)
+    bots = sub.add_parser("bots")
+    bots.add_argument("--env", choices=["prod", "staging"], default="prod")
+    bots.add_argument("--stop", action="store_true")
+    bots.add_argument("--seed", default="")
+    bots.add_argument("--activity", default="1.0")
+    bots.set_defaults(func=cmd_bots)
     args = parser.parse_args()
     args.func(args)
 

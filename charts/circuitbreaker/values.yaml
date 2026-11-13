@@ -14,6 +14,8 @@ global:
     registry: localhost:5001 # the local registry (make k8s-images); Phase 6: GHCR
     tag: "" # set by make k8s-up from the images it built
   ingressNamespace: traefik
+  # Traefik entry point (= host port) of this environment: web (80) for prod, staging (8090) for staging.
+  ingressEntryPoint: web
   observabilityNamespace: observability
   # Where phones reach the app; the join QR code encodes <publicBaseUrl>/join. make k8s-up sets it from
   # PUBLIC_BASE_URL (docs/08-developer-setup.md section 10).

@@ -28,6 +28,7 @@ Usage: python3 scripts/bots_check.py [seconds]   (default 60). Prints a summary;
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -37,7 +38,7 @@ from typing import Any
 
 from stack import ENGINE, http, rupees
 
-MARKET = "http://localhost:8003"  # market-data-service, dev host port
+MARKET = os.environ.get("MARKET", "http://localhost:8003")  # market-data-service, dev host port
 TRADES_PER_MINUTE_FLOOR = 5  # per ticker
 BAND = 0.10  # every price within ±10% of its ticker's reference price
 DEPTH_SHOWN = 6  # levels per side on the dashboard
@@ -45,7 +46,9 @@ MIN_LEVELS = 2.0
 MIN_MAKER_QUOTES = 3.5
 MAX_MAKER_QUOTES = 4.5  # a requote briefly shows the new quote and the old one
 MAKERS = {f"b0b0b0b0-{n:04d}-4000-8000-{n:012d}" for n in range(1, 5)}  # bot-01..04 (roster)
-BOTS = "http://localhost:8005"
+BOTS = os.environ.get("BOTS", "http://localhost:8005")
+# On Kubernetes (python3 scripts/k8s.py run bots_check.py): read the pods' logs in this namespace.
+K8S_NAMESPACE = os.environ.get("K8S_NAMESPACE", "")
 TICKERS = ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY")
 SERVICES = (
     "api-gateway",
@@ -70,8 +73,20 @@ def refused() -> float:
 def server_errors(since: str) -> dict[str, int]:
     found = {}
     for service in SERVICES:
+        if K8S_NAMESPACE:
+            cmd = [
+                "kubectl",
+                "logs",
+                "-n",
+                K8S_NAMESPACE,
+                "-l",
+                f"app.kubernetes.io/name={service}",
+            ]
+            cmd += ["--tail=-1", f"--since-time={since}"]
+        else:
+            cmd = ["docker", "logs", "--since", since, f"circuitbreaker-{service}-1"]
         out = subprocess.run(  # noqa: S603 (fixed command)
-            ["docker", "logs", "--since", since, f"circuitbreaker-{service}-1"],
+            cmd,
             capture_output=True,
             text=True,
             check=False,

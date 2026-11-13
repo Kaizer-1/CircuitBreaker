@@ -17,7 +17,7 @@ ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
 .PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
-        k8s-up k8s-down k8s-status k8s-images k8s-reset
+        k8s-up k8s-down k8s-status k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -134,3 +134,12 @@ k8s-images: ## Kubernetes: build changed images and push them to the local regis
 
 k8s-reset: ## Kubernetes: DELETE the cluster and all its data (asks; run by a person, never a script)
 	@python3 scripts/k8s.py reset
+
+k8s-bots: ## Kubernetes: start the 20 bots trading: make k8s-bots [env=] [seed=42] [activity=1.0]
+	@python3 scripts/k8s.py bots --env $(if $(env),$(env),prod) --seed "$(seed)" --activity $(if $(activity),$(activity),1.0)
+
+k8s-bots-stop: ## Kubernetes: stop the bots trading
+	@python3 scripts/k8s.py bots --stop --env $(if $(env),$(env),prod)
+
+k8s-demo-trade: ## Kubernetes: make demo-trade against the cluster (env=prod|staging)
+	@python3 scripts/k8s.py run --env $(if $(env),$(env),prod) demo_trade.py

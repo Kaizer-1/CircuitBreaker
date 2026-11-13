@@ -15,6 +15,9 @@ strategy: RollingUpdate
 
 port: 8000
 
+# Seconds a stopping pod keeps serving while the endpoints are updated (see the preStop hook).
+preStopSleepSeconds: 5
+
 # Plain settings, rendered into the service's ConfigMap and loaded as environment variables.
 env: {}
 # Secret settings: NAME -> {secret, key}. The Secrets are created outside the chart (make k8s-up now,

@@ -82,6 +82,12 @@ spec:
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
             timeoutSeconds: 4
+          # Keep serving for a few seconds after shutdown starts, until Traefik and the other services have
+          # dropped this pod from their endpoints: no failed requests during a rollout or rollback.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.preStopSleepSeconds }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
