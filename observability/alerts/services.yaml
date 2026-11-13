@@ -71,6 +71,9 @@ groups:
 
       # Memory leak (chaos scenario 3.2): memory above 70% of the limit and still rising, with no deploy.
       # Expected fix: restart_deployment, before Kubernetes kills the pod for running out of memory.
+      # Stateless app services only, never a data store: Cassandra's JVM holds ~70% of its limit by design, and
+      # restarting a data store is never the agent's fix (SRE agent design: data stores are never targets).
+      # observability/tests proves Cassandra, Postgres and Redpanda at 75% and rising fire nothing.
       - alert: MarketDataMemoryGrowth
         expr: |
           (

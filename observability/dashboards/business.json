@@ -119,7 +119,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "text",
+                "color": "#e8e3d6",
                 "value": null
               }
             ]
@@ -130,17 +130,17 @@
               "options": {
                 "0": {
                   "text": "CLOSED",
-                  "color": "green",
+                  "color": "#45d07a",
                   "index": 0
                 },
                 "1": {
                   "text": "HALF-OPEN",
-                  "color": "orange",
+                  "color": "#ffa028",
                   "index": 1
                 },
                 "2": {
                   "text": "OPEN",
-                  "color": "red",
+                  "color": "#ff5c5c",
                   "index": 2
                 }
               }
@@ -207,17 +207,17 @@
               "options": {
                 "0": {
                   "text": "CLOSED",
-                  "color": "green",
+                  "color": "#45d07a",
                   "index": 0
                 },
                 "1": {
                   "text": "HALF-OPEN",
-                  "color": "orange",
+                  "color": "#ffa028",
                   "index": 1
                 },
                 "2": {
                   "text": "OPEN",
-                  "color": "red",
+                  "color": "#ff5c5c",
                   "index": 2
                 }
               }
@@ -227,7 +227,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#45d07a",
                 "value": null
               }
             ]
@@ -288,11 +288,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#45d07a",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#ffa028",
                 "value": 1
               }
             ]
@@ -347,7 +347,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps",
+          "unit": "suffix: orders/s",
           "color": {
             "mode": "thresholds"
           },
@@ -355,11 +355,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#45d07a",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#ff5c5c",
                 "value": 0.1
               }
             ]
@@ -377,7 +377,7 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "textMode": "value",
         "justifyMode": "center",
         "orientation": "auto",
@@ -427,7 +427,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps",
+          "unit": "suffix: orders/s",
           "color": {
             "mode": "thresholds"
           },
@@ -435,7 +435,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "text",
+                "color": "#e8e3d6",
                 "value": null
               }
             ]
@@ -453,7 +453,7 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "textMode": "value",
         "justifyMode": "center",
         "orientation": "auto",
@@ -490,7 +490,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps",
+          "unit": "suffix: trades/s",
           "color": {
             "mode": "thresholds"
           },
@@ -498,7 +498,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "text",
+                "color": "#e8e3d6",
                 "value": null
               }
             ]
@@ -516,7 +516,7 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "textMode": "value",
         "justifyMode": "center",
         "orientation": "auto",
@@ -561,15 +561,15 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "#ff5c5c",
                 "value": null
               },
               {
-                "color": "orange",
+                "color": "#ffa028",
                 "value": 0.95
               },
               {
-                "color": "green",
+                "color": "#45d07a",
                 "value": 0.99
               }
             ]
@@ -587,7 +587,7 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "textMode": "value",
         "justifyMode": "center",
         "orientation": "auto",
@@ -632,15 +632,15 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "#45d07a",
                 "value": null
               },
               {
-                "color": "orange",
+                "color": "#ffa028",
                 "value": 0.25
               },
               {
-                "color": "red",
+                "color": "#ff5c5c",
                 "value": 0.5
               }
             ]
@@ -657,7 +657,7 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "textMode": "value",
         "justifyMode": "center",
         "orientation": "auto",
@@ -702,7 +702,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "text",
+                "color": "#e8e3d6",
                 "value": null
               }
             ]
@@ -720,7 +720,7 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "textMode": "value",
         "justifyMode": "center",
         "orientation": "auto",
@@ -765,7 +765,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "text",
+                "color": "#e8e3d6",
                 "value": null
               }
             ]
@@ -783,7 +783,7 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "textMode": "value",
         "justifyMode": "center",
         "orientation": "auto",
@@ -830,9 +830,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps",
+          "unit": "suffix: orders/s",
           "color": {
-            "mode": "palette-classic"
+            "mode": "shades",
+            "fixedColor": "#ffa028"
           },
           "custom": {
             "drawStyle": "line",
@@ -850,7 +851,65 @@
           },
           "min": 0
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "orders BUY"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#45d07a"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "orders SELL"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ff5c5c"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "trades"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ffa028"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "trades"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "suffix: trades/s"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -915,7 +974,8 @@
         "defaults": {
           "unit": "s",
           "color": {
-            "mode": "palette-classic"
+            "mode": "shades",
+            "fixedColor": "#ffa028"
           },
           "custom": {
             "drawStyle": "line",
@@ -940,13 +1000,59 @@
                 "value": null
               },
               {
-                "color": "red",
+                "color": "#ff5c5c",
                 "value": 0.5
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p50"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#a39d90"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ffa028"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p99"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ff5c5c"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -989,9 +1095,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps",
+          "unit": "suffix: trades/s",
           "color": {
-            "mode": "palette-classic"
+            "mode": "shades",
+            "fixedColor": "#ffa028"
           },
           "custom": {
             "drawStyle": "line",
@@ -1009,7 +1116,83 @@
           },
           "min": 0
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CHAIWALA"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ffa028"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "JUGAAD"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#45d07a"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "DABBA"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e8e3d6"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "MONSOON"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#a39d90"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "FILMY"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ff5c5c"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1054,7 +1237,8 @@
         "defaults": {
           "unit": "short",
           "color": {
-            "mode": "palette-classic"
+            "mode": "shades",
+            "fixedColor": "#ffa028"
           },
           "custom": {
             "drawStyle": "line",
@@ -1079,7 +1263,7 @@
                 "value": null
               },
               {
-                "color": "orange",
+                "color": "#ffa028",
                 "value": 1000
               }
             ]
@@ -1128,9 +1312,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps",
+          "unit": "suffix: orders/s",
           "color": {
-            "mode": "palette-classic"
+            "mode": "shades",
+            "fixedColor": "#ffa028"
           },
           "custom": {
             "drawStyle": "line",
@@ -1148,7 +1333,68 @@
           },
           "min": 0
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "placed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#45d07a"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cancelled"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#a39d90"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "skipped"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8c867a"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "refused"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ff5c5c"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1191,9 +1437,10 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps",
+          "unit": "suffix: orders/s",
           "color": {
-            "mode": "palette-classic"
+            "mode": "shades",
+            "fixedColor": "#ffa028"
           },
           "custom": {
             "drawStyle": "line",
@@ -1267,7 +1514,8 @@
         "defaults": {
           "unit": "short",
           "color": {
-            "mode": "palette-classic"
+            "mode": "shades",
+            "fixedColor": "#ffa028"
           },
           "custom": {
             "drawStyle": "line",
@@ -1285,7 +1533,38 @@
           },
           "min": 0
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "replays streaming"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ffa028"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Q-12 rebuilds running"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#a39d90"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {

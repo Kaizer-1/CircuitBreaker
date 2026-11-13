@@ -155,8 +155,35 @@ tests:
         values: '420000000x40'
       - series: 'container_spec_memory_limit_bytes{namespace="prod",pod="market-data-service-1",container="market-data-service"}'
         values: '536870912x40'
+      # ... and Cassandra restarting: a data store is never handed to the agent.
+      - series: 'kube_pod_container_status_restarts_total{namespace="prod",pod="cassandra-0",container="cassandra"}'
+        values: '0+1x40'
     alert_rule_test:
       - {eval_time: 300s, alertname: MarketDataMemoryGrowth, exp_alerts: []}
+      - {eval_time: 300s, alertname: PodCrashLooping, exp_alerts: []}
+
+  # ------------------------------------------------------------------ data stores hold memory by design: quiet
+  - interval: 10s
+    input_series:
+      # Cassandra's JVM at 75% of its limit and still growing; Postgres and Redpanda too. Not app services.
+      - series: 'container_memory_working_set_bytes{namespace="prod",pod="cassandra-0",container="cassandra"}'
+        values: '1610612736+1000000x40'
+      - series: 'container_spec_memory_limit_bytes{namespace="prod",pod="cassandra-0",container="cassandra"}'
+        values: '2147483648x40'
+      - series: 'container_memory_working_set_bytes{namespace="prod",pod="postgres-0",container="postgres"}'
+        values: '201326592+500000x40'
+      - series: 'container_spec_memory_limit_bytes{namespace="prod",pod="postgres-0",container="postgres"}'
+        values: '268435456x40'
+      - series: 'container_memory_working_set_bytes{namespace="prod",pod="redpanda-0",container="redpanda"}'
+        values: '704643072+1000000x40'
+      - series: 'container_spec_memory_limit_bytes{namespace="prod",pod="redpanda-0",container="redpanda"}'
+        values: '939524096x40'
+      # ... and Cassandra restarting: a data store is never handed to the agent.
+      - series: 'kube_pod_container_status_restarts_total{namespace="prod",pod="cassandra-0",container="cassandra"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - {eval_time: 300s, alertname: MarketDataMemoryGrowth, exp_alerts: []}
+      - {eval_time: 300s, alertname: PodCrashLooping, exp_alerts: []}
 
   # ------------------------------------------------------------------ gateway and portfolio errors
   - interval: 10s
