@@ -1,6 +1,18 @@
 {{- $only := .Values.global.only | default "" -}}
 {{- if or (eq $only "") (eq $only "redpanda") }}
 # One Redpanda broker (the event bus, ADR-0003) with the same settings as docker-compose.yml.
+# Cluster settings applied at the first start of an empty broker. Topics are created only by redpanda-init, with
+# the event catalog's partitions and retention: a client that starts first must not auto-create one with the
+# defaults (1 partition), which would leave every extra consumer in a group without work.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redpanda-bootstrap
+  labels: {app.kubernetes.io/name: redpanda, app.kubernetes.io/part-of: circuitbreaker}
+data:
+  .bootstrap.yaml: |
+    auto_create_topics_enabled: false
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -49,6 +61,8 @@ spec:
             - {name: admin, containerPort: 9644}
           volumeMounts:
             - {name: data, mountPath: /var/lib/redpanda/data}
+            # One file only: rpk writes redpanda.yaml next to it at start.
+            - {name: bootstrap, mountPath: /etc/redpanda/.bootstrap.yaml, subPath: .bootstrap.yaml}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           startupProbe:
@@ -64,6 +78,9 @@ spec:
             tcpSocket: {port: kafka}
             periodSeconds: 20
             failureThreshold: 3
+      volumes:
+        - name: bootstrap
+          configMap: {name: redpanda-bootstrap}
   volumeClaimTemplates:
     - metadata:
         name: data

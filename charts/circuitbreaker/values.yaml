@@ -168,8 +168,9 @@ web:
 
 redpanda:
   storage: 2Gi
+  # redpanda itself: rpk inside the pod reaches the broker by its advertised name, through the Service.
   allowFrom: [order-service, matching-engine, market-data-service, portfolio-service, bot-traders, sre-agent,
-              chaos-service, redpanda-init]
+              chaos-service, redpanda-init, redpanda]
 
 cassandra:
   storage: 4Gi
