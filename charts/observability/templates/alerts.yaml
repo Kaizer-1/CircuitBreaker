@@ -1,0 +1,13 @@
+{{- /* Each observability/alerts/<group>.yaml holds the `groups:` of one PrometheusRule (the same file promtool
+checks in CI). Prometheus picks up every PrometheusRule in the cluster. */}}
+{{- range $path, $_ := .Files.Glob "alerts/*.yaml" }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ base $path | trimSuffix ".yaml" }}
+  labels:
+    app.kubernetes.io/part-of: circuitbreaker
+spec:
+  {{- $.Files.Get $path | nindent 2 }}
+{{- end }}

@@ -1,0 +1,8 @@
+apiVersion: v2
+name: observability
+description: >-
+  CircuitBreaker's own dashboards and alert rules, as code (ADR-0008): Grafana dashboards from
+  observability/dashboards/*.json (ConfigMaps the Grafana sidecar loads) and Prometheus alert rules from
+  observability/alerts/*.yaml (PrometheusRule objects). Installed into namespace observability by make k8s-up.
+type: application
+version: 0.5.0

@@ -260,11 +260,87 @@ DEV_SECRETS = {
 
 # Third-party charts, pinned (ADR-0018): (release, chart, repo, version, namespace, values file).
 PLATFORM = [
-    ("traefik", "traefik", "https://traefik.github.io/charts", "42.3.1", "traefik", "traefik.yaml"),
+    ("traefik", "traefik", "oci://ghcr.io/traefik/helm", "42.3.1", "traefik", "traefik.yaml"),
+    (
+        "kube-prometheus-stack",
+        "kube-prometheus-stack",
+        "oci://ghcr.io/prometheus-community/charts",
+        "92.22.0",
+        "observability",
+        "kube-prometheus-stack.yaml",
+    ),
+    (
+        "loki",
+        "loki",
+        "oci://ghcr.io/grafana-community/helm-charts",
+        "20.4.1",
+        "observability",
+        "loki.yaml",
+    ),
+    # Alloy is not published as an OCI artifact, and its repository's index is too large for a slow
+    # connection: the release package itself, checked against the index's sha256 (CHART_DIGESTS).
+    (
+        "alloy",
+        "alloy",
+        "https://github.com/grafana/helm-charts/releases/download/alloy-1.15.0/alloy-1.15.0.tgz",
+        "1.15.0",
+        "observability",
+        "alloy.yaml",
+    ),
 ]
+# Grafana's admin login (anonymous visitors may only look). Phase 6: Terraform creates it.
+GRAFANA_PASSWORD = os.environ.get("GRAFANA_ADMIN_PASSWORD", "cb-dev-grafana")
+
+
+CHART_CACHE = ROOT / "build" / "k8s" / "charts"
+# sha256 of chart packages downloaded by URL (from the chart repository's index.yaml).
+CHART_DIGESTS = {
+    "alloy-1.15.0.tgz": "2ecc96c05004cc01a45ab23cb390194ad5259ec9d02b42bf148d4468d013aaa3",
+}
+
+
+def cached_chart(chart: str, repo: str, version: str) -> str:
+    """The pinned chart's package, downloaded once: later runs (and demo day) need no internet.
+
+    The repositories' index files are large (prometheus-community's is many MB) and timed out on a
+    slow connection, so charts come from OCI registries where they are published, and only once.
+    """
+    package = CHART_CACHE / f"{chart}-{version}.tgz"
+    if not package.exists():
+        CHART_CACHE.mkdir(parents=True, exist_ok=True)
+        # A package URL, or an OCI registry (neither needs the repository's index).
+        source = [repo] if repo.endswith(".tgz") else [f"{repo}/{chart}", "--version", version]
+        for attempt in (1, 2, 3):
+            pulled = subprocess.run(  # noqa: S603 (fixed command)
+                ["helm", "pull", *source, "-d", str(CHART_CACHE)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if pulled.returncode == 0:
+                expected = CHART_DIGESTS.get(package.name)
+                actual = hashlib.sha256(package.read_bytes()).hexdigest()
+                if expected and actual != expected:
+                    package.unlink()
+                    sys.exit(f"{package.name}: sha256 {actual} is not the published {expected}")
+                break
+            print(f"   helm pull {chart} {version} failed (try {attempt}): {pulled.stderr.strip()}")
+            time.sleep(5)
+        else:
+            sys.exit(f"could not download chart {chart} {version} from {repo}")
+    return str(package)
 
 
 def install_platform() -> None:
+    ensure_namespace("observability")
+    secret = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": "grafana-admin", "namespace": "observability"},
+        "type": "Opaque",
+        "stringData": {"admin-user": "admin", "admin-password": GRAFANA_PASSWORD},
+    }
+    run(kubectl("apply", "-f", "-"), input_text=json.dumps(secret), capture=True)
     for release, chart, repo, version, namespace, values in PLATFORM:
         step(f"{release} (chart {chart} {version}, namespace {namespace})")
         run(
@@ -273,11 +349,7 @@ def install_platform() -> None:
                 "upgrade",
                 "--install",
                 release,
-                chart,
-                "--repo",
-                repo,
-                "--version",
-                version,
+                cached_chart(chart, repo, version),
                 "--kube-context",
                 CONTEXT,
                 "--namespace",
@@ -288,6 +360,21 @@ def install_platform() -> None:
             ],
             capture=True,
         )
+    step("our dashboards and alert rules (charts/observability)")
+    run(
+        [
+            "helm",
+            "upgrade",
+            "--install",
+            "circuitbreaker-observability",
+            str(ROOT / "charts" / "observability"),
+            "--kube-context",
+            CONTEXT,
+            "--namespace",
+            "observability",
+        ],
+        capture=True,
+    )
 
 
 def public_base_url(env: str) -> str:
