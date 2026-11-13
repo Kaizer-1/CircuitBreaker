@@ -8,8 +8,15 @@ DAY_MS=86400000
 
 # create <topic> <partitions> <retention-days>
 create() {
-  local topic=$1 partitions=$2 days=$3
+  local topic=$1 partitions=$2 days=$3 have
   if rpk -X brokers="$BROKERS" topic describe "$topic" >/dev/null 2>&1; then
+    # A topic created by anything else (e.g. a client's auto-creation) can have the wrong partition count, and
+    # adding partitions later would break per-ticker ordering of the data already in it. Fail loudly instead.
+    have=$(rpk -X brokers="$BROKERS" topic describe "$topic" -p | awk 'NR>1' | wc -l | tr -d ' ')
+    if [ "$have" -ne "$partitions" ]; then
+      echo "ERROR    $topic has $have partitions, the event catalog says $partitions" >&2
+      exit 1
+    fi
     echo "exists   $topic"
   else
     rpk -X brokers="$BROKERS" topic create "$topic" -p "$partitions" -r 1 -c "retention.ms=$((days * DAY_MS))" >/dev/null

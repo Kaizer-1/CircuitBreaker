@@ -142,6 +142,29 @@ def test_an_abandoned_replay_gives_its_place_back_at_once(
     assert app.state.replay_slots.in_use == 0
 
 
+def active(client: TestClient, kind: str) -> float:
+    for line in client.get("/metrics").text.splitlines():
+        if line.startswith("time_travel_active{") and f'kind="{kind}"' in line:
+            return float(line.rsplit(" ", 1)[1])
+    raise AssertionError(f"no time_travel_active{{kind={kind}}} in /metrics")
+
+
+def test_the_active_replays_gauge_counts_streams_while_they_run(
+    client: TestClient, exchange: Exchange
+) -> None:
+    assert active(client, "replay") == 0
+    start = exchange.log[0].occurred_at
+    end = stamp(ms(start) + 20 * 60_000)
+    with client.websocket_connect(url(start, end, speed=1), headers=TRADER) as ws:
+        assert ws.receive_json()["type"] == "frame"
+        assert active(client, "replay") == 1
+        assert active(client, "rebuild") == 0
+    deadline = time.monotonic() + 2
+    while active(client, "replay") and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert active(client, "replay") == 0
+
+
 def test_pause_resume_and_speed_messages_control_the_replay(
     client: TestClient, exchange: Exchange
 ) -> None:

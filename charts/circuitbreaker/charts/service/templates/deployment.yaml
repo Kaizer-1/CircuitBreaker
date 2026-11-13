@@ -1,0 +1,95 @@
+{{- if include "service.enabled" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "service.name" . }}
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+  annotations:
+    # The deploy history the SRE agent reads (docs/03-architecture/05-sre-agent-design.md section 2).
+    kubernetes.io/change-cause: {{ printf "release %s (%s)" .Values.global.release (include "service.tag" .) | quote }}
+spec:
+  replicas: {{ .Values.replicas }}
+  # Rollback targets and deploy history for the agent.
+  revisionHistoryLimit: 10
+  strategy:
+    {{- if eq .Values.strategy "Recreate" }}
+    type: Recreate
+    {{- else }}
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "service.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "service.labels" . | nindent 8 }}
+      annotations:
+        # A changed ConfigMap rolls the pods (environment variables are read only at start).
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "service.name" . }}
+      automountServiceAccountToken: false
+      # No Docker-link variables: Service `cassandra` would set CASSANDRA_PORT=tcp://..., clashing with settings.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ include "service.name" . }}
+          image: {{ include "service.image" . }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: {{ .Values.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "service.name" . }}
+          {{- with .Values.secretEnv }}
+          env:
+            {{- range $name, $ref := . }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ref.secret }}
+                  key: {{ $ref.key }}
+            {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startup.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+            timeoutSeconds: 4
+          # Keep serving for a few seconds after shutdown starts, until Traefik and the other services have
+          # dropped this pod from their endpoints: no failed requests during a rollout or rollback.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.preStopSleepSeconds }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+{{- end }}

@@ -1,0 +1,262 @@
+# promtool unit tests for observability/alerts/ (run by CI and `make test-alerts`):
+#   promtool test rules observability/tests/alerts_test.yaml
+# Each test feeds synthetic series sampled every 10 s (as Prometheus scrapes) and checks that an alert is quiet
+# before its condition, firing at most ~30 s after it starts, and that normal trading never fires anything.
+rule_files:
+  - ../alerts/services.yaml
+  - ../alerts/platform.yaml
+
+evaluation_interval: 10s
+
+tests:
+  # ------------------------------------------------------------------ normal trading: nothing fires
+  - interval: 10s
+    input_series:
+      # ~10 requests/s, all 2xx, fast; memory flat at 30% of the limit; lag 0; no restarts, no dead letters.
+      - series: 'http_requests_total{namespace="prod",service="order-service",route="/v1/orders",method="POST",status="202"}'
+        values: '0+100x60'
+      - series: 'http_requests_total{namespace="prod",service="api-gateway",route="/v1/orders",method="POST",status="202"}'
+        values: '0+100x60'
+      - series: 'http_requests_total{namespace="prod",service="portfolio-service",route="/internal/v1/reservations",method="POST",status="201"}'
+        values: '0+100x60'
+      # One 500 every 50 s on a busy service: 0.2% errors, under 5%.
+      - series: 'http_requests_total{namespace="prod",service="order-service",route="/v1/orders",method="POST",status="500"}'
+        values: '0 0 0 0 1 1 1 1 1 2 2 2 2 2 3 3 3 3 3 4 4 4 4 4 5 5 5 5 5 6 6 6 6 6 7 7 7 7 7 8 8 8 8 8 9 9 9 9 9 10 10 10 10 10 11 11 11 11 11 12 12'
+      # Readiness probes failing (503) while a pod starts: not user traffic, never counted.
+      - series: 'http_requests_total{namespace="prod",service="order-service",route="/readyz",method="GET",status="503"}'
+        values: '0+5x60'
+      - series: 'http_request_duration_seconds_bucket{namespace="prod",service="order-service",route="/v1/orders",method="POST",le="0.1"}'
+        values: '0+98x60'
+      - series: 'http_request_duration_seconds_bucket{namespace="prod",service="order-service",route="/v1/orders",method="POST",le="0.5"}'
+        values: '0+100x60'
+      - series: 'http_request_duration_seconds_bucket{namespace="prod",service="order-service",route="/v1/orders",method="POST",le="+Inf"}'
+        values: '0+100x60'
+      - series: 'container_memory_working_set_bytes{namespace="prod",pod="market-data-service-1",container="market-data-service"}'
+        values: '160000000x60'
+      - series: 'container_spec_memory_limit_bytes{namespace="prod",pod="market-data-service-1",container="market-data-service"}'
+        values: '536870912x60'
+      - series: 'circuit_breaker_state{namespace="prod",pod="order-service-1",dependency="portfolio-service",state="open"}'
+        values: '0x60'
+      - series: 'consumer_lag_messages{namespace="prod",service="portfolio-service",topic="matching.v1",partition="0"}'
+        values: '0 3 0 12 0 0 40 0x53'
+      - series: 'kube_pod_container_status_restarts_total{namespace="prod",pod="order-service-1",container="order-service"}'
+        values: '0x60'
+      - series: 'events_dead_lettered_total{namespace="prod",service="portfolio-service",topic="matching.v1"}'
+        values: '0x60'
+    alert_rule_test:
+      - {eval_time: 5m, alertname: OrderServiceHighErrorRate, exp_alerts: []}
+      - {eval_time: 5m, alertname: OrderServiceHighLatency, exp_alerts: []}
+      - {eval_time: 5m, alertname: OrderServiceCircuitOpen, exp_alerts: []}
+      - {eval_time: 5m, alertname: MarketDataMemoryGrowth, exp_alerts: []}
+      - {eval_time: 5m, alertname: GatewayHighErrorRate, exp_alerts: []}
+      - {eval_time: 5m, alertname: PortfolioHighErrorRate, exp_alerts: []}
+      - {eval_time: 5m, alertname: PodCrashLooping, exp_alerts: []}
+      - {eval_time: 5m, alertname: ConsumerLagHigh, exp_alerts: []}
+      - {eval_time: 5m, alertname: DeadLetterMessages, exp_alerts: []}
+
+  # ------------------------------------------------------------------ an idle service: one error is not 100%
+  - interval: 10s
+    input_series:
+      # 1 request in total, and it failed: below the 0.5 requests/s traffic guard.
+      - series: 'http_requests_total{namespace="prod",service="order-service",route="/v1/orders",method="POST",status="500"}'
+        values: '0 0 0 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - {eval_time: 100s, alertname: OrderServiceHighErrorRate, exp_alerts: []}
+
+  # ------------------------------------------------------------------ bad deploy: 5xx from t=100 s
+  - interval: 10s
+    input_series:
+      - series: 'http_requests_total{namespace="prod",service="order-service",route="/v1/orders",method="POST",status="202"}'
+        values: '0+100x30'
+      - series: 'http_requests_total{namespace="prod",service="order-service",route="/v1/orders",method="POST",status="500"}'
+        values: '0x10 0+40x20'
+    alert_rule_test:
+      - {eval_time: 100s, alertname: OrderServiceHighErrorRate, exp_alerts: []}
+      - {eval_time: 130s, alertname: OrderServiceHighErrorRate, exp_alerts: []} # pending (`for: 20s`)
+      - eval_time: 140s # errors from 120 s: firing 20 s later
+        alertname: OrderServiceHighErrorRate
+        exp_alerts:
+          - exp_labels: {namespace: prod, service: order-service, severity: critical, remediable: "true"}
+            exp_annotations:
+              summary: order-service errors at 28.57% (normally under 1%)
+              description: More than 5% of order-service requests are answered with 5xx.
+
+  # ------------------------------------------------------------------ traffic spike: slow from t=100 s
+  - interval: 10s
+    input_series:
+      - series: 'http_requests_total{namespace="prod",service="order-service",route="/v1/orders",method="POST",status="202"}'
+        values: '0+400x30'
+      # From 110 s only 10% answer within 0.5 s; all within 1 s.
+      - series: 'http_request_duration_seconds_bucket{namespace="prod",service="order-service",route="/v1/orders",method="POST",le="0.5"}'
+        values: '0+400x10 4000+40x20'
+      - series: 'http_request_duration_seconds_bucket{namespace="prod",service="order-service",route="/v1/orders",method="POST",le="1"}'
+        values: '0+400x30'
+      - series: 'http_request_duration_seconds_bucket{namespace="prod",service="order-service",route="/v1/orders",method="POST",le="+Inf"}'
+        values: '0+400x30'
+    alert_rule_test:
+      - {eval_time: 100s, alertname: OrderServiceHighLatency, exp_alerts: []}
+      - eval_time: 150s # slow from 110 s: firing after `for: 30s`
+        alertname: OrderServiceHighLatency
+        exp_alerts:
+          - exp_labels: {namespace: prod, service: order-service, severity: critical, remediable: "true"}
+            exp_annotations:
+              summary: order-service p95 latency 972.2ms (threshold 500 ms)
+              description: The slowest 5% of order-service requests take longer than 500 ms.
+
+  # ------------------------------------------------------------------ circuit breaker: open from t=100 s, cycling
+  - interval: 10s
+    input_series:
+      # open 10 s, half-open trial, open again (portfolio-service still failing).
+      - series: 'circuit_breaker_state{namespace="prod",pod="order-service-1",dependency="portfolio-service",state="open"}'
+        values: '0x9 1 0 1 1 0 1 1 0 1 1'
+    alert_rule_test:
+      - {eval_time: 90s, alertname: OrderServiceCircuitOpen, exp_alerts: []}
+      - eval_time: 100s
+        alertname: OrderServiceCircuitOpen
+        exp_alerts:
+          - exp_labels: {namespace: prod, service: order-service, severity: critical, remediable: "false"}
+            exp_annotations:
+              summary: order-service's circuit breaker to portfolio-service is open
+              description: >-
+                Five reservation calls in a row failed or timed out, so order-service stops calling portfolio-service
+                for 10 s at a time and answers 503 DEPENDENCY_UNAVAILABLE. Look at portfolio-service.
+      - eval_time: 110s # half-open for a moment: still firing
+        alertname: OrderServiceCircuitOpen
+        exp_alerts:
+          - exp_labels: {namespace: prod, service: order-service, severity: critical, remediable: "false"}
+            exp_annotations:
+              summary: order-service's circuit breaker to portfolio-service is open
+              description: >-
+                Five reservation calls in a row failed or timed out, so order-service stops calling portfolio-service
+                for 10 s at a time and answers 503 DEPENDENCY_UNAVAILABLE. Look at portfolio-service.
+
+  # ------------------------------------------------------------------ memory leak: crosses 70% at t=200 s, rising
+  - interval: 10s
+    input_series:
+      # +40 MB/min from 300 MB; 70% of 512 MiB = 375.8 MB, reached after ~114 s.
+      - series: 'container_memory_working_set_bytes{namespace="prod",pod="market-data-service-1",container="market-data-service"}'
+        values: '300000000+6666667x40'
+      - series: 'container_spec_memory_limit_bytes{namespace="prod",pod="market-data-service-1",container="market-data-service"}'
+        values: '536870912x40'
+    alert_rule_test:
+      - {eval_time: 110s, alertname: MarketDataMemoryGrowth, exp_alerts: []}
+      - eval_time: 150s # above 70% from 120 s, firing after `for: 30s`
+        alertname: MarketDataMemoryGrowth
+        exp_alerts:
+          - exp_labels: {namespace: prod, pod: market-data-service-1, service: market-data-service, severity: critical, remediable: "true"}
+            exp_annotations:
+              summary: market-data-service memory at 74.51% of its limit and rising
+              description: Memory keeps climbing toward the limit; at 100% Kubernetes kills the pod (OOMKilled).
+
+  # ------------------------------------------------------------------ memory high but flat (no leak): quiet
+  - interval: 10s
+    input_series:
+      - series: 'container_memory_working_set_bytes{namespace="prod",pod="market-data-service-1",container="market-data-service"}'
+        values: '420000000x40'
+      - series: 'container_spec_memory_limit_bytes{namespace="prod",pod="market-data-service-1",container="market-data-service"}'
+        values: '536870912x40'
+      # ... and Cassandra restarting: a data store is never handed to the agent.
+      - series: 'kube_pod_container_status_restarts_total{namespace="prod",pod="cassandra-0",container="cassandra"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - {eval_time: 300s, alertname: MarketDataMemoryGrowth, exp_alerts: []}
+      - {eval_time: 300s, alertname: PodCrashLooping, exp_alerts: []}
+
+  # ------------------------------------------------------------------ data stores hold memory by design: quiet
+  - interval: 10s
+    input_series:
+      # Cassandra's JVM at 75% of its limit and still growing; Postgres and Redpanda too. Not app services.
+      - series: 'container_memory_working_set_bytes{namespace="prod",pod="cassandra-0",container="cassandra"}'
+        values: '1610612736+1000000x40'
+      - series: 'container_spec_memory_limit_bytes{namespace="prod",pod="cassandra-0",container="cassandra"}'
+        values: '2147483648x40'
+      - series: 'container_memory_working_set_bytes{namespace="prod",pod="postgres-0",container="postgres"}'
+        values: '201326592+500000x40'
+      - series: 'container_spec_memory_limit_bytes{namespace="prod",pod="postgres-0",container="postgres"}'
+        values: '268435456x40'
+      - series: 'container_memory_working_set_bytes{namespace="prod",pod="redpanda-0",container="redpanda"}'
+        values: '704643072+1000000x40'
+      - series: 'container_spec_memory_limit_bytes{namespace="prod",pod="redpanda-0",container="redpanda"}'
+        values: '939524096x40'
+      # ... and Cassandra restarting: a data store is never handed to the agent.
+      - series: 'kube_pod_container_status_restarts_total{namespace="prod",pod="cassandra-0",container="cassandra"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - {eval_time: 300s, alertname: MarketDataMemoryGrowth, exp_alerts: []}
+      - {eval_time: 300s, alertname: PodCrashLooping, exp_alerts: []}
+
+  # ------------------------------------------------------------------ gateway and portfolio errors
+  - interval: 10s
+    input_series:
+      - series: 'http_requests_total{namespace="prod",service="api-gateway",route="/v1/orders",method="POST",status="200"}'
+        values: '0+100x30'
+      - series: 'http_requests_total{namespace="prod",service="api-gateway",route="/v1/orders",method="POST",status="503"}'
+        values: '0x10 0+50x20'
+      - series: 'http_requests_total{namespace="prod",service="portfolio-service",route="/internal/v1/reservations",method="POST",status="201"}'
+        values: '0+100x30'
+      - series: 'http_requests_total{namespace="prod",service="portfolio-service",route="/internal/v1/reservations",method="POST",status="500"}'
+        values: '0x10 0+50x20'
+    alert_rule_test:
+      - eval_time: 150s
+        alertname: GatewayHighErrorRate
+        exp_alerts:
+          - exp_labels: {namespace: prod, service: api-gateway, severity: critical, remediable: "true"}
+            exp_annotations:
+              summary: api-gateway errors at 33.33%
+              description: More than 5% of public API requests are answered with 5xx.
+      - eval_time: 150s
+        alertname: PortfolioHighErrorRate
+        exp_alerts:
+          - exp_labels: {namespace: prod, service: portfolio-service, severity: critical, remediable: "true"}
+            exp_annotations:
+              summary: portfolio-service errors at 33.33%
+              description: More than 5% of portfolio-service requests (reservations, portfolios) fail with 5xx.
+
+  # ------------------------------------------------------------------ a stopped consumer: the broker sees the lag
+  - interval: 10s
+    input_series:
+      # portfolio-service is down, so its own gauge is gone; the broker still counts its group's lag.
+      - series: 'redpanda_kafka_consumer_group_lag_max{namespace="prod",redpanda_group="portfolio-service.matching.v1"}'
+        values: '0x9 1200+100x10'
+    alert_rule_test:
+      - eval_time: 130s
+        alertname: ConsumerLagHigh
+        exp_alerts:
+          - exp_labels: {namespace: prod, service: portfolio-service, topic: matching.v1, severity: warning, remediable: "false"}
+            exp_annotations:
+              summary: portfolio-service is 1.5k messages behind on matching.v1
+              description: A consumer group is falling behind; its read model or reactions are stale.
+
+  # ------------------------------------------------------------------ crash loop, lag, dead letters
+  - interval: 10s
+    input_series:
+      - series: 'kube_pod_container_status_restarts_total{namespace="prod",pod="order-service-1",container="order-service"}'
+        values: '0x5 1 1 2 2 3 3 4 4 4 4'
+      - series: 'consumer_lag_messages{namespace="prod",service="portfolio-service",topic="matching.v1",partition="0"}'
+        values: '0x9 1500+200x10'
+      - series: 'events_dead_lettered_total{namespace="prod",service="portfolio-service",topic="matching.v1"}'
+        values: '0x9 1 1 1'
+    alert_rule_test:
+      - eval_time: 130s # the 4th restart within 5 minutes
+        alertname: PodCrashLooping
+        exp_alerts:
+          - exp_labels: {namespace: prod, service: order-service, severity: critical, remediable: "true"}
+            exp_annotations:
+              summary: order-service restarted 4 times in 5 minutes
+              description: A container keeps crashing and being restarted by Kubernetes.
+      - {eval_time: 110s, alertname: ConsumerLagHigh, exp_alerts: []}
+      - eval_time: 130s # over 1,000 from 90 s, firing after `for: 30s`
+        alertname: ConsumerLagHigh
+        exp_alerts:
+          - exp_labels: {namespace: prod, service: portfolio-service, topic: matching.v1, severity: warning, remediable: "false"}
+            exp_annotations:
+              summary: portfolio-service is 2.1k messages behind on matching.v1
+              description: A consumer group is falling behind; its read model or reactions are stale.
+      - {eval_time: 80s, alertname: DeadLetterMessages, exp_alerts: []}
+      - eval_time: 100s
+        alertname: DeadLetterMessages
+        exp_alerts:
+          - exp_labels: {namespace: prod, service: portfolio-service, topic: matching.v1, severity: warning, remediable: "false"}
+            exp_annotations:
+              summary: portfolio-service sent messages from matching.v1 to matching.v1.dlq
+              description: An event failed processing 5 times and was parked on the dead-letter topic.

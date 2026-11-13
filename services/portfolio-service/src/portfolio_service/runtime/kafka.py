@@ -24,6 +24,7 @@ from typing import Any
 
 from portfolio_service.runtime.events import EventEnvelope, InvalidEventError, format_timestamp
 from portfolio_service.runtime.health import ReadinessCheck
+from portfolio_service.runtime.jsonlog import correlation_id_var
 from portfolio_service.runtime.metrics import Metrics
 
 logger = logging.getLogger("events")
@@ -136,18 +137,33 @@ class EventConsumer:
         self._sleep = sleep
         self._consumer: Any = None
         self._lag: dict[tuple[str, int], int] = {}
+        # Start the dead-letter counters at 0: a counter that first appears at 1 has no increase()
+        # for Prometheus, and the DeadLetterMessages alert would miss the first dead letter.
+        for topic in self.topics:
+            metrics.events_dead_lettered_total.labels(service, topic)
         self.caught_up_once = False  # every assigned partition reached its end at least once
 
     # ------------------------------------------------- one message (testable without Kafka)
 
     async def handle(self, delivery: Delivery) -> bool:
-        """Process one message. True if handled, False if it went to the dead-letter topic."""
+        """Process one message. True if handled, False if it went to the dead-letter topic.
+
+        While it runs, every log line carries the event's correlation ID (the one the gateway gave
+        the request that started it), and one `event handled` line records it: so a single Loki
+        query follows an order from the gateway through every service that reacted to it.
+        """
         try:
             event = EventEnvelope.from_json(delivery.value)
         except InvalidEventError as exc:
             await self._dead_letter(delivery, exc, attempts=1)
             return False
+        token = correlation_id_var.set(event.correlation_id)
+        try:
+            return await self._handle_event(event, delivery)
+        finally:
+            correlation_id_var.reset(token)
 
+    async def _handle_event(self, event: EventEnvelope, delivery: Delivery) -> bool:
         attempts = 0
         backoff = self._retry_delay
         while True:
@@ -174,6 +190,15 @@ class EventConsumer:
             self._metrics.events_consumed_total.labels(
                 self._service, delivery.topic, event.event_type
             ).inc()
+            logger.info(
+                "event handled",
+                extra={
+                    "topic": delivery.topic,
+                    "event_type": event.event_type,
+                    "event_id": event.event_id,
+                    "order_id": event.data.get("order_id"),
+                },
+            )
             return True
 
     def _count_error(self, delivery: Delivery) -> None:
@@ -195,6 +220,7 @@ class EventConsumer:
             extra={"topic": delivery.topic, "offset": delivery.offset, "error": body["error"]},
         )
         await self._dead_letters(f"{delivery.topic}.dlq", delivery.key, json.dumps(body).encode())
+        self._metrics.events_dead_lettered_total.labels(self._service, delivery.topic).inc()
 
     # ------------------------------------------------------------------ the Kafka loop
 

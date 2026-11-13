@@ -179,7 +179,7 @@ presenter passcode (A-04), and `make status` signs in with the local placeholder
 **Standard metrics** (all services, labelled `service`, plus `route`, `method`, `status` where relevant):
 `http_requests_total`, `http_request_duration_seconds` (histogram), `http_requests_in_flight`,
 `events_published_total{topic,event_type}`, `events_consumed_total{topic,event_type}`,
-`event_processing_errors_total`, `consumer_lag_messages{topic,partition}`, plus Python process metrics
+`event_processing_errors_total`, `events_dead_lettered_total{topic}`, `consumer_lag_messages{topic,partition}`, plus Python process metrics
 (`process_resident_memory_bytes`, CPU). These names are what the alert rules and the SRE agent's evidence collector
 query, so they must not change without updating [06-chaos-scenarios.md](03-architecture/06-chaos-scenarios.md).
 
@@ -258,7 +258,8 @@ if you enable the optional module. `make doctor` checks all of this.
 | `make logs s=<service>`, `make ps`, `make status` | Follow logs / container status / combined system status |
 | `make test s=order-service` | Unit, smoke and contract tests for one service (all if `s` is omitted) |
 | `make lint` / `make fmt` | ruff, mypy, redocly, template drift, eslint and prettier / auto-format |
-| `make platform` | *(Phase 5)* Terraform plan + apply of `infra/envs/local`: kind cluster, namespaces, RBAC, Secrets, Argo CD |
+| `make k8s-up` / `make k8s-down` / `make test-k8s` | The system on a local kind cluster with Prometheus, Grafana and Loki / stop it (data kept) / its smoke test ([developer setup §11](08-developer-setup.md#11-kubernetes-kind)) |
+| `make platform` | *(Phase 6)* Terraform plan + apply of `infra/envs/local`: kind cluster, namespaces, RBAC, Secrets, Argo CD |
 | `make sync env=staging` | Ask Argo CD to refresh and sync now (instead of waiting for its poll) |
 | `make promote s=<service>` | Open a PR copying the service's staging image tag to `deploy/envs/prod/` |
 

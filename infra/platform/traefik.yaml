@@ -1,0 +1,82 @@
+# Traefik, the ingress controller (ADR-0018): chart traefik/traefik 42.3.1 (Traefik v3.7.17), namespace traefik.
+# Installed by make k8s-up (scripts/k8s.py); Phase 6 installs it from Terraform with this same file.
+#
+# kind maps the laptop's ports onto the node (infra/kind/cluster.yaml); Traefik listens on them as host ports:
+#   80   prod      web + the public API (phones on the hotspot: http://<laptop LAN IP>/)
+#   8090 staging   the same for staging
+#   3000 grafana, 9090 prometheus   (laptop only: kind binds them to 127.0.0.1)
+# An Ingress picks its entry point with the annotation traefik.ingress.kubernetes.io/router.entrypoints.
+
+deployment:
+  replicas: 1
+nodeSelector:
+  ingress-ready: "true"
+tolerations:
+  - {key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}
+
+# Reached through the host ports, so no LoadBalancer.
+service:
+  spec:
+    type: ClusterIP
+
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+  name: traefik
+
+providers:
+  kubernetesIngress:
+    enabled: true
+  # No Traefik-specific CRDs are used (standard Ingress objects only).
+  kubernetesCRD:
+    enabled: false
+
+ports:
+  web:
+    port: 8000
+    hostPort: 80
+    exposedPort: 80
+    # WebSockets (market data, portfolio, replay, incidents) stay open for hours: no read or write deadline on the
+    # public entry points. The services ping every 15 s and close a silent socket after 45 s themselves.
+    transport: &longLived
+      respondingTimeouts:
+        readTimeout: 0
+        writeTimeout: 0
+        idleTimeout: 180s
+  websecure:
+    expose:
+      default: false
+  staging:
+    port: 8090
+    hostPort: 8090
+    exposedPort: 8090
+    protocol: TCP
+    expose:
+      default: true
+    transport: *longLived
+  grafana:
+    port: 3000
+    hostPort: 3000
+    exposedPort: 3000
+    protocol: TCP
+    expose:
+      default: true
+  prometheus:
+    port: 9090
+    hostPort: 9090
+    exposedPort: 9090
+    protocol: TCP
+    expose:
+      default: true
+
+# Access logs stay off: WebSocket URLs carry ?access_token= (the same reason nginx's are off in Compose).
+log:
+  level: INFO
+  format: json
+accessLog:
+  enabled: false
+
+# Measured idle: see docs/03-architecture/07-deployment-and-environments.md (RAM table).
+resources:
+  requests: {cpu: 50m, memory: 64Mi}
+  limits: {cpu: 500m, memory: 192Mi}

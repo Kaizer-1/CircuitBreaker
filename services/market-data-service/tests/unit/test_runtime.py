@@ -22,7 +22,7 @@ from market_data_service.runtime.events import (
     parse_timestamp,
 )
 from market_data_service.runtime.health import ReadinessCheck, health_router
-from market_data_service.runtime.jsonlog import configure_logging
+from market_data_service.runtime.jsonlog import configure_logging, correlation_id_var
 from market_data_service.runtime.kafka import (
     MAX_ATTEMPTS,
     Delivery,
@@ -250,13 +250,15 @@ async def _no_sleep(_: float) -> None:
     return None
 
 
-def _consumer(settings: Settings, handler: object, sink: _Sink) -> EventConsumer:
+def _consumer(
+    settings: Settings, handler: object, sink: _Sink, metrics: Metrics | None = None
+) -> EventConsumer:
     return EventConsumer(
         bootstrap_servers="unused:9092",
         topics=["things.v1"],
         group_id=f"{settings.service_name}.things.v1",
         service=settings.service_name,
-        metrics=Metrics(settings.service_name),
+        metrics=metrics or Metrics(settings.service_name),
         handler=handler,  # type: ignore[arg-type]
         dead_letters=sink,
         sleep=_no_sleep,
@@ -314,6 +316,27 @@ async def test_a_handled_message_is_not_dead_lettered(settings: Settings) -> Non
     assert sink.letters == []
 
 
+async def test_a_handled_event_is_logged_under_its_own_correlation_id(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # One Loki query by correlation ID follows an order through every service that reacts to it.
+    import logging
+
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        logging.getLogger("handler").info("inside the handler")
+
+    configure_logging(settings.service_name, "INFO")
+    event = _event()
+    assert await _consumer(settings, handler, _Sink()).handle(_delivery(event.to_json()))
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line[:1] == "{"]
+    inside = next(line for line in lines if line["message"] == "inside the handler")
+    handled = next(line for line in lines if line["message"] == "event handled")
+    assert inside["correlation_id"] == handled["correlation_id"] == "cid-ev"
+    assert handled["event_type"] == "SomethingHappened"
+    assert handled["event_id"] == event.event_id
+    assert correlation_id_var.get() is None  # restored afterwards: the next event gets its own
+
+
 async def test_a_message_failing_five_times_goes_to_the_dlq_with_the_error(
     settings: Settings,
 ) -> None:
@@ -324,9 +347,13 @@ async def test_a_message_failing_five_times_goes_to_the_dlq_with_the_error(
         calls += 1
         raise ValueError("bad data in the message")
 
-    sink = _Sink()
-    assert await _consumer(settings, handler, sink).handle(_delivery(_event().to_json())) is False
+    sink, metrics = _Sink(), Metrics(settings.service_name)
+    consumer = _consumer(settings, handler, sink, metrics)
+    dead = metrics.events_dead_lettered_total.labels(settings.service_name, "things.v1")
+    assert dead._value.get() == 0  # exported from the start, so the first one is an increase
+    assert await consumer.handle(_delivery(_event().to_json())) is False
     assert calls == MAX_ATTEMPTS
+    assert dead._value.get() == 1  # what the DeadLetterMessages alert watches
     [(topic, key, body)] = sink.letters
     assert topic == "things.v1.dlq"
     assert key == b"KEY"

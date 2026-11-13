@@ -1,7 +1,9 @@
 # 0015 — Terraform for the Local Platform; LocalStack Optional
 
 - **Status:** Accepted — amends [ADR-0010](0010-terraform-localstack.md) (Terraform stays; its main target moves
-  from LocalStack to the local Kubernetes platform)
+  from LocalStack to the local Kubernetes platform). **Amended 2026-11-13 (owner's decision, Phase 5):** the cluster
+  has **one node**, not a control plane and two workers, and the Terraform modules arrive in **Phase 6**; Phase 5
+  creates the same cluster from `infra/kind/cluster.yaml` with `make k8s-up` (details below)
 - **Date:** 2026-11-03
 - **Deciders:** Mohammad Oweis (owner, Cloud Platform Team), Kaizer Dewaswala, MD Asif Ali
 
@@ -31,7 +33,7 @@ matter most for running our services.
 ```text
 infra/
 ├── modules/
-│   ├── kind-cluster/   # kind provider: the 'circuitbreaker' cluster (control plane + 2 workers)
+│   ├── kind-cluster/   # kind provider: the 'circuitbreaker' cluster (one node; settings of infra/kind/cluster.yaml)
 │   ├── environment/    # kubernetes provider: one namespace with its ResourceQuota, the sre-agent Role/RoleBinding, Secrets
 │   ├── argo-cd/        # helm provider: the argo-cd chart into namespace 'argocd', plus the ApplicationSet (ADR-0014)
 │   └── localstack/     # OPTIONAL: aws provider pointed at LocalStack (S3 event-archive bucket)
@@ -67,6 +69,17 @@ infra/
 | GitHub Actions infrastructure pipeline (Ch. 6) | GitHub Actions: fmt/validate on PRs, and a create–check–destroy test of `envs/local` in a runner | The laptop cluster can't be reached from GitHub, so the real apply runs locally with `make platform`. |
 | AWS IAM roles for the cluster and nodes | Kubernetes RBAC (e.g. the `sre-agent` Role) | Least privilege inside the cluster. |
 
+### Amendment (2026-11-13): one node, and Terraform in Phase 6
+
+- **One node.** Measured in Phase 5: every extra kind node costs about 280 MiB (kubelet, containerd, networking, one
+  log-collector pod) plus another copy of every image, and on one laptop it adds no real resilience, because all
+  nodes are containers in the same Docker VM. No chaos scenario needs a second node. The control plane also runs
+  the workloads.
+- **Terraform in Phase 6.** Phase 5 creates the cluster with `make k8s-up` (`scripts/k8s.py`, from
+  `infra/kind/cluster.yaml`) and the Secrets from the local placeholders. Phase 6's `kind-cluster` and `environment`
+  modules take over with the same settings, plus the namespaces' ResourceQuotas and the agent's RBAC, as
+  `make platform`.
+
 ## Alternatives considered
 
 | Alternative | Why rejected |
@@ -90,6 +103,10 @@ infra/
 - ❌ Fewer "cloud" resources to show. The optional LocalStack module can still demonstrate them.
 
 ## Viva Notes
+
+**Q: Why one kind node and not three?**
+A: Each extra node cost about 280 MiB and another copy of every image, and all nodes run in the same Docker VM on one
+laptop, so they add no real resilience. None of our scenarios needs a second node.
 
 **Q: What does your Terraform create?**
 A: The kind cluster, the `staging` and `prod` namespaces with quotas, the agent's RBAC and the Secrets, and Argo CD.

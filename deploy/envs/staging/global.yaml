@@ -1,0 +1,5 @@
+# Settings for every service in staging (releases are tested here first; chaos rehearsals).
+# make k8s-up env=staging passes this file and the per-service files next to it to the umbrella chart.
+global:
+  environment: staging
+  ingressEntryPoint: staging # http://<laptop>:8090/

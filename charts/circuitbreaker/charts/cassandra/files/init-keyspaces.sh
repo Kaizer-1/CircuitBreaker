@@ -1,0 +1,1 @@
+../../../../../dev/cassandra/init-keyspaces.sh

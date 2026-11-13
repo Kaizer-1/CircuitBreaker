@@ -1,0 +1,161 @@
+# Prometheus + Grafana (ADR-0008, ADR-0018): chart prometheus-community/kube-prometheus-stack 92.22.0 (Prometheus
+# Operator v0.94.2), namespace observability. Installed by make k8s-up; Phase 6 installs it from Terraform.
+#
+# Sized for a laptop (the RAM budget in docs/03-architecture/07-deployment-and-environments.md): only the parts the
+# dashboards, the alert rules and the Phase 7 SRE agent use. Our own dashboards and alert rules live in
+# observability/ and are installed by the in-repo chart charts/observability.
+
+# Alertmanager: off. The SRE agent polls Prometheus for firing alerts itself (SRE agent design section 1).
+alertmanager:
+  enabled: false
+
+# node-exporter: off. One kind node on a laptop; per-container CPU and memory come from the kubelet (cAdvisor).
+nodeExporter:
+  enabled: false
+
+# Control-plane scrapes: off (apiserver alone is ~10,000 series of histograms nobody here reads).
+kubeApiServer:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+coreDns:
+  enabled: false
+
+# The chart's ~150 general-purpose recording and alert rules: off. Ours are in observability/alerts/.
+defaultRules:
+  create: false
+
+# The kubelet's cAdvisor: per-container CPU, memory and limits. Keep only the series our dashboards and alerts use.
+kubelet:
+  enabled: true
+  serviceMonitor:
+    interval: 10s
+    probes: false
+    resource: false
+    cAdvisorMetricRelabelings:
+      - sourceLabels: [__name__]
+        action: keep
+        regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_spec_memory_limit_bytes|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total|container_oom_events_total
+      # Pod-level and pause-container series duplicate the per-container ones.
+      - sourceLabels: [container]
+        action: drop
+        regex: (|POD)
+    metricRelabelings:
+      - sourceLabels: [__name__]
+        action: keep
+        regex: kubelet_running_pods|kubelet_volume_stats_used_bytes|kubelet_volume_stats_capacity_bytes
+
+# kube-state-metrics: restarts, readiness, replicas (desired vs ready), limits.
+kubeStateMetrics:
+  enabled: true
+kube-state-metrics:
+  collectors: [pods, deployments, statefulsets, replicasets, jobs]
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 96Mi}
+
+prometheusOperator:
+  # The validating webhook needs a certificate Job and a cert-manager-like dance; the rules are checked in CI
+  # (promtool) instead.
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
+  resources:
+    requests: {cpu: 20m, memory: 48Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+
+prometheus:
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: prometheus # http://localhost:9090
+    hosts: []
+    paths: [/]
+    pathType: Prefix
+  prometheusSpec:
+    # Every alert must fire within ~30 s of its condition (chaos scenarios section 5): 10 s scrapes and 10 s rule
+    # evaluation, so a 20-30 s `for` adds up to about half a minute.
+    scrapeInterval: 10s
+    evaluationInterval: 10s
+    retention: 12h
+    retentionSize: 1GB
+    # Pick up every ServiceMonitor and PrometheusRule in the cluster, not only ones labelled for this release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: 1000m, memory: 768Mi}
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests: {storage: 2Gi}
+
+grafana:
+  enabled: true
+  # The chart's ~30 Kubernetes dashboards: off. Ours: observability/dashboards/.
+  defaultDashboardsEnabled: false
+  # The admin login comes from a Secret (make k8s-up: the local placeholder; Phase 6: Terraform).
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  # The projector and anyone on the laptop can look without signing in; changing anything needs the admin login.
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+    analytics:
+      reporting_enabled: false
+      check_for_updates: false
+    news:
+      news_feed_enabled: false
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: grafana # http://localhost:3000
+    hosts: []
+    path: /
+  persistence:
+    enabled: false # everything it shows is provisioned from Git
+  testFramework:
+    enabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: observability
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+    datasources:
+      enabled: true
+      # Stable uids, so the dashboards in Git can name their data sources.
+      defaultDatasourceEnabled: true
+      uid: prometheus
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      access: proxy
+      url: http://loki.observability.svc:3100
+      jsonData:
+        maxLines: 1000
+  # Grafana 13 was OOM-killed at 256 MiB while running its first-start database migrations.
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {cpu: 500m, memory: 512Mi}

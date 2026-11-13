@@ -20,6 +20,7 @@ from __future__ import annotations
 import sys
 
 from stack import (
+    GATEWAY,
     ApiError,
     Trader,
     bot,
@@ -65,7 +66,7 @@ def show_portfolio(who: str, trader: Trader) -> None:
 
 
 def main() -> int:
-    heading("CircuitBreaker — demo trade (everything through the public API on :8080)")
+    heading(f"CircuitBreaker — demo trade (everything through the public API at {GATEWAY})")
     wait_until_ready()
     start_sequence = live_book(TICKER)["sequence"]
 

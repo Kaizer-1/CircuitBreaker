@@ -13,6 +13,7 @@ from order_service.ports.portfolio import (
     ReservationRefusedError,
     ReservationResult,
 )
+from order_service.runtime.jsonlog import correlation_id_var
 
 REFUSALS = {
     "INSUFFICIENT_FUNDS": RejectionReason.INSUFFICIENT_FUNDS,
@@ -41,6 +42,8 @@ class HttpPortfolio:
             self._breaker.before_call()
         except CircuitOpenError as exc:
             raise DependencyUnavailableError("portfolio-service circuit breaker is open") from exc
+        # The caller's correlation ID, so portfolio-service logs the reservation under it too.
+        correlation_id = correlation_id_var.get()
         try:
             response = await self._client.post(
                 self._url,
@@ -53,6 +56,7 @@ class HttpPortfolio:
                     "quantity": request.quantity,
                     "limit_price_paise": request.limit_price_paise,
                 },
+                headers={"X-Correlation-Id": correlation_id} if correlation_id else None,
                 timeout=self._timeout,
             )
         except httpx.HTTPError as exc:

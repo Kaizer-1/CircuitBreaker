@@ -14,6 +14,7 @@ from order_service.config import Settings
 from order_service.domain.order import OrderRequest, OrderType, RejectionReason, Side
 from order_service.main import create_app
 from order_service.ports.portfolio import DependencyUnavailableError, ReservationRefusedError
+from order_service.runtime.jsonlog import correlation_id_var
 from order_service.runtime.metrics import Metrics
 
 REQUEST = OrderRequest("CHAIWALA", Side.BUY, OrderType.LIMIT, 50, 24600)
@@ -55,6 +56,24 @@ async def test_a_reservation_returns_its_id_and_protection_price() -> None:
         "limit_price_paise": 24600,
     }
     assert breaker.state is BreakerState.CLOSED
+
+
+async def test_a_reservation_carries_the_callers_correlation_id() -> None:
+    # portfolio-service logs the reservation under the same ID as the order (one Loki query).
+    headers: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        headers.append(request.headers.get("X-Correlation-Id"))
+        return httpx.Response(201, json={"reservation_id": "r-1", "protection_price_paise": None})
+
+    portfolio, _, _ = client(httpx.MockTransport(handler))
+    token = correlation_id_var.set("cid-order-1")
+    try:
+        await portfolio.reserve(ORDER, RAJU, REQUEST)
+    finally:
+        correlation_id_var.reset(token)
+    await portfolio.reserve(ORDER, RAJU, REQUEST)  # no request in progress: no header at all
+    assert headers == ["cid-order-1", None]
 
 
 @pytest.mark.parametrize(

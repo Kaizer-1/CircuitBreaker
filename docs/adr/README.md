@@ -23,6 +23,7 @@
 | [0015](0015-terraform-local-platform.md) | Terraform for the local platform; LocalStack optional | Accepted |
 | [0016](0016-rollback-reconciles-through-git.md) | Rollback mitigates in the cluster, then reconciles through Git | Accepted |
 | [0017](0017-fail-closed-orphan-release.md) | Fail-closed release of orphaned reservations | Accepted |
+| [0018](0018-kubernetes-platform-components.md) | Kubernetes platform components: Traefik, in-repo data stores, kube-prometheus-stack, community Loki, Alloy | Accepted |
 
 **Template:** `# NNNN — Title` · Status · Date · Deciders · Context · Decision · Alternatives considered ·
 Consequences (positive / negative) · Viva Notes.

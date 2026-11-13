@@ -1,0 +1,22 @@
+apiVersion: v2
+name: circuitbreaker
+description: >-
+  The umbrella chart: the whole CircuitBreaker system as one versioned package. One generic `service` sub-chart,
+  included once per service (alias = service name), plus minimal in-repo data stores (ADR-0018). make k8s-up installs
+  it into a namespace (prod or staging); from Phase 6 Argo CD renders it once per service with global.only (ADR-0014).
+type: application
+version: 0.5.0
+appVersion: "0.5.0"
+dependencies:
+  - {name: service, version: 0.5.0, alias: api-gateway}
+  - {name: service, version: 0.5.0, alias: order-service}
+  - {name: service, version: 0.5.0, alias: matching-engine}
+  - {name: service, version: 0.5.0, alias: market-data-service}
+  - {name: service, version: 0.5.0, alias: portfolio-service}
+  - {name: service, version: 0.5.0, alias: bot-traders}
+  - {name: service, version: 0.5.0, alias: sre-agent}
+  - {name: service, version: 0.5.0, alias: chaos-service}
+  - {name: service, version: 0.5.0, alias: web}
+  - {name: redpanda, version: 0.5.0}
+  - {name: cassandra, version: 0.5.0}
+  - {name: postgres, version: 0.5.0}

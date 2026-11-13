@@ -10,7 +10,7 @@
    be published is REJECTED within 60 s; its money, and the money of a reservation whose order was
    never stored, stays reserved while the engine cannot answer, and is released only after it
    does; a late copy of an expired order is refused.
-4. Phase 3: the 20 bots trade for 60 s (make bots): candles for all 5 tickers, the book never
+4. Phase 3: the 20 bots trade for 120 s (make bots): candles for all 5 tickers, the book never
    crossed, no refused bot order, no 5xx, the trade-rate floor, a two-sided book and every price
    within ±10% of its reference. The bots keep trading through the Phase 4 checks below.
 5. Phase 4, time travel (docs/03-architecture/04-event-sourcing-and-cqrs.md §5): the live engine
@@ -23,7 +23,7 @@
 6. Phase 4: no trader a test made is ever ranked on the leaderboard (Q-11), and A-01 refuses a
    nickname on the blocklist without opening an account.
 
-Takes about 6 minutes (the orphan rule waits for real 60 s and 120 s timers; the bots run 60 s,
+Takes about 7 minutes (the orphan rule waits for real 60 s and 120 s timers; the bots run 120 s,
 then on through the time-travel checks).
 """
 
@@ -332,12 +332,14 @@ def start_bots() -> None:
 
 
 def test_bots_keep_a_sound_market() -> None:
-    """Phase 3: with the 20 bots trading for 60 s, every ticker has 5s candles with trades, the
+    """Phase 3: with the 20 bots trading for 120 s, every ticker has 5s candles with trades, the
     book is never crossed (engine and market-data), no bot order is refused, no 5xx answers,
-    and every price stays within ±10% of its reference (Phase 4)."""
+    and every price stays within ±10% of its reference (Phase 4). 120 s, not 60: from a cold
+    start a 60 s sample of the averages landed just past a threshold in 2 of 3 CI runs (trades
+    3.2/min against 5; one maker side 3.4 quotes against 3.5) while the market was sound."""
     start_bots()
     check = subprocess.run(  # noqa: S603
-        [sys.executable, str(ROOT / "scripts" / "bots_check.py"), "60"], cwd=ROOT, check=False
+        [sys.executable, str(ROOT / "scripts" / "bots_check.py"), "120"], cwd=ROOT, check=False
     )
     assert check.returncode == 0, "the market was not sound with the bots running"
 

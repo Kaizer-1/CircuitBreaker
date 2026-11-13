@@ -69,9 +69,9 @@ minutes for Argo CD's polling in front of a panel is a poor use of the time.
 
 **Signals:**
 ```promql
-# 5xx ratio for order-service, alert if above 5% for 1 minute
-sum(rate(http_requests_total{service="order-service",status=~"5.."}[1m]))
-  / sum(rate(http_requests_total{service="order-service"}[1m])) > 0.05
+# 5xx ratio for order-service, alert if above 5% for 20 s (observability/alerts/services.yaml)
+sum(rate(http_requests_total{service="order-service",status=~"5..",route!~"/healthz|/readyz|/metrics"}[30s]))
+  / sum(rate(http_requests_total{service="order-service",route!~"/healthz|/readyz|/metrics"}[30s])) > 0.05
 ```
 plus deploy history showing revision 8 created ~40 s before errors started.
 
@@ -92,11 +92,11 @@ chaos-service (network policy).
 
 **Signals:**
 ```promql
-# Memory above 70% of the limit and still climbing
+# Memory above 70% of the limit and still climbing (observability/alerts/services.yaml)
 (container_memory_working_set_bytes{container="market-data-service"}
   / container_spec_memory_limit_bytes{container="market-data-service"} > 0.7)
 and
-(deriv(container_memory_working_set_bytes{container="market-data-service"}[5m]) > 0)
+(deriv(container_memory_working_set_bytes{container="market-data-service"}[2m]) > 0)
 ```
 plus deploy history showing **no** recent revision and request rate at baseline.
 
@@ -129,8 +129,8 @@ beyond that — so more pods really do mean more capacity, even on one laptop.
 
 **Signals:**
 ```promql
-# p95 latency above 500 ms for 1 minute
-histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service="order-service"}[1m]))) > 0.5
+# p95 latency above 500 ms for 30 s (observability/alerts/services.yaml)
+histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service="order-service"}[30s]))) > 0.5
 ```
 plus request rate far above the previous hour's baseline, CPU near the limit, no recent deploy, normal memory.
 
@@ -158,17 +158,37 @@ started/ended times, `time_to_detect_seconds`, `time_to_recover_seconds`, the ag
 
 ## 5. Alert rules (Prometheus) used by the agent
 
-| Alert | Service | Expression (summary) | `for` | Severity | Label `remediable` |
-|---|---|---|---|---|---|
-| `OrderServiceHighErrorRate` | order-service | 5xx ratio > 5% | 1m | critical | true |
-| `OrderServiceHighLatency` | order-service | p95 > 500 ms | 1m | critical | true |
-| `OrderServiceOverProvisioned` | order-service | CPU < 20% and replicas > 2 | 10m | warning | true |
-| `MarketDataMemoryGrowth` | market-data-service | memory > 70% of limit and rising | 2m | critical | true |
-| `GatewayHighErrorRate` | api-gateway | 5xx ratio > 5% | 1m | critical | true |
-| `PortfolioHighErrorRate` | portfolio-service | 5xx ratio > 5% | 1m | critical | true |
-| `PodCrashLooping` | any app service | restarts > 3 in 5m | 0m | critical | true |
-| `ConsumerLagHigh` | any consumer | lag > 1000 for 2m | 2m | warning | false (informational) |
-| `DeadLetterMessages` | any | messages in any `.dlq` topic | 0m | warning | false |
+The rules are code in `observability/alerts/` (installed as PrometheusRule objects), with unit tests in
+`observability/tests/` run by `make test-alerts` and CI ([deployment §3](07-deployment-and-environments.md)).
+
+**Timing.** Prometheus scrapes every service and evaluates the rules every **10 s**; rates use **30 s** windows and
+`for` is **20–30 s**, so an alert fires about **30 s after its condition starts** (owner's decision, 2026-11-13). The
+error-ratio rules also need traffic (more than 0.5 requests/s), so a single failed request on an idle service is
+never "100% errors"; health, readiness and metrics requests are left out. Measured with real triggers on the
+Kubernetes deployment (`make k8s-check c=alerts`, Phase 5):
+
+| Alert | Service | Expression (summary) | `for` | Severity | Label `remediable` | Fired after its trigger (Phase 5) |
+|---|---|---|---|---|---|---|
+| `OrderServiceHighErrorRate` | order-service | 5xx ratio > 5% | 20s | critical | true | 35 s (order-service loses write access to one table) |
+| `OrderServiceHighLatency` | order-service | p95 > 500 ms | 30s | critical | true | 37 s (200 orders/s at 2 replicas) |
+| `OrderServiceOverProvisioned` | order-service | CPU < 20% of its limit and replicas > 2 | 10m | warning | true | 611 s (4 replicas, only the bots): slow by design, so a short lull never scales a busy service down |
+| `OrderServiceCircuitOpen` | order-service | the breaker to portfolio-service is open (or was in the last 30 s) | 0s | critical | **false** | 20 s (portfolio-service scaled to 0) |
+| `MarketDataMemoryGrowth` | market-data-service | memory > 70% of the limit and rising (`deriv` over 2 minutes) | 30s | critical | true | 36 s after crossing 70% |
+| `GatewayHighErrorRate` | api-gateway | 5xx ratio > 5% | 20s | critical | true | 61 s (portfolio-service down) |
+| `PortfolioHighErrorRate` | portfolio-service | 5xx ratio > 5% | 20s | critical | true | 48 s (a revoked INSERT; still "ready") |
+| `PodCrashLooping` | any app service | restarts > 3 in 5m | 0m | critical | true | at the 4th restart |
+| `ConsumerLagHigh` | any consumer | lag > 1,000: the consumer's own gauge **or** the broker's lag for its group | 30s | warning | false (informational) | 38 s after passing 1,000 (matching-engine stopped) |
+| `DeadLetterMessages` | any | a message sent to any `.dlq` topic (`events_dead_lettered_total`) | 0m | warning | false | 13 s |
+
+- **`OrderServiceCircuitOpen` is information, not a call to act.** An open breaker means portfolio-service is failing
+  and order-service is doing the right thing (failing fast with 503). Restarting, scaling or rolling back
+  order-service would not help, so the agent escalates (see the [SRE agent design](05-sre-agent-design.md)).
+- **Data stores never trigger the agent.** `MarketDataMemoryGrowth` covers the stateless market-data-service only:
+  Cassandra's JVM holds about 70% of its memory limit all the time by design, which is not a leak. `PodCrashLooping`
+  leaves out Cassandra, Postgres, Redpanda and init jobs. A test proves the data stores at 75% of their limit and
+  rising (and Cassandra restarting) fire nothing.
+- **Lag from two places.** A stopped consumer cannot report its own lag, so `ConsumerLagHigh` also reads Redpanda's
+  own measurement of each consumer group (`redpanda_kafka_consumer_group_lag_max`, recomputed every 10 s).
 
 The same alerts work for faults we did *not* script: the agent is not hard-coded to three scenarios.
 

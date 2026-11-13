@@ -167,6 +167,11 @@ def create_app(
     app.state.time_travel = None
     app.state.rebuild_slots = Slots(settings.rebuild_slots, settings.admin_reserved_slots)
     app.state.replay_slots = Slots(settings.replay_slots, settings.admin_reserved_slots)
+    # Read at scrape time from the slots themselves: every path that takes or frees a place counts.
+    active = business_metrics.time_travel_active
+    replays, rebuilds = app.state.replay_slots, app.state.rebuild_slots
+    active.labels(settings.service_name, "replay").set_function(lambda: replays.in_use)
+    active.labels(settings.service_name, "rebuild").set_function(lambda: rebuilds.in_use)
     if readiness_checks is None:
         checks.append(projection_check(app))
 

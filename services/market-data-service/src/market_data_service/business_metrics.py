@@ -10,6 +10,7 @@ class BusinessMetrics:
     market_ws_connections: Gauge
     candles_closed_total: Counter
     projection_gaps_filled_total: Counter
+    time_travel_active: Gauge
 
 
 def register_business_metrics(registry: CollectorRegistry) -> BusinessMetrics:
@@ -30,6 +31,12 @@ def register_business_metrics(registry: CollectorRegistry) -> BusinessMetrics:
             "projection_gaps_filled_total",
             "Times a gap in matching.v1 was filled from the event store.",
             ["service"],
+            registry=registry,
+        ),
+        time_travel_active=Gauge(
+            "time_travel_active",
+            "Time-travel work running on this replica: replay (Q-13 streams) or rebuild (Q-12).",
+            ["service", "kind"],
             registry=registry,
         ),
     )

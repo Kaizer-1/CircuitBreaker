@@ -1,0 +1,96 @@
+# Grafana Alloy, the log collector (ADR-0008, ADR-0018): chart grafana/alloy 1.15.0 (Alloy v1.21.3), namespace
+# observability. Alloy replaces Promtail, which is deprecated. Installed by make k8s-up; Phase 6: Terraform.
+#
+# It reads the pods' log files on the node (/var/log/pods, mounted read-only) and ships them to Loki with four
+# LOW-CARDINALITY labels: namespace, app, container, level. Loki builds one stream per label combination, so a
+# label with a value per order or per pod would explode the index; instead:
+#   - correlation_id becomes structured metadata (stored with each line, filterable, not indexed):
+#       {namespace="prod"} | correlation_id="<id>"
+#   - everything else in our JSON lines (order_id, trader_id, ...) is parsed at query time: | json | order_id="..."
+
+controller:
+  type: daemonset # one per node; we have one node
+
+alloy:
+  # Logs only: no metrics pipelines (Prometheus scrapes the services itself), no clustering.
+  clustering:
+    enabled: false
+  # Reading the node's log files, not tailing through the Kubernetes API: streaming every pod's logs through
+  # the API server more than doubled its memory (326 -> 842 MiB, measured).
+  mounts:
+    varlog: true
+    dockercontainers: false
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  configMap:
+    content: |
+      // Our pods (both environments) and the ingress controller.
+      discovery.kubernetes "pods" {
+        role = "pod"
+        namespaces {
+          names = ["prod", "staging", "traefik"]
+        }
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          target_label  = "app"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        // Where the kubelet writes this container's log: /var/log/pods/<ns>_<pod>_<uid>/<container>/N.log
+        rule {
+          source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+          separator     = "/"
+          target_label  = "__path__"
+          replacement   = "/var/log/pods/*$1/*.log"
+        }
+      }
+
+      local.file_match "pods" {
+        path_targets = discovery.relabel.pods.output
+      }
+
+      loki.source.file "pods" {
+        targets    = local.file_match.pods.targets
+        forward_to = [loki.process.json.receiver]
+      }
+
+      // The kubelet's files are in CRI format (time, stream, flags, line); our services' lines are one JSON
+      // object each (coding standards section 8).
+      loki.process "json" {
+        stage.cri {}
+        stage.json {
+          expressions = { level = "level", correlation_id = "correlation_id" }
+        }
+        stage.labels {
+          values = { level = "" }
+        }
+        stage.structured_metadata {
+          values = { correlation_id = "" }
+        }
+        // Not wanted as labels: filename (one value per pod) and the CRI stream (stdout or stderr).
+        stage.label_drop {
+          values = ["filename", "stream", "job", "instance"]
+        }
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.observability.svc:3100/loki/api/v1/push"
+        }
+      }
+
+# No Prometheus Operator objects or config-reloader extras needed beyond the defaults.
+serviceMonitor:
+  enabled: false

@@ -1,0 +1,14 @@
+image: cassandra:5.0.9 # the Compose image (Docker official image, Apache License 2.0)
+storage: 4Gi
+# App names allowed to connect (CQL 9042).
+allowFrom: []
+# The four keyspaces that have an owner and a login (dev/cassandra/init-keyspaces.sh), each with its owner's Secret.
+roles:
+  ORDER_SERVICE: order-service-db
+  MATCHING_ENGINE: matching-engine-db
+  MARKET_DATA: market-data-service-db
+  SRE_AGENT: sre-agent-db
+resources:
+  # 512 MB heap + off-heap. Measured in Compose under the bots: 1.62 GiB.
+  requests: {cpu: 250m, memory: 1536Mi}
+  limits: {cpu: 2000m, memory: 2Gi}

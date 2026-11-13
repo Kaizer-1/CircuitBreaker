@@ -1,0 +1,79 @@
+# Loki, the log store (ADR-0008, ADR-0018): chart grafana-community/loki 20.4.1 (Loki 3.7.9), namespace
+# observability. Since March 2026 the open-source chart lives in grafana-community; grafana/loki is for Grafana
+# Enterprise Logs only. Installed by make k8s-up; Phase 6 installs it from Terraform.
+#
+# One process (Monolithic mode) storing to its own disk: up to a few tens of GB/day, far more than we produce.
+# Loki indexes only labels, not the text: Alloy sends four low-cardinality labels (namespace, app, container,
+# level). correlation_id, order_id and trader_id stay inside the JSON line and are filtered at query time
+# (| json | correlation_id="..."), so one order is followed across services without a label per order.
+
+deploymentMode: Monolithic
+
+loki:
+  auth_enabled: false # one tenant; Grafana is the only client
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2026-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    retention_period: 24h # logs are for the demo day and debugging, not an archive
+    allow_structured_metadata: true
+    max_query_lookback: 24h
+    # Loki 3 would add a service_name label of its own; app already says which service.
+    discover_service_name: []
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+  pattern_ingester:
+    enabled: false
+  ui:
+    enabled: false
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 2Gi
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 1000m, memory: 384Mi}
+
+# The scalable modes' components: none.
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+# Laptop cuts: no nginx gateway (Grafana and Alloy talk to Loki's own service), no memcached caches (the chart's
+# defaults reserve gigabytes), no canary, no Helm test, no self-monitoring stack.
+gateway:
+  enabled: false
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+sidecar:
+  rules:
+    enabled: false
+monitoring:
+  dashboards:
+    enabled: false
+  rules:
+    enabled: false
+  serviceMonitor:
+    enabled: false

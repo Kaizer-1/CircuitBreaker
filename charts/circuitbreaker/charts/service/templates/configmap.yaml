@@ -1,0 +1,13 @@
+{{- if include "service.enabled" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "service.name" . }}
+  labels:
+    {{- include "service.labels" . | nindent 4 }}
+data:
+  ENVIRONMENT: {{ .Values.global.environment | quote }}
+  {{- range $name, $value := .Values.env }}
+  {{ $name }}: {{ tpl (toString $value) $ | quote }}
+  {{- end }}
+{{- end }}

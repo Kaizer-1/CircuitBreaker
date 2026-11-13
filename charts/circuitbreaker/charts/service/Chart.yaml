@@ -1,0 +1,7 @@
+apiVersion: v2
+name: service
+description: >-
+  The one generic sub-chart every CircuitBreaker service uses (Deployment, Service, ServiceAccount, ConfigMap,
+  NetworkPolicy, ServiceMonitor). The umbrella chart includes it once per service under an alias.
+type: application
+version: 0.5.0

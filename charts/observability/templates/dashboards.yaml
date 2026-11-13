@@ -1,0 +1,15 @@
+{{- /* One ConfigMap per dashboard file; Grafana's sidecar loads every ConfigMap labelled grafana_dashboard=1. */}}
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-{{ base $path | trimSuffix ".json" }}
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: circuitbreaker
+  annotations:
+    grafana_folder: CircuitBreaker
+data:
+  {{ base $path }}: {{ $.Files.Get $path | quote }}
+{{- end }}

@@ -1,0 +1,192 @@
+# Shared defaults for every environment. deploy/envs/<env>/*.yaml override them (make k8s-up passes those files).
+# Settings mirror docker-compose.yml, so a service runs the same way in both; the differences are listed in
+# docs/03-architecture/07-deployment-and-environments.md section 3.
+
+global:
+  # prod or staging; also the namespace (deploy/envs/<env>/global.yaml).
+  environment: prod
+  # Phase 6: one Argo CD Application per service renders this chart with global.only=<service> (ADR-0014).
+  # Empty = render everything (make k8s-up, CI).
+  only: ""
+  # The release name in the change-cause annotation: "release 0.5.0 (<image tag>)".
+  release: "0.5.0"
+  image:
+    registry: localhost:5001 # the local registry (make k8s-images); Phase 6: GHCR
+    tag: "" # set by make k8s-up from the images it built
+  ingressNamespace: traefik
+  # Traefik entry point (= host port) of this environment: web (80) for prod, staging (8090) for staging.
+  ingressEntryPoint: web
+  observabilityNamespace: observability
+  # Where phones reach the app; the join QR code encodes <publicBaseUrl>/join. make k8s-up sets it from
+  # PUBLIC_BASE_URL (docs/08-developer-setup.md section 10).
+  publicBaseUrl: http://localhost
+  # The Secrets are created outside the chart (make k8s-up from the local placeholders; Phase 6 Terraform).
+  secrets:
+    jwt: jwt-secret
+    bot: bot-secret
+    adminPasscode: admin-passcode
+    cassandraAdmin: cassandra-admin
+    postgresAdmin: postgres-admin
+
+# --------------------------------------------------------------------------- the 8 services + web
+# Replicas are the container inventory's defaults (docs/03-architecture/01-system-architecture.md). Resources:
+# request 96 MiB, limit 256 MiB (measured use under the bots: 45-75 MiB); market-data 512 MiB for the leak scenario.
+
+api-gateway:
+  replicas: 2
+  env:
+    LOG_LEVEL: INFO
+    SERVICE_UPSTREAMS: >-
+      {"order-service":"http://order-service:8000","matching-engine":"http://matching-engine:8000",
+      "market-data-service":"http://market-data-service:8000","portfolio-service":"http://portfolio-service:8000",
+      "bot-traders":"http://bot-traders:8000","sre-agent":"http://sre-agent:8000","chaos-service":"http://chaos-service:8000"}
+  secretEnv:
+    JWT_SECRET: {secret: jwt-secret, key: value}
+    BOT_SECRET: {secret: bot-secret, key: value}
+    ADMIN_PASSCODE: {secret: admin-passcode, key: value}
+  # Every request (phones, bots, load) passes through the gateway: 2 cores each, so the front door is never
+  # the bottleneck the order-service capacity check (and Phase 7's traffic spike) is about. Measured: at
+  # 1 core it saturated before order-service did.
+  resources:
+    requests: {cpu: 100m, memory: 96Mi}
+    limits: {cpu: 2000m, memory: 256Mi}
+  networkPolicy:
+    allowIngressController: true # the public API
+    allowFrom: [bot-traders, chaos-service] # bots use the public API; chaos-service's load burst (Phase 7)
+
+order-service:
+  replicas: 2
+  env:
+    LOG_LEVEL: INFO
+    KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    CASSANDRA_CONTACT_POINTS: cassandra
+    CASSANDRA_KEYSPACE: order_service
+    CASSANDRA_USERNAME: order_service_role
+    PORTFOLIO_URL: http://portfolio-service:8000 # A-06, the synchronous reservation (ADR-0011)
+  secretEnv:
+    CASSANDRA_PASSWORD: {secret: order-service-db, key: password}
+  # Half a core per pod: one replica saturates at a load the laptop can produce, so adding replicas visibly
+  # adds capacity (the scale check now, the SRE agent's scale_deployment in Phase 7). Bots alone use < 0.1.
+  resources:
+    requests: {cpu: 100m, memory: 96Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  networkPolicy:
+    allowFrom: [api-gateway, portfolio-service] # portfolio: A-19 expiry requests (ADR-0017)
+
+matching-engine:
+  replicas: 1 # single writer per ticker: never more
+  strategy: Recreate
+  env:
+    LOG_LEVEL: INFO
+    KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    CASSANDRA_CONTACT_POINTS: cassandra
+    CASSANDRA_KEYSPACE: matching_engine
+    CASSANDRA_USERNAME: matching_engine_role
+  secretEnv:
+    CASSANDRA_PASSWORD: {secret: matching-engine-db, key: password}
+  networkPolicy:
+    allowFrom: [api-gateway, market-data-service] # market-data: Q-14/Q-15/Q-16
+
+market-data-service:
+  replicas: 1
+  env:
+    LOG_LEVEL: INFO
+    KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    CASSANDRA_CONTACT_POINTS: cassandra
+    CASSANDRA_KEYSPACE: market_data
+    CASSANDRA_USERNAME: market_data_role
+    MATCHING_ENGINE_URL: http://matching-engine:8000
+  secretEnv:
+    CASSANDRA_PASSWORD: {secret: market-data-service-db, key: password}
+  resources:
+    requests: {cpu: 100m, memory: 96Mi}
+    # The memory-leak scenario (chaos scenarios section 3.2) grows toward this limit at 40 MB/min.
+    limits: {cpu: 1000m, memory: 512Mi}
+  networkPolicy:
+    allowFrom: [api-gateway, chaos-service] # chaos-service: A-12/A-13 faults (Phase 7)
+
+portfolio-service:
+  replicas: 2
+  env:
+    LOG_LEVEL: INFO
+    KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    POSTGRES_HOST: postgres
+    POSTGRES_DB: portfolio
+    POSTGRES_USER: portfolio_service
+    ORDER_SERVICE_URL: http://order-service:8000 # A-19, the fail-closed orphan sweeper (ADR-0017)
+  secretEnv:
+    POSTGRES_PASSWORD: {secret: portfolio-service-db, key: password}
+  networkPolicy:
+    allowFrom: [api-gateway, order-service] # order-service: A-06 reservations
+
+bot-traders:
+  replicas: 1 # one copy of each bot
+  strategy: Recreate
+  env:
+    LOG_LEVEL: INFO
+    KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    GATEWAY_URL: http://api-gateway:8000 # bots use the public API, like everyone else
+    BOTS_ENABLED: "false" # make k8s-bots turns them on
+    BOT_RANDOM_SEED: ""
+    BOT_ACTIVITY: "1.0"
+  secretEnv:
+    BOT_SECRET: {secret: bot-secret, key: value}
+  networkPolicy:
+    allowFrom: [api-gateway] # the status page's readiness check
+
+sre-agent:
+  replicas: 1 # one decision-maker
+  strategy: Recreate
+  env:
+    LOG_LEVEL: INFO
+    KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    CASSANDRA_CONTACT_POINTS: cassandra
+    CASSANDRA_KEYSPACE: sre_agent
+    CASSANDRA_USERNAME: sre_agent_role
+  secretEnv:
+    CASSANDRA_PASSWORD: {secret: sre-agent-db, key: password}
+  networkPolicy:
+    allowFrom: [api-gateway]
+
+chaos-service:
+  replicas: 1
+  env:
+    LOG_LEVEL: INFO
+    KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+  networkPolicy:
+    allowFrom: [api-gateway]
+
+web:
+  replicas: 1
+  port: 8080 # nginx-unprivileged
+  env:
+    PUBLIC_BASE_URL: "{{ .Values.global.publicBaseUrl }}"
+  resources:
+    requests: {cpu: 20m, memory: 16Mi}
+    limits: {cpu: 200m, memory: 64Mi}
+  probes:
+    liveness: {path: /healthz, periodSeconds: 10, failureThreshold: 3}
+    readiness: {path: /healthz, periodSeconds: 5, failureThreshold: 3}
+    startup: {path: /healthz, periodSeconds: 2, failureThreshold: 15}
+  networkPolicy:
+    allowIngressController: true
+  metrics:
+    enabled: false # nginx has no /metrics
+
+# --------------------------------------------------------------------------- data stores (ADR-0018)
+# The same images as docker-compose.yml. Each allows only its owners in (data ownership, enforced by the network
+# as well as by its logins).
+
+redpanda:
+  storage: 2Gi
+  # redpanda itself: rpk inside the pod reaches the broker by its advertised name, through the Service.
+  allowFrom: [order-service, matching-engine, market-data-service, portfolio-service, bot-traders, sre-agent,
+              chaos-service, redpanda-init, redpanda]
+
+cassandra:
+  storage: 4Gi
+  allowFrom: [order-service, matching-engine, market-data-service, sre-agent, cassandra-init]
+
+postgres:
+  storage: 1Gi
+  allowFrom: [portfolio-service]

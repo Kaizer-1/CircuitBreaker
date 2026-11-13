@@ -1,0 +1,52 @@
+# Alert rules about pods and the event bus, for any application service (chaos scenarios section 5).
+# Same conventions as services.yaml: 10 s evaluation, labels service / severity / remediable.
+groups:
+  - name: circuitbreaker-platform
+    interval: 10s
+    rules:
+      # An app service's container restarted more than 3 times in 5 minutes. Expected fix: rollback (a bad
+      # revision) or restart; the agent decides from the deploy history. Data stores and init jobs are left out:
+      # the agent never acts on Cassandra, Postgres or Redpanda.
+      - alert: PodCrashLooping
+        expr: |
+          max by (namespace, service) (
+            label_replace(
+              increase(kube_pod_container_status_restarts_total{namespace=~"prod|staging",container!~"cassandra|postgres|redpanda|init"}[5m]),
+              "service", "$1", "container", "(.*)"
+            )
+          ) > 3
+        for: 0s
+        labels: {severity: critical, remediable: "true"}
+        annotations:
+          summary: "{{ $labels.service }} restarted {{ $value | humanize }} times in 5 minutes"
+          description: A container keeps crashing and being restarted by Kubernetes.
+
+      # A consumer is more than 1,000 messages behind its topic. Information only: lag is a symptom (a slow or
+      # stopped consumer), so the agent escalates rather than acts. Two sources: the consumer's own gauge, and the
+      # broker's view of its group (<service>.<topic>), which still works when the consumer has stopped.
+      - alert: ConsumerLagHigh
+        expr: |
+          max by (namespace, service, topic) (
+            consumer_lag_messages
+            or
+            label_replace(
+              label_replace(redpanda_kafka_consumer_group_lag_max, "service", "$1", "redpanda_group", "([^.]+)[.].*"),
+              "topic", "$1", "redpanda_group", "[^.]+[.](.*)"
+            )
+          ) > 1000
+        for: 30s
+        labels: {severity: warning, remediable: "false"}
+        annotations:
+          summary: "{{ $labels.service }} is {{ $value | humanize }} messages behind on {{ $labels.topic }}"
+          description: A consumer group is falling behind; its read model or reactions are stale.
+
+      # A message went to a dead-letter topic (<topic>.dlq) after failing 5 times. Information only: someone must
+      # look at the message.
+      - alert: DeadLetterMessages
+        expr: |
+          sum by (namespace, service, topic) (increase(events_dead_lettered_total[5m])) > 0
+        for: 0s
+        labels: {severity: warning, remediable: "false"}
+        annotations:
+          summary: "{{ $labels.service }} sent messages from {{ $labels.topic }} to {{ $labels.topic }}.dlq"
+          description: An event failed processing 5 times and was parked on the dead-letter topic.
