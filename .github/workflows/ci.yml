@@ -108,7 +108,7 @@ jobs:
         run: docker compose --profile infra --profile app logs --tail=300
 
   contracts:
-    name: API specs, event contracts, template drift, Compose file
+    name: API specs, event contracts, template drift, retired names, Compose file
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -124,6 +124,8 @@ jobs:
         run: uv run --quiet --locked tools/check_event_contracts.py
       - name: services still share identical runtime plumbing
         run: python3 tools/check_template_drift.py
+      - name: retired instrument names appear only in dated history notes
+        run: python3 tools/check_retired_names.py
       - name: docker-compose.yml is valid
         run: docker compose --profile infra --profile app config -q
 
