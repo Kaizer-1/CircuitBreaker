@@ -105,6 +105,11 @@ rounded card grid became ruled rows on the same tokens.
   body made it invisible.
 - **Phone holdings:** the P&L column was clipped at 390 px, so the average cost now sits under the stock name.
 - **Phone tabs:** the page leaves room under its last item for the fixed tab bar plus `env(safe-area-inset-bottom)`.
+  A tab scrolls its section to the top of the screen without leaving the page (no `#hash`), and the lit tab follows
+  the scroll. The tail of the page (holdings) is at least a screen high, so every section can reach the top: on a
+  short page every tab used to land on the same spot, with F1 always lit (fixed 2026-11-14).
+- **iPhone status bar:** `viewport-fit=cover` lets the page run under the status bar, so a fixed strip
+  `env(safe-area-inset-top)` high, in the skin's background, sits there and the phone pages start below it.
 - **QR address:** the dashboard warns when the join address is localhost.
 - **Nicknames:** shown as typed, with a quieter suffix only for a duplicate.
 - **Hero flash:** checked in the browser to return to the normal colour after a flash. The green hero in the first

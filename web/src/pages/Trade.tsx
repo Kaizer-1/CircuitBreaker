@@ -6,12 +6,22 @@ import { CandleChart } from '../components/CandleChart'
 import { Flash } from '../components/Flash'
 import { Nickname } from '../components/Nickname'
 import { OrderTicket } from '../components/OrderTicket'
+import { SectionTabs } from '../components/SectionTabs'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { arrow, direction, inr, percent, quantity, rupees, signedRupees } from '../lib/format'
+import { report } from '../lib/errors'
+import { newId } from '../lib/id'
 import { ApiError, api, type Order, type OrderBody, type Ticker, TICKERS } from '../lib/market'
 import { navigate } from '../lib/router'
 import { loadTrader, saveTrader, type TraderSession } from '../lib/session'
 import { useInstruments, useMarket, usePortfolio, type PortfolioEvent } from '../market/hooks'
+
+const SECTIONS = [
+  { id: 'market', key: 'F1', label: 'MARKET' },
+  { id: 'ticket', key: 'F2', label: 'TICKET' },
+  { id: 'orders', key: 'F3', label: 'ORDERS' },
+  { id: 'holdings', key: 'F4', label: 'HOLDINGS' },
+]
 
 export function Trade() {
   const [session] = useState<TraderSession | null>(loadTrader)
@@ -42,7 +52,7 @@ function Phone({ session }: { session: TraderSession }) {
         if (e instanceof ApiError && e.status === 401) {
           saveTrader(null) // the 12-hour session ran out: join again
           navigate('/join')
-        }
+        } else console.error('Loading open orders failed:', e) // the next event retries
       })
   }, [token])
   useEffect(reload, [reload])
@@ -72,11 +82,11 @@ function Phone({ session }: { session: TraderSession }) {
 
   async function place(order: OrderBody) {
     try {
-      await api.place(token, order, crypto.randomUUID())
+      await api.place(token, order, newId())
       say(`Order sent: ${order.side} ${order.quantity} ${order.ticker}. Waiting for the exchange…`)
       reload()
     } catch (e) {
-      say(e instanceof ApiError ? e.message : 'The order did not go through. Try again.')
+      say(report('Placing the order', e))
     }
   }
 
@@ -86,7 +96,7 @@ function Phone({ session }: { session: TraderSession }) {
       say(`Cancelling ${order.side} ${order.quantity} ${order.ticker}…`)
       reload()
     } catch (e) {
-      say(e instanceof ApiError ? e.message : 'Could not cancel. Try again.')
+      say(report('Cancelling the order', e))
     }
   }
 
@@ -223,69 +233,60 @@ function Phone({ session }: { session: TraderSession }) {
         ))}
       </section>
 
-      <section className="panel" id="holdings" aria-label="Holdings">
-        <h2>
-          <span>Holdings</span>
-          <small>At last price</small>
-        </h2>
-        {portfolio && portfolio.holdings.length === 0 && (
-          <p className="empty">No shares yet: buy some above.</p>
-        )}
-        {portfolio && portfolio.holdings.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Stock · qty @ avg ₹</th>
-                <th>Value ₹</th>
-                <th>P&amp;L ₹</th>
-              </tr>
-            </thead>
-            <tbody>
-              {portfolio.holdings.map((h) => (
-                <tr key={h.ticker}>
-                  {/* The average cost sits under the stock: five columns do not fit 390 px. */}
-                  <td className="stock">
-                    {h.ticker}
-                    <small>
-                      {quantity(h.quantity)} @ {rupees(h.avg_cost_paise)}
-                    </small>
-                  </td>
-                  <td className="num">{rupees(h.market_value_paise)}</td>
-                  <td className={`num ${direction(h.unrealised_pnl_paise)}`}>
-                    {arrow(h.unrealised_pnl_paise)} {signedRupees(h.unrealised_pnl_paise)}
-                  </td>
+      {/* The tail is at least a screen high in the terminal skin, so every tab can bring its
+          section to the top of the screen (app.css). */}
+      <div className="tail">
+        <section className="panel" id="holdings" aria-label="Holdings">
+          <h2>
+            <span>Holdings</span>
+            <small>At last price</small>
+          </h2>
+          {portfolio && portfolio.holdings.length === 0 && (
+            <p className="empty">No shares yet: buy some above.</p>
+          )}
+          {portfolio && portfolio.holdings.length > 0 && (
+            <table>
+              <thead>
+                <tr>
+                  <th>Stock · qty @ avg ₹</th>
+                  <th>Value ₹</th>
+                  <th>P&amp;L ₹</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+              </thead>
+              <tbody>
+                {portfolio.holdings.map((h) => (
+                  <tr key={h.ticker}>
+                    {/* The average cost sits under the stock: five columns do not fit 390 px. */}
+                    <td className="stock">
+                      {h.ticker}
+                      <small>
+                        {quantity(h.quantity)} @ {rupees(h.avg_cost_paise)}
+                      </small>
+                    </td>
+                    <td className="num">{rupees(h.market_value_paise)}</td>
+                    <td className={`num ${direction(h.unrealised_pnl_paise)}`}>
+                      {arrow(h.unrealised_pnl_paise)} {signedRupees(h.unrealised_pnl_paise)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
 
-      <p className="attribution">
-        Charts by{' '}
-        <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">
-          TradingView
-        </a>
-      </p>
+        <p className="attribution">
+          Charts by{' '}
+          <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">
+            TradingView
+          </a>
+        </p>
+      </div>
       {toast && (
         <div className="toast" role="status">
           {toast}
         </div>
       )}
-      <nav className="tabs terminal-only" aria-label="Sections">
-        <a href="#market" className="on">
-          <b>F1</b>MARKET
-        </a>
-        <a href="#ticket">
-          <b>F2</b>TICKET
-        </a>
-        <a href="#orders">
-          <b>F3</b>ORDERS
-        </a>
-        <a href="#holdings">
-          <b>F4</b>HOLDINGS
-        </a>
-      </nav>
+      <SectionTabs sections={SECTIONS} />
     </div>
   )
 }

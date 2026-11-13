@@ -1,6 +1,7 @@
 // J-01 → A-01: scan the QR code, pick a nickname, start with ₹1,00,000. No password.
 import { type FormEvent, useEffect, useState } from 'react'
 import { ThemeToggle } from '../components/ThemeToggle'
+import { report } from '../lib/errors'
 import { joinAs, NICKNAME, nicknameTaken } from '../lib/nickname'
 import { navigate } from '../lib/router'
 import { loadTrader, saveTrader } from '../lib/session'
@@ -35,9 +36,7 @@ export function Join() {
       setError(
         nicknameTaken(e)
           ? `Someone is already trading as ${nickname}. Pick another nickname.`
-          : e instanceof Error
-            ? e.message
-            : String(e),
+          : report('Joining', e),
       )
     } finally {
       setBusy(false)

@@ -137,7 +137,9 @@ flowchart LR
   Access logs are off: WebSocket URLs carry the token.
 - **Phones** use `http://<laptop LAN IP>/` exactly as with Compose (`:5173` there).
   `PUBLIC_BASE_URL=http://<LAN IP> make k8s-up` writes it into web's config, so the join QR code points there
-  ([developer setup §11](../08-developer-setup.md#11-kubernetes-kind)).
+  ([developer setup §11](../08-developer-setup.md#11-kubernetes-kind)). The environment keeps that address through
+  restarts, upgrades and `make k8s-bots` (the release's own value is reused when the variable is not set);
+  `make k8s-set-url url=…` changes only it, and `make k8s-status` prints the address the QR code really carries.
 
 ### Who may talk to whom: network policies
 

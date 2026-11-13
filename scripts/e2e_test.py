@@ -190,9 +190,14 @@ def test_crash_recovery_by_hash() -> None:
                 cash, shares = cash - t["quantity"] * t["price_paise"], shares + t["quantity"]
             if t["seller_trader_id"] == trader.trader_id:
                 cash, shares = cash + t["quantity"] * t["price_paise"], shares - t["quantity"]
-        now = trader.portfolio()
+        # order-service shows a cancel as soon as it reads OrderCancelled; portfolio-service
+        # releases the money when it reads the same event, a moment later: wait for it.
+        now = wait_for(
+            f"{trader.nickname}'s reservations to be released",
+            lambda trader=trader: (p := trader.portfolio())["reserved_cash_paise"] == 0 and p,
+            timeout=15,
+        )
         assert (now["cash_paise"], held(now, ticker)) == (cash, shares), trader.nickname
-        assert now["reserved_cash_paise"] == 0, trader.nickname
     print(
         f"     {len(placed)} orders, {len(trades)} trades; book hash"
         f" {after['state_hash'][:16]}… before and after kill -9"

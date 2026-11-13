@@ -30,7 +30,15 @@ React + Vite + TypeScript single-page app with TradingView Lightweight Charts. E
   the screen, the choice is remembered on this device, and a hidden leaderboard is not polled.
 - **Trade:** net worth and P&L (live over Q-10), one stock's price and chart, the order ticket (LIMIT or MARKET, BUY or
   SELL; it applies the exchange's rules before sending: tick 5 paise, quantity 1–10,000, available cash or shares),
-  open orders with cancel, and holdings. Every touch target is at least 44 px, for one-handed use.
+  open orders with cancel, and holdings. Every touch target is at least 44 px, for one-handed use. In the terminal
+  skin, the F-key tabs at the bottom (F1 MARKET … F4 HOLDINGS) scroll their section to the top of the screen without
+  leaving the page, and the lit tab follows the scroll (`components/SectionTabs.tsx`). On iPhones a strip in the
+  skin's background covers the status bar (`env(safe-area-inset-top)`).
+- **Phones use plain http on a LAN address, which is not a secure context.** The page therefore uses no API reserved
+  for https or localhost: order keys (the `Idempotency-Key` of A-05) are RFC 4122 v4 UUIDs built from
+  `crypto.getRandomValues` (`lib/id.ts`), not `crypto.randomUUID`. A failed action is logged with `console.error`
+  and the toast says why in plain words (`lib/errors.ts`): no connection, the exchange's own reason, an exchange
+  error with its HTTP status, or "Something went wrong in the app" (never a raw exception).
 
 ### Themes: one layout, two skins
 
@@ -136,6 +144,13 @@ join page first. The script fails instead of taking a shot when:
 - any element overflows its container or the screen;
 - the terminal skin's fixed tabs hide the last item;
 - the hero price does not return to its normal colour after a flash.
+
+**The phone as phones see it:** `make test-phone` (repo root; in CI) runs `scripts/phone_check.mjs` with Playwright
+against `http://cb.test:5173`, a name Chrome maps to the laptop and treats as an ordinary (non-secure) http site;
+`make test-phone url=http://<LAN IP>:5173` uses the real address. At 390×844 in both skins it buys 1 CHAIWALA at
+market and waits for it in Holdings, re-sends the same order key (one order), taps each F-key tab (section at the
+top, tab lit, no reload) and fails on any console error. Needs the bots trading (a seller); it trades as `load-13`,
+which is never ranked.
 
 In Docker (`make up`) unprivileged nginx serves the built files on host port 5173. It forwards `/v1/` (and the
 WebSocket upgrade on `/v1/ws/`) to `api-gateway`, so the browser sees a single origin (no CORS). Versions: React 19,

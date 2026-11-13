@@ -15,6 +15,19 @@ body {
   font-variant-numeric: tabular-nums lining-nums; /* every digit the same width, everywhere */
   -webkit-text-size-adjust: 100%;
 }
+/* iPhones: viewport-fit=cover (index.html) lets the page run under the status bar. A solid strip in
+   the skin's background sits there, so the clock and battery never sit on scrolled content; the
+   phone pages start below it. 0 px high everywhere else. */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top, 0px);
+  background: var(--bg);
+  z-index: 30;
+}
 button {
   font: inherit;
   color: inherit;
@@ -561,7 +574,7 @@ td:first-child {
   overflow-x: hidden; /* never a horizontal scroll on the phone */
   max-width: 34rem;
   margin: 0 auto;
-  padding: 0 16px calc(76px + env(safe-area-inset-bottom));
+  padding: env(safe-area-inset-top, 0px) 16px calc(76px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: calc(var(--gap) * 0.6);
@@ -572,7 +585,30 @@ td:first-child {
 /* Room under the last item for the fixed tabs and, on iPhones, the home-indicator strip
    (viewport-fit=cover in index.html makes env() report it). scripts/screenshots.mjs checks it. */
 :root[data-theme='terminal'] .phone {
-  padding: 0 6px calc(var(--tabs-h) + 16px + env(safe-area-inset-bottom, 0px));
+  padding: env(safe-area-inset-top, 0px) 6px
+    calc(var(--tabs-h) + 16px + env(safe-area-inset-bottom, 0px));
+}
+/* The F-key tabs scroll a section to the top of the screen, just below the status-bar strip. The
+   tail (holdings and the attribution) is at least a screen high, so even the last sections can get
+   there: on a short page every tab would otherwise land on the same spot. */
+.phone .panel,
+.phone form {
+  scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 6px);
+}
+.phone .tail {
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+}
+:root[data-theme='terminal'] .phone .tail {
+  min-height: calc(
+    100vh - var(--tabs-h) - 16px - env(safe-area-inset-bottom, 0px) -
+      env(safe-area-inset-top, 0px) - 6px
+  );
+  min-height: calc(
+    100dvh - var(--tabs-h) - 16px - env(safe-area-inset-bottom, 0px) -
+      env(safe-area-inset-top, 0px) - 6px
+  );
 }
 .phone-head {
   display: flex;
@@ -948,7 +984,7 @@ td:first-child {
 .gate {
   max-width: 30rem;
   margin: 0 auto;
-  padding: 24px 16px;
+  padding: calc(24px + env(safe-area-inset-top, 0px)) 16px 24px;
 }
 .gate .masthead {
   font-size: 2.2rem;

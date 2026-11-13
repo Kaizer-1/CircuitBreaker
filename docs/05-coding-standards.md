@@ -159,6 +159,15 @@ rules are never copied: they live in each service's `domain/` and are owned by e
 Coverage target: **≥ 80% lines** per service (100% branches for matching `domain/`). Test names describe behaviour:
 `test_market_buy_stops_at_protection_price`.
 
+**User-facing flows are tested on a non-secure, non-localhost origin**, the way phones reach the laptop
+(`http://<LAN IP>`). Browsers treat `http://localhost` as a **secure context** (as if it were https) and a plain-http
+LAN address as not, and some APIs exist only in a secure context (`crypto.randomUUID`, the clipboard, service workers).
+A test on localhost cannot see that difference: phone ordering over the LAN failed from Phase 3 until 2026-11-14 while
+every test passed. `make test-phone` (in CI) opens the phone at `http://cb.test`, a name Chrome maps to the stack and
+does not trust; `make test-phone url=http://<LAN IP>` uses the real address. Component tests of such flows remove the
+secure-only API (`vi.stubGlobal`) to show the page works without it. And an error is never swallowed: log it with
+`console.error` and tell the person the real reason in plain words.
+
 ## 7. Standard operational endpoints
 
 Every service exposes these on port 8000 (not in the OpenAPI specs, not routed by the gateway). The readiness body is
@@ -259,6 +268,8 @@ if you enable the optional module. `make doctor` checks all of this.
 | `make test s=order-service` | Unit, smoke and contract tests for one service (all if `s` is omitted) |
 | `make lint` / `make fmt` | ruff, mypy, redocly, template drift, eslint and prettier / auto-format |
 | `make k8s-up` / `make k8s-down` / `make test-k8s` | The system on a local kind cluster with Prometheus, Grafana and Loki / stop it (data kept) / its smoke test ([developer setup §11](08-developer-setup.md#11-kubernetes-kind)) |
+| `make k8s-set-url url=http://<LAN IP>` | Point the join QR code at a new address on the cluster (data kept) |
+| `make test-phone [url=]` | The phone pages on a non-secure origin with Playwright: a MARKET buy reaches Holdings, the tabs, both skins (needs the bots) |
 | `make platform` | *(Phase 6)* Terraform plan + apply of `infra/envs/local`: kind cluster, namespaces, RBAC, Secrets, Argo CD |
 | `make sync env=staging` | Ask Argo CD to refresh and sync now (instead of waiting for its poll) |
 | `make promote s=<service>` | Open a PR copying the service's staging image tag to `deploy/envs/prod/` |

@@ -12,13 +12,14 @@
 | Step | Command or action | Why |
 |---|---|---|
 | 1 | Laptop on power; in a spare terminal run **`caffeinate -dims`** and leave it running until the demo ends | macOS then never sleeps (`-d` display, `-i` idle, `-m` disk, `-s` system on power). A sleeping laptop freezes Docker: on waking, market-data has every missed 5-second candle to close (it saves them in chunks since Phase 4) and the bots' 12-hour sessions may have run out (they sign in again since Phase 4); both recover, but the market stalls meanwhile. `Ctrl+C` ends it |
-| 2 | Join the phone hotspot; set `PUBLIC_BASE_URL` to the laptop's address on it | The QR code must point where phones can reach ([developer setup §10](08-developer-setup.md#10-phones-on-a-hotspot-demo-day)) |
+| 2 | **First** join the phone hotspot, **then** set `PUBLIC_BASE_URL` to the laptop's address on it (`ipconfig getifaddr en0`) | The QR code must point where phones can reach ([developer setup §10](08-developer-setup.md#10-phones-on-a-hotspot-demo-day)); the address belongs to the network, so it is only known once the laptop is on the hotspot |
 | 3 | **A person** runs `CONFIRM=yes make demo-reset` | Wipes all data, starts everything and checks the clean start: five empty books, only the seeded accounts, no humans. Rehearsal traders, test accounts and leftover orders are gone, and the leaderboard starts empty. Data-wiping commands are run by a person, never by a script or an assistant |
 | 4 | `make bots` | The 20 bots: the market moves and the books fill |
 | 5 | Wait at least **5 minutes** | Time travel needs a history to scrub through, and the timeline marks the biggest moves |
 | 6 | `python3 scripts/bots_check.py 120` | The market trades at least 5 times a minute per ticker (20 to 50 is normal), the book is two-sided, every price is within ±10% of its reference, nothing crossed, no refused bot order, no 5xx. For a full rehearsal, `python3 scripts/bots_check.py 1800` checks the band over 30 minutes |
 | 7 | `python3 scripts/time_travel_check.py 5 5` | Seeks answer fast and all five tickers say "hashes match" against the live engine |
-| 8 | Projector: `/dashboard?theme=paper` (or `terminal` in a dim room), sign in with the presenter passcode | The QR box must not warn about localhost |
+| 8 | `make test-phone url=http://<LAN IP>:5173` | A phone's view over the real address (not a secure context): a MARKET buy reaches Holdings, the tabs work, in both skins. It trades as `load-13`, never on the leaderboard |
+| 9 | Projector: `/dashboard?theme=paper` (or `terminal` in a dim room), sign in with the presenter passcode; scan the QR code with one real phone and place an order | The QR box must not warn about localhost |
 
 Do not rebuild or restart containers once the audience is in: a gateway restart drops every phone's and bot's
 connection (the bots are back within about a minute).
@@ -30,9 +31,11 @@ the cluster, not both (`make down` first): together they do not fit in Docker's 
 
 | Step | Command or action | Why |
 |---|---|---|
-| 1 | `caffeinate -dims` as above; join the hotspot | As above |
-| 2 | **A person** runs `CONFIRM=yes make k8s-reset`, then `PUBLIC_BASE_URL=http://<laptop LAN IP> make k8s-up` | A clean cluster and the QR code pointing at port 80. Data-wiping commands are run by a person. Allow about 7 minutes |
+| 1 | `caffeinate -dims` as above; **join the hotspot first** and note the laptop's address (`ipconfig getifaddr en0`) | The QR code needs the address on the network the phones are on |
+| 2 | **A person** runs `CONFIRM=yes make k8s-reset`, then `PUBLIC_BASE_URL=http://<laptop LAN IP> make k8s-up` | A clean cluster and the QR code pointing at port 80. Data-wiping commands are run by a person. Allow about 7 minutes. The address is kept from then on (restarts, `k8s-bots`) |
 | 3 | `make k8s-bots`, wait 5 minutes | The market moves; time travel has a history |
+| 3a | `make k8s-status`: the last lines show the QR code's address and warn if it is localhost or not this laptop's current address | Fix with `make k8s-set-url url=http://<LAN IP>` (only the web pod restarts; no data touched) |
+| 3b | `make test-phone url=http://<LAN IP>` | A phone's view over the real address, as on the Compose path |
 | 4 | `make test-k8s` is **not** for the audience (it starts the bots itself); use `python3 scripts/k8s.py run bots_check.py 120` and `python3 scripts/k8s.py run time_travel_check.py 5 5` | The same checks as the Compose path, through port-forwards |
 | 5 | Projector: `http://<LAN IP>/dashboard?theme=paper`; a second screen or tab: Grafana `http://localhost:3000`, dashboard *CircuitBreaker — Business* | The circuit breaker panel is the first thing Grafana shows |
 | 6 | Optional demo moment: *Follow an order*: place an order on a phone, paste its correlation ID (or pick one from *Orders placed*) | One order's journey through four services, from one query |
@@ -59,8 +62,42 @@ anything that slips through is off the screen with **B**.
 | Charts frozen, trading goes on | market-data logs ("saving the read model failed") | `docker compose restart market-data-service`: it rebuilds from the event store |
 | Time travel says "busy" | More than 3 traders time-travelling: the presenter keeps a reserved place | Retry; the presenter's request is never refused |
 | A rude name on the leaderboard | — | **B** hides it; add the word to the blocklist file after the demo |
+| Phones cannot open the QR address, or the QR shows an old address | The laptop rejoined the hotspot: `ipconfig getifaddr en0`; Kubernetes: `make k8s-status` | Compose: `PUBLIC_BASE_URL=http://<LAN IP>:5173 docker compose up -d --no-deps web`; Kubernetes: `make k8s-set-url url=http://<LAN IP>` |
+| An order fails on a phone | The toast says why (no connection, the exchange's reason, an exchange error with its HTTP status, or an app error); the laptop's browser console on the same address shows the full error | No connection: the phone left the hotspot. Exchange error: `make status` / `make k8s-status` |
+| Something is broken and there is no time to fix it | — | Fall back to the last known-good version (§4) |
 
-## 4. The Later list
+## 4. Fallback: the last known-good version
+
+Two annotated Git tags mark versions that were verified end to end. Falling back changes the code, not the data, so
+it takes minutes, not a reset.
+
+| Tag | Verified | Runs on |
+|---|---|---|
+| **`v0.5.1-demoable`** (preferred) | Phones ordering over the hotspot address (`make test-phone` on a LAN IP), the tab bar, the QR address kept on Kubernetes, CI green | Compose **and** Kubernetes |
+| `v0.4-demoable` | Phase 4: time travel, leaderboard; phone ordering over the LAN did **not** work yet (only on the laptop) | Compose only (Kubernetes came in Phase 5) |
+
+**Compose:**
+
+```bash
+make down                                         # stops the containers; volumes (data) are kept
+git switch -c demo-fallback v0.5.1-demoable       # a branch at the tag (the working tree must be clean)
+PUBLIC_BASE_URL=http://<LAN IP>:5173 make up      # builds that version's images
+make bots
+```
+
+**Kubernetes:**
+
+```bash
+git switch -c demo-fallback v0.5.1-demoable
+PUBLIC_BASE_URL=http://<LAN IP> make k8s-up       # builds and rolls only the images that differ; data kept
+make k8s-bots
+```
+
+Back to the latest: `git switch main`, then `make up` or `make k8s-up` again. If a later version changed how data is
+stored and the old version cannot read it, **a person** runs `CONFIRM=yes make demo-reset` (Compose) or `CONFIRM=yes
+make k8s-reset` (Kubernetes) first; data-wiping commands are never run by a script or an assistant.
+
+## 5. The Later list
 
 Found while building, outside the frozen design, to reconsider in Phase 8 or after the course.
 
@@ -78,13 +115,14 @@ no orders left from earlier runs, an empty history. A script checks that state, 
 A: A laptop that sleeps pauses every container. The system recovers on waking (Phase 4 fixed the two ways it used to
 freeze), but the audience would see a stalled market. `caffeinate -dims` keeps macOS awake for as long as it runs.
 
-**Q: Why wait five minutes after starting the bots?**
-A: Time travel shows the past, so there must be one: a few minutes of trading gives the timeline real moves to mark
-and the replay something to play.
-
 **Q: Why run Compose or the cluster, not both?**
 A: The cluster with monitoring uses about 4.3 GiB of process memory and Compose about 1.8 GiB, plus Docker's page
 cache. Together they crowd an 11 GB Docker allocation, and a demo must not run short of memory.
+
+**Q: Why tag "demoable" versions?**
+A: A tag names a commit that was verified end to end, so on the day there is a known-good version one command away.
+Later phases (chaos, the SRE agent) change a lot; if one breaks something just before the demo, we fall back instead
+of debugging in front of an audience.
 
 **Q: What is the "Later list" for?**
 A: The design is frozen until Phase 7, so ideas found while building are written down instead of built. Each entry
