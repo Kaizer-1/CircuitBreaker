@@ -258,7 +258,8 @@ if you enable the optional module. `make doctor` checks all of this.
 | `make logs s=<service>`, `make ps`, `make status` | Follow logs / container status / combined system status |
 | `make test s=order-service` | Unit, smoke and contract tests for one service (all if `s` is omitted) |
 | `make lint` / `make fmt` | ruff, mypy, redocly, template drift, eslint and prettier / auto-format |
-| `make platform` | *(Phase 5)* Terraform plan + apply of `infra/envs/local`: kind cluster, namespaces, RBAC, Secrets, Argo CD |
+| `make k8s-up` / `make k8s-down` / `make test-k8s` | The system on a local kind cluster with Prometheus, Grafana and Loki / stop it (data kept) / its smoke test ([developer setup §11](08-developer-setup.md#11-kubernetes-kind)) |
+| `make platform` | *(Phase 6)* Terraform plan + apply of `infra/envs/local`: kind cluster, namespaces, RBAC, Secrets, Argo CD |
 | `make sync env=staging` | Ask Argo CD to refresh and sync now (instead of waiting for its poll) |
 | `make promote s=<service>` | Open a PR copying the service's staging image tag to `deploy/envs/prod/` |
 

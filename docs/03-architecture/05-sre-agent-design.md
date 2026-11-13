@@ -49,7 +49,7 @@ the prompt uses our vocabulary and is the same shape every time.
 
 | Source | What is collected (for the alerting service, last 15 minutes) |
 |---|---|
-| **Prometheus metrics** | Request rate; 5xx error ratio; p95 latency; memory (resident set size) and % of its limit, with the trend; CPU; container restarts; ready vs desired replicas; consumer lag where relevant. Each as a short series (one point per 30 s) plus the "normal" baseline from the previous hour. |
+| **Prometheus metrics** | Request rate; 5xx error ratio; p95 latency; memory (resident set size) and % of its limit, with the trend; CPU; container restarts; ready vs desired replicas; consumer lag where relevant (the consumer's own gauge, or the broker's measurement of its group when the consumer has stopped). Each as a short series (one point per 30 s) plus the "normal" baseline from the previous hour. |
 | **Prometheus alert** | Alert name, labels, value, how long it has been firing. |
 | **Loki logs** | The 50 most recent `error`-level log lines for the service (truncated to 300 characters each), plus counts of the top 5 distinct error messages. |
 | **Deploy history** | The last 5 rollout revisions of the Deployment: revision number, time, image tag, `change-cause` annotation (release name). |
@@ -96,7 +96,25 @@ definition, in the OpenAI-compatible "function" format that OpenRouter accepts (
 ```
 
 The `service` enum on `rollback_deployment` and `restart_deployment` lists the eight application services. Data
-stores (Redpanda, Cassandra, Postgres) and the observability stack are **never** valid targets.
+stores (Redpanda, Cassandra, Postgres) and the observability stack are **never** valid targets, **whatever an alert
+says**: the agent never acts on Cassandra, Postgres or Redpanda. The alert rules already leave them out (Cassandra's
+JVM holds ~70% of its memory limit by design, which is not a leak; a crash-looping data store is not
+`PodCrashLooping`), the tool enums cannot name them, guardrail G2 refuses them, and RBAC forbids StatefulSets.
+
+### Alerts the agent must NOT act on
+
+Some alerts are information, labelled `remediable=false`: the agent opens an incident, explains, and **escalates**
+instead of acting ([chaos scenarios §5](06-chaos-scenarios.md#5-alert-rules-prometheus-used-by-the-agent)).
+
+| Alert | Why acting would be wrong |
+|---|---|
+| `OrderServiceCircuitOpen` | The breaker on order-service → portfolio-service is open because **portfolio-service** is failing. order-service is doing the right thing (failing fast with 503). Restarting, scaling or rolling back order-service changes nothing and hides the real cause. |
+| `ConsumerLagHigh` | Lag is a symptom (a slow or stopped consumer), not a cause. |
+| `DeadLetterMessages` | A person must look at the parked message. |
+
+**Phase 7 must demonstrate this:** with portfolio-service broken, `OrderServiceCircuitOpen` fires and the incident
+feed shows the agent choosing **not** to act on order-service and escalating, with its explanation. It is a key viva
+moment: a good operator knows when the right action is no action on the service that raised the alarm.
 
 ### The tools and GitOps (Argo CD)
 

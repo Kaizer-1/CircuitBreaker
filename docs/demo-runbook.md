@@ -23,6 +23,24 @@
 Do not rebuild or restart containers once the audience is in: a gateway restart drops every phone's and bot's
 connection (the bots are back within about a minute).
 
+### The Kubernetes path (the demo platform from Phase 5)
+
+The same steps on the cluster ([developer setup §11](08-developer-setup.md#11-kubernetes-kind)). Run Compose **or**
+the cluster, not both (`make down` first): together they do not fit in Docker's memory.
+
+| Step | Command or action | Why |
+|---|---|---|
+| 1 | `caffeinate -dims` as above; join the hotspot | As above |
+| 2 | **A person** runs `CONFIRM=yes make k8s-reset`, then `PUBLIC_BASE_URL=http://<laptop LAN IP> make k8s-up` | A clean cluster and the QR code pointing at port 80. Data-wiping commands are run by a person. Allow about 7 minutes |
+| 3 | `make k8s-bots`, wait 5 minutes | The market moves; time travel has a history |
+| 4 | `make test-k8s` is **not** for the audience (it starts the bots itself); use `python3 scripts/k8s.py run bots_check.py 120` and `python3 scripts/k8s.py run time_travel_check.py 5 5` | The same checks as the Compose path, through port-forwards |
+| 5 | Projector: `http://<LAN IP>/dashboard?theme=paper`; a second screen or tab: Grafana `http://localhost:3000`, dashboard *CircuitBreaker — Business* | The circuit breaker panel is the first thing Grafana shows |
+| 6 | Optional demo moment: *Follow an order*: place an order on a phone, paste its correlation ID (or pick one from *Orders placed*) | One order's journey through four services, from one query |
+
+If something goes wrong on Kubernetes: `make k8s-status` (pods and memory); a pod stuck `0/1` → `kubectl -n prod logs
+<pod>`; a service misbehaving → `kubectl -n prod rollout restart deployment/<service>` (rolling, no downtime: two
+replicas and a 5 s preStop pause).
+
 ## 2. During the demo
 
 | Screen | Keys and controls |
@@ -63,6 +81,10 @@ freeze), but the audience would see a stalled market. `caffeinate -dims` keeps m
 **Q: Why wait five minutes after starting the bots?**
 A: Time travel shows the past, so there must be one: a few minutes of trading gives the timeline real moves to mark
 and the replay something to play.
+
+**Q: Why run Compose or the cluster, not both?**
+A: The cluster with monitoring uses about 4.3 GiB of process memory and Compose about 1.8 GiB, plus Docker's page
+cache. Together they crowd an 11 GB Docker allocation, and a demo must not run short of memory.
 
 **Q: What is the "Later list" for?**
 A: The design is frozen until Phase 7, so ideas found while building are written down instead of built. Each entry

@@ -28,7 +28,7 @@ Run `make doctor`. It prints the version of each tool and tells you how to fix a
 | Python | 3.12 | All backend services | `uv python install 3.12` |
 | uv | ≥ 0.10 | Python dependencies and virtual environments | `brew install uv` |
 | Node.js | **≥ 22.12, 24 LTS recommended** | Web app (Vite 8, ESLint 10 and Vitest 5 need 22.12+) | `brew install node@24 && brew link --overwrite --force node@24` |
-| kind, kubectl, Helm | any current | Installed and checked now; the cluster arrives in Phase 5 | `brew install kind kubectl helm` |
+| kind, kubectl, Helm | kind ≥ 0.27 (0.33 used), Helm 4, kubectl within a version or two of Kubernetes 1.37 (an older one only warns) | The Kubernetes deployment ([§11](#11-kubernetes-kind)) | `brew install kind kubectl helm` |
 | make | GNU Make 3.81+ (the macOS one is fine) | Developer entry point | `xcode-select --install` |
 | gitleaks, pre-commit | any current | Secret scanning and the commit hooks | `brew install gitleaks pre-commit` |
 
@@ -122,10 +122,14 @@ exist, so "healthy" means "can do its job", not just "the process started".
 | `python3 scripts/bots_check.py [seconds]` | With the bots running: the checks above for any length of time; `1800` for the 30-minute band check before a demo |
 | `python3 scripts/time_travel_check.py [minutes] [samples]` | With the bots running: seek times over the last N minutes and "hashes match" against the live engine on all five tickers |
 | `make status` | Signs in as admin (`ADMIN_PASSCODE`, default the local placeholder) and prints the gateway's `/v1/system/status` |
+| `make test-alerts` | promtool (in Docker) checks the alert rules and runs their unit tests (`observability/tests/`) |
+| `make k8s-lint` | The charts without a cluster: `helm lint`, render every environment and every service alone, kubeconform against Kubernetes 1.37, then `test-alerts`. CI runs it on every pull request |
+| `make k8s-up` / `k8s-down` / `k8s-status` / `k8s-images` / `k8s-reset` | The Kubernetes deployment: see [§11](#11-kubernetes-kind) |
+| `make k8s-bots`, `k8s-bots-stop`, `k8s-demo-trade`, `test-k8s`, `k8s-check c=…` | The Compose targets' Kubernetes twins, and the cluster checks ([§11](#11-kubernetes-kind)) |
 
 > **Not the same as the Terraform target.** `make infra` means *the Compose infrastructure*. The Terraform platform from
 > [ADR-0015](adr/0015-terraform-local-platform.md) (kind cluster, namespaces, Argo CD) will be `make platform`; it
-> arrives in Phase 5.
+> arrives in Phase 6. Until then `make k8s-up` builds the same cluster ([§11](#11-kubernetes-kind)).
 
 ## 4. Ports
 
@@ -232,6 +236,10 @@ stores in kind, which will need much more; we will re-measure then. The limits a
 | The pre-commit hook rejects a commit | Lint error, a secret was detected, or `private/` / `CLAUDE.md` was staged | Read the message; `git restore --staged <file>` for the last case |
 | The presenter dashboard says "QR points to localhost. Phones can't join." | `PUBLIC_BASE_URL` is not set, or is `localhost` (the Compose default) | [§10](#10-phones-on-a-hotspot-demo-day): set it to the laptop's LAN address and restart `web` |
 | A phone cannot open the join address | Not on the same network, the network isolates its clients, or the laptop's firewall blocks Docker | [§10](#10-phones-on-a-hotspot-demo-day), "If a phone cannot connect" |
+| `make k8s-up`: `port is already allocated` for 80, 8090, 3000 or 9090 | Another program on the laptop uses that port | `lsof -nP -iTCP:80 -sTCP:LISTEN`; stop it, then `make k8s-up` again |
+| `make k8s-up` stops at "could not download chart" | The chart registry was unreachable (slow network) | Try again; once downloaded, charts are kept in `build/k8s/charts/` and never fetched again |
+| `kubectl` prints a version-skew warning | Your kubectl is several versions older than the cluster (1.37) | Harmless; `brew upgrade kubectl` removes it |
+| A pod stays `0/1 Running` on Kubernetes | Its `/readyz` fails (a dependency, or a consumer that has not caught up) | `kubectl -n prod logs <pod>`; the readiness body names the failing check: `kubectl -n prod exec <pod> -- python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')"` |
 
 ## 10. Phones on a hotspot (demo day)
 
@@ -276,6 +284,55 @@ Wi-Fi setting, common on campus and guest networks, that stops devices on the ne
    - The address can change each time the laptop rejoins the hotspot. Find it again and restart `web` (step 3).
 
 Only port 5173 needs to be reachable. The page calls the API on the same address, and nginx forwards it to the gateway.
+
+## 11. Kubernetes (kind)
+
+The demo platform: the same images on a one-node Kubernetes cluster, with Prometheus, Grafana and Loki. Compose stays
+the fast developer loop. Layout and reasoning: [deployment §3](03-architecture/07-deployment-and-environments.md#3-kubernetes-with-kind--helm-umbrella-chart).
+
+```bash
+make k8s-up          # cluster + local registry + images + platform + prod; waits until every pod is ready
+make k8s-bots        # the 20 bots trade (seed=, activity= as with make bots)
+make k8s-demo-trade  # the demo trade, against the cluster
+make k8s-status      # pods, and the memory per namespace (the RAM budget's numbers)
+make k8s-down        # stop the cluster: data kept, RAM freed; make k8s-up starts it again in seconds
+```
+
+The first `make k8s-up` takes about 7 minutes once the images exist (402 s measured: the platform charts, then
+Cassandra's first start), longer when it also builds the 9 images; later ones take seconds to a minute and rebuild only services whose files changed (images are tagged by git SHA, plus a hash of uncommitted
+changes). `make k8s-up env=staging` adds staging on port 8090 (about 2 GiB more; it shares the node's CPU with prod).
+
+| URL | What |
+|---|---|
+| <http://localhost/> | prod: the app, as on <http://localhost:5173> in Compose (`/dashboard`, `/join`, …) |
+| <http://localhost:8090/> | staging, if started |
+| <http://localhost:3000/> | Grafana: dashboards *CircuitBreaker — Business*, *System*, *Follow an order*. Anyone may look; sign in as `admin` / `cb-dev-grafana` (local placeholder) to change things |
+| <http://localhost:9090/> | Prometheus: targets, alert rules (`/alerts`) |
+
+**Phones on Kubernetes.** Exactly as in [§10](#10-phones-on-a-hotspot-demo-day), without the port:
+`PUBLIC_BASE_URL=http://192.168.43.12 make k8s-up`, then phones open `http://192.168.43.12/join` (or scan the QR
+code). Port 80 is open to the network (kind maps it on all interfaces); Grafana and Prometheus are not.
+
+**Checks** (each changes the running system on purpose and puts it back):
+
+| Command | What it proves |
+|---|---|
+| `make test-k8s` | `k8s-up`, then: every pod ready, the demo trade, the bots for 2 minutes (`bots_check`), the business dashboard's trades/s above 0, one order followed through four services in Loki |
+| `make k8s-check c=netpol` | The NetworkPolicies are enforced: allowed connections work, forbidden ones (into another service's data store, around the gateway) fail |
+| `make k8s-check c=kill` | An order-service pod deleted while orders flow is replaced, and every accepted order finishes with nothing left reserved |
+| `make k8s-check c=scale` | 200 orders/s: order p95 high at 2 order-service replicas, back down at 4 (`scripts/load_orders.py`) |
+| `make k8s-check c=alerts` | Each Phase 7 alert's condition is caused for real (about 20 minutes) and the alert fires; `--only over-provisioned` adds the 10-minute one |
+| `python3 scripts/k8s.py run bots_check.py 120` | Any `scripts/` check against the cluster (port-forwards stand in for Compose's host ports) |
+
+**Follow one order** in Grafana's *Follow an order* dashboard: paste the `X-Correlation-Id` a response returned (or
+pick one from *Orders placed*). In Explore, the same query is `{namespace="prod"} | correlation_id="<id>"`.
+
+**Memory** (measured, [deployment §3](03-architecture/07-deployment-and-environments.md#the-ram-budget-measured)):
+prod with monitoring uses about 4.3 GiB of process memory (Docker Desktop shows about 5.7 GiB including reclaimable
+page cache); with staging too, about 6.5 GiB. Keep Docker Desktop at 10–11 GB, and run Compose or the cluster, not
+both.
+
+**`make k8s-reset`** deletes the cluster and all its data (it asks first). Like `make reset`, it is run by a person.
 
 ## Viva Notes
 

@@ -11,7 +11,10 @@ scale, restart, do nothing), explaining itself in plain English on a live incide
 University Microservices Architecture course project. Textbook: *Microservices: Up and Running* (Mitra &
 Nadareishvili).
 
-> **Status: Phase 4 — event sourcing you can watch.** The presenter drags a timeline back to any moment of the session
+> **Status: Phase 5 — a production-like platform.** The whole system runs on a local Kubernetes cluster from one
+> command, with Traefik for phones, Prometheus, Grafana dashboards as code (the circuit breaker first), Loki logs where
+> one order is followed across services by its correlation ID, and the alert rules the SRE agent will act on, each
+> proven to fire from a real fault. From Phase 4: event sourcing you can watch. The presenter drags a timeline back to any moment of the session
 > and sees the market exactly as it was, rebuilt from the matching engine's snapshots and events; replays a stretch at
 > up to 60×; and proves it with a state hash that matches the live engine's ("verified: hashes match"). A leaderboard
 > ranks the human traders, offensive nicknames are refused at join, and the presenter can hide the board. From Phase 3:
@@ -43,6 +46,10 @@ laptop's LAN address ([developer setup §10](docs/08-developer-setup.md#10-phone
 `make help` lists the other commands (`make down`, `make reset`, `make demo-reset`, `make logs s=<service>`,
 `make lint`, `make test`, `make test-e2e`, `make mock`, `make status`).
 Full guide with ports, measured memory use and troubleshooting: [developer setup](docs/08-developer-setup.md).
+
+**On Kubernetes** (the demo platform): `make down`, then `make k8s-up` builds a one-node kind cluster with the whole
+system, Traefik, Prometheus, Grafana and Loki; the app is on <http://localhost/> and Grafana on
+<http://localhost:3000>. `make test-k8s` is its smoke test ([developer setup §11](docs/08-developer-setup.md#11-kubernetes-kind)).
 
 ## Architecture at a glance
 
