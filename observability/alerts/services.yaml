@@ -1,0 +1,111 @@
+# Alert rules the Phase 7 SRE agent consumes (docs/03-architecture/06-chaos-scenarios.md section 5). Prometheus format:
+# charts/observability wraps this file in a PrometheusRule; CI checks it with promtool (observability/tests/).
+#
+# Timing: Prometheus scrapes and evaluates every 10 s, rates use 30 s windows, and `for` is 20-30 s, so an alert
+# fires about 30 s after its condition starts. The error-rate rules need some traffic (> 0.5 requests/s), so one
+# failed request on an idle service is never "100% errors". Health, readiness and metrics requests are left out.
+#
+# Labels the agent reads: service (the Deployment it may act on), severity, remediable ("true" = the agent may act;
+# "false" = information only: the agent escalates instead).
+groups:
+  - name: circuitbreaker-services
+    interval: 10s
+    rules:
+      # Bad deploy (chaos scenario 3.1): errors right after a new revision. Expected fix: rollback_deployment.
+      - alert: OrderServiceHighErrorRate
+        expr: |
+          (
+            sum by (namespace) (rate(http_requests_total{service="order-service",status=~"5..",route!~"/healthz|/readyz|/metrics"}[30s]))
+            / sum by (namespace) (rate(http_requests_total{service="order-service",route!~"/healthz|/readyz|/metrics"}[30s]))
+          ) > 0.05
+          and sum by (namespace) (rate(http_requests_total{service="order-service",route!~"/healthz|/readyz|/metrics"}[30s])) > 0.5
+        for: 20s
+        labels: {service: order-service, severity: critical, remediable: "true"}
+        annotations:
+          summary: "order-service errors at {{ $value | humanizePercentage }} (normally under 1%)"
+          description: More than 5% of order-service requests are answered with 5xx.
+
+      # Traffic spike (chaos scenario 3.3): p95 latency high under load. Expected fix: scale_deployment.
+      - alert: OrderServiceHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (namespace, le) (rate(http_request_duration_seconds_bucket{service="order-service",route!~"/healthz|/readyz|/metrics"}[30s]))
+          ) > 0.5
+          and sum by (namespace) (rate(http_requests_total{service="order-service",route!~"/healthz|/readyz|/metrics"}[30s])) > 0.5
+        for: 30s
+        labels: {service: order-service, severity: critical, remediable: "true"}
+        annotations:
+          summary: "order-service p95 latency {{ $value | humanizeDuration }} (threshold 500 ms)"
+          description: The slowest 5% of order-service requests take longer than 500 ms.
+
+      # After a spike: more replicas than the load needs. Lets the agent scale back down (after its 5-minute
+      # cooldown); deliberately slow, so a short lull never scales a busy service down.
+      - alert: OrderServiceOverProvisioned
+        expr: |
+          (
+            sum by (namespace) (rate(container_cpu_usage_seconds_total{container="order-service"}[2m]))
+            / sum by (namespace) (kube_pod_container_resource_limits{container="order-service",resource="cpu"})
+          ) < 0.2
+          and on (namespace) max by (namespace) (kube_deployment_spec_replicas{deployment="order-service"}) > 2
+        for: 10m
+        labels: {service: order-service, severity: warning, remediable: "true"}
+        annotations:
+          summary: "order-service uses {{ $value | humanizePercentage }} of its CPU with more than 2 replicas"
+          description: Load is back to normal; the extra replicas are no longer needed.
+
+      # The circuit breaker on order-service -> portfolio-service is open: portfolio-service is failing or too
+      # slow, and order-service answers 503 at once instead of waiting. Information only: the cause is in
+      # portfolio-service, and order-service is doing the right thing. Phase 7 shows the agent choosing NOT to act
+      # on order-service here (it escalates). max_over_time keeps it firing while the breaker cycles
+      # open -> half-open -> open every 10 s.
+      - alert: OrderServiceCircuitOpen
+        expr: |
+          max by (namespace) (max_over_time(circuit_breaker_state{dependency="portfolio-service",state="open"}[30s])) == 1
+        for: 0s
+        labels: {service: order-service, severity: critical, remediable: "false"}
+        annotations:
+          summary: order-service's circuit breaker to portfolio-service is open
+          description: >-
+            Five reservation calls in a row failed or timed out, so order-service stops calling portfolio-service
+            for 10 s at a time and answers 503 DEPENDENCY_UNAVAILABLE. Look at portfolio-service.
+
+      # Memory leak (chaos scenario 3.2): memory above 70% of the limit and still rising, with no deploy.
+      # Expected fix: restart_deployment, before Kubernetes kills the pod for running out of memory.
+      - alert: MarketDataMemoryGrowth
+        expr: |
+          (
+            max by (namespace, pod) (container_memory_working_set_bytes{container="market-data-service"})
+            / max by (namespace, pod) (container_spec_memory_limit_bytes{container="market-data-service"} > 0)
+          ) > 0.7
+          and max by (namespace, pod) (deriv(container_memory_working_set_bytes{container="market-data-service"}[2m])) > 0
+        for: 30s
+        labels: {service: market-data-service, severity: critical, remediable: "true"}
+        annotations:
+          summary: "market-data-service memory at {{ $value | humanizePercentage }} of its limit and rising"
+          description: Memory keeps climbing toward the limit; at 100% Kubernetes kills the pod (OOMKilled).
+
+      - alert: GatewayHighErrorRate
+        expr: |
+          (
+            sum by (namespace) (rate(http_requests_total{service="api-gateway",status=~"5..",route!~"/healthz|/readyz|/metrics"}[30s]))
+            / sum by (namespace) (rate(http_requests_total{service="api-gateway",route!~"/healthz|/readyz|/metrics"}[30s]))
+          ) > 0.05
+          and sum by (namespace) (rate(http_requests_total{service="api-gateway",route!~"/healthz|/readyz|/metrics"}[30s])) > 0.5
+        for: 20s
+        labels: {service: api-gateway, severity: critical, remediable: "true"}
+        annotations:
+          summary: "api-gateway errors at {{ $value | humanizePercentage }}"
+          description: More than 5% of public API requests are answered with 5xx.
+
+      - alert: PortfolioHighErrorRate
+        expr: |
+          (
+            sum by (namespace) (rate(http_requests_total{service="portfolio-service",status=~"5..",route!~"/healthz|/readyz|/metrics"}[30s]))
+            / sum by (namespace) (rate(http_requests_total{service="portfolio-service",route!~"/healthz|/readyz|/metrics"}[30s]))
+          ) > 0.05
+          and sum by (namespace) (rate(http_requests_total{service="portfolio-service",route!~"/healthz|/readyz|/metrics"}[30s])) > 0.5
+        for: 20s
+        labels: {service: portfolio-service, severity: critical, remediable: "true"}
+        annotations:
+          summary: "portfolio-service errors at {{ $value | humanizePercentage }}"
+          description: More than 5% of portfolio-service requests (reservations, portfolios) fail with 5xx.

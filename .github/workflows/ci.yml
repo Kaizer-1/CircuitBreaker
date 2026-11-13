@@ -18,6 +18,7 @@ env:
   UV_VERSION: "0.10.7"
   REDOCLY_VERSION: "1.34.3"
   GITLEAKS_VERSION: "8.30.1"
+  HELM_VERSION: "4.3.0"
 
 jobs:
   python:
@@ -111,6 +112,19 @@ jobs:
         run: python3 tools/check_template_drift.py
       - name: docker-compose.yml is valid
         run: docker compose --profile infra --profile app config -q
+
+  kubernetes:
+    name: Kubernetes charts and alert rules (helm lint, render, kubeconform, promtool)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Helm
+        run: |
+          curl -sSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz linux-amd64/helm
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+      - name: make k8s-lint
+        run: make k8s-lint
 
   web:
     name: web (lint, types, tests, build)

@@ -17,7 +17,8 @@ ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
 .PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
-        k8s-up k8s-down k8s-status k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade
+        k8s-up k8s-down k8s-status k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade test-alerts \
+        test-k8s k8s-check k8s-lint
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -112,6 +113,16 @@ demo-trade: ## Two traders and a bot trade through the gateway; prints trades, p
 test-e2e: ## End-to-end checks on the running stack: trade, kill -9 the engine, orphan rule (~3 min; needs make up)
 	@python3 scripts/e2e_test.py
 
+k8s-lint: ## Charts and alert rules without a cluster: helm lint, render, kubeconform, promtool (needs Docker)
+	@bash scripts/k8s_lint.sh
+
+PROMETHEUS_IMAGE := quay.io/prometheus/prometheus:v3.16.0
+test-alerts: ## promtool: check the alert rules and run their unit tests (observability/tests; needs Docker)
+	docker run --rm -v "$(CURDIR)/observability:/obs:ro" -w /obs/tests --entrypoint promtool $(PROMETHEUS_IMAGE) \
+	  check rules /obs/alerts/services.yaml /obs/alerts/platform.yaml
+	docker run --rm -v "$(CURDIR)/observability:/obs:ro" -w /obs/tests --entrypoint promtool $(PROMETHEUS_IMAGE) \
+	  test rules alerts_test.yaml
+
 status: ## Ask the gateway for the combined system status (signs in as admin first)
 	@token=$$(curl -sS --max-time 10 -X POST $(GATEWAY)/v1/admin/sessions -H 'Content-Type: application/json' \
 	  -d '{"nickname":"presenter","passcode":"$(ADMIN_PASSCODE)"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])') && \
@@ -143,3 +154,10 @@ k8s-bots-stop: ## Kubernetes: stop the bots trading
 
 k8s-demo-trade: ## Kubernetes: make demo-trade against the cluster (env=prod|staging)
 	@python3 scripts/k8s.py run --env $(if $(env),$(env),prod) demo_trade.py
+
+test-k8s: ## Kubernetes smoke test: k8s-up, every pod ready, demo trade, bots 2 min, trades/s > 0, Loki trace
+	@python3 scripts/k8s.py up --env $(if $(env),$(env),prod)
+	@python3 scripts/k8s_checks.py --env $(if $(env),$(env),prod) smoke
+
+k8s-check: ## Kubernetes checks: make k8s-check c=netpol|kill|scale|alerts (they change the system on purpose)
+	@python3 scripts/k8s_checks.py --env $(if $(env),$(env),prod) $(c)

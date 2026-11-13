@@ -12,6 +12,11 @@ metadata:
 data:
   .bootstrap.yaml: |
     auto_create_topics_enabled: false
+    # Consumer-group lag measured by the broker (redpanda_kafka_consumer_group_lag_max): it still shows when a
+    # consumer has stopped and can no longer report its own lag (the ConsumerLagHigh alert uses both).
+    enable_consumer_group_metrics: [group, partition, consumer_lag]
+    # Recompute that lag every 10 s (default 60 s), like Prometheus' scrape: the alert then sees lag in time.
+    consumer_group_lag_collection_interval_sec: 10
 ---
 apiVersion: v1
 kind: Service
@@ -108,6 +113,26 @@ metadata:
 spec:
   backoffLimit: 10
 {{- include "redpanda.initPod" . }}
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor" }}
+---
+# Prometheus reads the broker's public metrics (consumer-group lag, among others) on the admin port.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: redpanda
+  labels: {app.kubernetes.io/name: redpanda, app.kubernetes.io/part-of: circuitbreaker}
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: redpanda}
+  endpoints:
+    - port: admin
+      path: /public_metrics
+      interval: 10s
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          action: keep
+          regex: redpanda_kafka_consumer_group_.*
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

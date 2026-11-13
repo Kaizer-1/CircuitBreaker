@@ -1025,7 +1025,7 @@
       "id": 16,
       "type": "timeseries",
       "title": "Consumer lag (messages behind)",
-      "description": "consumer_lag_messages: how far each consumer group is behind its topic (ConsumerLagHigh above 1,000).",
+      "description": "How far each consumer group is behind its topic: the consumer's own consumer_lag_messages, or the broker's redpanda_kafka_consumer_group_lag_max when the consumer is down (ConsumerLagHigh above 1,000).",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1042,7 +1042,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (service, topic) (consumer_lag_messages{namespace=\"$namespace\"})",
+          "expr": "max by (service, topic) (consumer_lag_messages{namespace=\"$namespace\"} or label_replace(label_replace(redpanda_kafka_consumer_group_lag_max{namespace=\"$namespace\"}, \"service\", \"$1\", \"redpanda_group\", \"([^.]+)[.].*\"), \"topic\", \"$1\", \"redpanda_group\", \"[^.]+[.](.*)\"))",
           "legendFormat": "{{service}} ← {{topic}}",
           "refId": "A",
           "range": true
