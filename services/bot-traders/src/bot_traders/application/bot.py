@@ -55,6 +55,10 @@ class MarketState:
 
 
 OrderListener = Callable[[str, str, str], None]  # strategy, result, ticker
+# kind, strategy, seconds. "lateness": how much later than planned an order went out (a starved
+# event loop or slow answers to the orders before it). "quote_gap": how long a side had no resting
+# order of this bot after the exchange closed its last one (filled), until a new one was placed.
+TimingListener = Callable[[str, str, float], None]
 
 
 class Bot:
@@ -69,6 +73,7 @@ class Bot:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_order: OrderListener = lambda strategy, result, ticker: None,
+        on_timing: TimingListener = lambda kind, strategy, seconds: None,
         listing_slots: asyncio.Semaphore | None = None,
     ) -> None:
         self.plan_ = plan
@@ -80,6 +85,8 @@ class Bot:
         self._clock = clock
         self._sleep = sleep
         self._on_order = on_order
+        self._on_timing = on_timing
+        self._bare: dict[tuple[str, str], float] = {}  # (ticker, side): no resting order since
         self.session: Session | None = None
         self.ledger = Ledger()
         self.open_orders: dict[str, OpenOrder] = {}
@@ -183,7 +190,12 @@ class Bot:
             self._forget(order_id)
 
     def _forget(self, order_id: str) -> None:
-        self.open_orders.pop(order_id, None)
+        """The exchange closed this order (filled, or finished elsewhere)."""
+        gone = self.open_orders.pop(order_id, None)
+        if gone is not None and gone.limit_price_paise is not None:
+            same_side = (gone.ticker, gone.side)
+            if not any((o.ticker, o.side) == same_side for o in self.open_orders.values()):
+                self._bare.setdefault(same_side, self._clock())
         self._closed[order_id] = None
         if len(self._closed) > CLOSED_REMEMBERED:
             self._closed.pop(next(iter(self._closed)))
@@ -218,9 +230,11 @@ class Bot:
             await self.ensure_session()
             await self.refresh()
             elapsed = 0.0
+            began = self._clock()
             for offset, intent in self.decide(ticker, market):
                 await self._sleep(offset - elapsed)
                 elapsed = offset
+                self._on_timing("lateness", self.strategy_name, self._clock() - began - offset)
                 await self.execute(intent, market)
             self._backoff = 0.0
         except SessionExpiredError:
@@ -266,6 +280,9 @@ class Bot:
         self.ledger.hold(order, last, answered_at=self._clock())
         # A MARKET order never rests; a LIMIT one may already have finished (its order_closed
         # can overtake this answer).
+        bare_since = self._bare.pop((order.ticker, order.side), None)
+        if order.limit_price_paise is not None and bare_since is not None:
+            self._on_timing("quote_gap", self.strategy_name, self._clock() - bare_since)
         if order.limit_price_paise is not None and placed["order_id"] not in self._closed:
             self.open_orders[placed["order_id"]] = OpenOrder(
                 placed["order_id"],

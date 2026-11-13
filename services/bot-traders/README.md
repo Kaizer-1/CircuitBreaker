@@ -121,6 +121,10 @@ No business API — only `/healthz`, `/readyz`, `/metrics`. Uses public A-03, A-
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
 **Business metrics:** `bot_orders_total{strategy,result}` (`placed`, `cancelled`, `skipped`, `refused`), `bots_active`.
+**The bots' own timing** (`scripts/bots_check.py` prints both): `bot_quote_gap_seconds{strategy}`, how long a side
+had no resting order of a bot after the exchange filled its last one, until it placed a new one (for a market
+maker: time without a quote); `bot_order_lateness_seconds{strategy}`, how much later than planned an order went out
+(a starved event loop, or slow answers to the orders sent before it in the same interval).
 
 ## Synchronous dependencies
 

@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from random import Random
 from typing import Any
 
-from bot_traders.application.bot import Bot, MarketState, OrderListener
+from bot_traders.application.bot import Bot, MarketState, OrderListener, TimingListener
 from bot_traders.domain.market import REFERENCE_PRICES, TICKERS
 from bot_traders.domain.strategies import BotPlan, MarketMaker, roster
 from bot_traders.ports.exchange import Exchange, SessionExpiredError
@@ -52,6 +52,7 @@ class Fleet:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_order: OrderListener = lambda strategy, result, ticker: None,
+        on_timing: TimingListener = lambda kind, strategy, seconds: None,
     ) -> None:
         self._exchange = exchange
         self._interval = interval_seconds
@@ -69,6 +70,7 @@ class Fleet:
                 clock=clock,
                 sleep=sleep,
                 on_order=on_order,
+                on_timing=on_timing,
                 listing_slots=listing_slots,
             )
             for plan in (plans if plans is not None else roster())
