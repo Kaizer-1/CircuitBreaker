@@ -65,7 +65,7 @@ clusters without changing any code.
 
 | Table | Partition key | Clustering key | Answers the query |
 |---|---|---|---|
-| `market_events` | `(ticker, day)` | `sequence ASC` | "Events for CHAIWALA after sequence N until time T" (replay, time travel, re-publish) |
+| `market_events` | `(ticker, day)` | `sequence ASC` | "Events for CALVERA after sequence N until time T" (replay, time travel, re-publish) |
 | `ticker_days` | `ticker` | `day ASC` | "Which day partitions of `market_events` exist, and the first sequence in each" (where a rebuild or a Q-14 page starts) |
 | `book_snapshots` | `ticker` | `sequence DESC` | "Latest snapshot at or before time T" |
 | `processed_commands` | `command_id` (the `event_id` of the incoming `OrderPlaced`/`OrderCancelRequested`) | — | "Have I already processed this command?" (idempotency) |

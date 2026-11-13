@@ -114,7 +114,7 @@ late, the bounded one never does, and a send fails within its 10 s while the bro
 **defense in depth**: it covers what no client-side timeout can, a request that is already in the network when the
 broker freezes.
 
-**Note: no time limit for cancels and expiries (Phase 4).** During Phase 4 three market-maker bids on `DABBA` could
+**Note: no time limit for cancels and expiries (Phase 4).** During Phase 4 three market-maker bids on `ASTRYX` could
 never be cancelled: A-07 answered `409` "cancel already pending" for ever, and their cash stayed reserved. The cause was
 the outbox relay: it read only the last **15 minutes** of the outbox (one partition per minute), so a cancel still
 unpublished after a longer outage (here the laptop slept) was never sent again. A rejected *order* was fine (the 60 s

@@ -18,7 +18,7 @@ T0 = "2026-11-20T10:42:01.248Z"
 
 def request(**overrides: object) -> OrderRequest:
     fields: dict[str, object] = {
-        "ticker": "CHAIWALA",
+        "ticker": "CALVERA",
         "side": Side.BUY,
         "order_type": OrderType.LIMIT,
         "quantity": 50,
@@ -31,7 +31,7 @@ def order(**overrides: object) -> Order:
     fields: dict[str, object] = {
         "order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12",
         "trader_id": "3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
-        "ticker": "CHAIWALA",
+        "ticker": "CALVERA",
         "side": Side.BUY,
         "order_type": OrderType.LIMIT,
         "quantity": 50,

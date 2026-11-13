@@ -6,7 +6,7 @@ const setup = (over: Partial<Parameters<typeof OrderTicket>[0]> = {}) => {
   const onSubmit = vi.fn(() => Promise.resolve())
   render(
     <OrderTicket
-      ticker="CHAIWALA"
+      ticker="CALVERA"
       lastPricePaise={24_785}
       availableCashPaise={1_000_000}
       availableShares={5}
@@ -16,7 +16,7 @@ const setup = (over: Partial<Parameters<typeof OrderTicket>[0]> = {}) => {
   )
   return onSubmit
 }
-const submit = () => fireEvent.click(screen.getByRole('button', { name: /CHAIWALA/ }))
+const submit = () => fireEvent.click(screen.getByRole('button', { name: /CALVERA/ }))
 
 describe.each(BOTH)('the order ticket (%s theme)', (theme) => {
   beforeEach(() => showTheme(theme))
@@ -26,7 +26,7 @@ describe.each(BOTH)('the order ticket (%s theme)', (theme) => {
     expect(screen.getByLabelText(/Limit price/)).toHaveValue('247.85')
     submit()
     expect(onSubmit).toHaveBeenCalledWith({
-      ticker: 'CHAIWALA',
+      ticker: 'CALVERA',
       side: 'BUY',
       order_type: 'LIMIT',
       quantity: 10,
@@ -70,7 +70,7 @@ describe.each(BOTH)('the order ticket (%s theme)', (theme) => {
     expect(screen.getByText('₹2,726.50')).toBeInTheDocument() // 10 × ₹272.65 (247.85 + 10%, up to the tick)
     submit()
     expect(onSubmit).toHaveBeenCalledWith({
-      ticker: 'CHAIWALA',
+      ticker: 'CALVERA',
       side: 'BUY',
       order_type: 'MARKET',
       quantity: 10,

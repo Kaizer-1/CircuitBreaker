@@ -24,7 +24,7 @@ def order(n: int, at: datetime) -> Order:
     return Order(
         order_id=f"0dde0000-0000-4000-8000-{n:012d}",
         trader_id=RAJU,
-        ticker="CHAIWALA",
+        ticker="CALVERA",
         side=Side.BUY,
         order_type=OrderType.LIMIT,
         quantity=50,

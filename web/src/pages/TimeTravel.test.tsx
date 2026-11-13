@@ -66,7 +66,7 @@ function show(mode: Mode) {
   return actions
 }
 
-const PANELS = ['Timeline', 'CHAIWALA chart', 'Order book', 'Trades']
+const PANELS = ['Timeline', 'CALVERA chart', 'Order book', 'Trades']
 
 beforeEach(() => {
   sessionStorage.setItem('circuitbreaker.admin_token', 'admin-token')

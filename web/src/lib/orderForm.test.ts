@@ -8,7 +8,7 @@ import {
 } from './orderForm'
 
 const draft = (over: Partial<Draft> = {}): Draft => ({
-  ticker: 'CHAIWALA',
+  ticker: 'CALVERA',
   side: 'BUY',
   type: 'LIMIT',
   quantity: '10',
@@ -27,7 +27,7 @@ describe('the order ticket rules', () => {
     const c = checkOrder(draft(), ctx())
     expect(c.errors).toEqual({})
     expect(c.order).toEqual({
-      ticker: 'CHAIWALA',
+      ticker: 'CALVERA',
       side: 'BUY',
       order_type: 'LIMIT',
       quantity: 10,
@@ -60,7 +60,7 @@ describe('the order ticket rules', () => {
     )
     expect(market.reservePaise).toBe(4 * 9_705)
     expect(market.order).toEqual({
-      ticker: 'CHAIWALA',
+      ticker: 'CALVERA',
       side: 'BUY',
       order_type: 'MARKET',
       quantity: 4,

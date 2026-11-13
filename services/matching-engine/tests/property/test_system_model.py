@@ -38,8 +38,8 @@ from tests.builders import ALICE, BOB, CARA, DEV, id_source
 from tests.fakes import InMemoryEventStore
 
 TRADERS = (ALICE, BOB, CARA, DEV)
-TICKERS = ("CHAIWALA", "JUGAAD")
-PRICE = {"CHAIWALA": 24550, "JUGAAD": 118000}
+TICKERS = ("CALVERA", "KORVIN")
+PRICE = {"CALVERA": 24550, "KORVIN": 118000}
 START = datetime(2026, 11, 20, 10, 0, tzinfo=UTC)
 PUBLISH_TIMEOUT_S, ORPHAN_AFTER_S, ASK_AGAIN_S = 60, 120, 300
 
@@ -466,16 +466,16 @@ async def outage_with_a_pending_cancel_and_expiry(after_phase_4: bool) -> Portfo
             ps.sweep(os_model)
 
     resting, lost = "0dde0000-0000-4000-8000-000000000001", "0dde0000-0000-4000-8000-000000000002"
-    assert ps.reserve(resting, ALICE, "CHAIWALA", "BUY", 10, 24550)
+    assert ps.reserve(resting, ALICE, "CALVERA", "BUY", 10, 24550)
     os_model.store(
-        order_placed(resting, ALICE, "CHAIWALA", "BUY", 10, 24550, clock.now), "CHAIWALA", 0
+        order_placed(resting, ALICE, "CALVERA", "BUY", 10, 24550, clock.now), "CALVERA", 0
     )
-    assert ps.reserve(lost, BOB, "CHAIWALA", "BUY", 20, 24500)  # never stored: order-service died
+    assert ps.reserve(lost, BOB, "CALVERA", "BUY", 20, 24500)  # never stored: order-service died
     await run_for(10)
     assert ps.reservations[resting].confirmed  # accepted and resting
 
     os_model.broker_up = False
-    os_model.cancel(resting, ALICE, "CHAIWALA")
+    os_model.cancel(resting, ALICE, "CALVERA")
     await run_for(25 * 60)  # the sweeper asks for Bob's expiry at 120 s, and again every 5 min
     assert ps.reservations[lost].expiry_asked_at is not None
     os_model.broker_up = True
@@ -490,7 +490,7 @@ async def test_a_25_minute_outage_delays_a_cancel_and_an_expiry_but_both_release
     assert all(r.released for r in ps.reservations.values())
     assert ps.reserved_cash == dict.fromkeys(TRADERS, 0)
     assert ps.cash == dict.fromkeys(TRADERS, 30_000_000)  # nothing traded, nothing lost
-    events = [(e.event_type, e.data.get("reason")) for e in ps.matching["CHAIWALA"]]
+    events = [(e.event_type, e.data.get("reason")) for e in ps.matching["CALVERA"]]
     assert ("OrderCancelled", "USER_REQUESTED") in events and ("OrderExpired", None) in events
     assert ps.violations == []
 

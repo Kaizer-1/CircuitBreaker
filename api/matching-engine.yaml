@@ -71,7 +71,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/EventPage'
               example:
-                ticker: CHAIWALA
+                ticker: CALVERA
                 events:
                   - event_id: e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b
                     event_type: OrderAccepted
@@ -83,7 +83,7 @@ paths:
                     causation_id: 0b8f6a52-7d1e-4c55-9a43-1f2d3c4b5a61
                     data:
                       sequence: 1041
-                      ticker: CHAIWALA
+                      ticker: CALVERA
                       order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
                       trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
                       side: BUY
@@ -102,7 +102,7 @@ paths:
                     causation_id: 0b8f6a52-7d1e-4c55-9a43-1f2d3c4b5a61
                     data:
                       sequence: 1042
-                      ticker: CHAIWALA
+                      ticker: CALVERA
                       trade_id: a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d
                       price_paise: 24550
                       quantity: 20
@@ -147,7 +147,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/BookState'
               example:
-                ticker: CHAIWALA
+                ticker: CALVERA
                 sequence: 1000
                 as_of: '2026-11-20T10:41:50.120Z'
                 bids:
@@ -202,7 +202,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/BookState'
               example:
-                ticker: CHAIWALA
+                ticker: CALVERA
                 sequence: 1042
                 as_of: '2026-11-20T10:42:01.263Z'
                 bids:
@@ -214,7 +214,7 @@ paths:
                         accepted_sequence: 1041
                 asks: []
                 # The real hash of this book, whose one finished order is 9e8d7c6b-… (filled by the Q-14 example's trade).
-                state_hash: 03ca757be8ef8300eee1590ee92781d47e6b765b9652c783fc43270372a95a2c
+                state_hash: ef89092177567ad824082ceaea02bdf75aefa10bcfd67f87153266b194f2f62f
         '404':
           $ref: './shared/common.yaml#/components/responses/NotFound'
 components:
@@ -337,7 +337,7 @@ components:
             `occurred_at` of the last applied event (`null` before any event). Equal hashes mean identical books: used
             to check that a restarted engine rebuilt exactly the same state, and that a time-travel rebuild (Q-12)
             equals the live book. Example: the Q-15 example above, as a book, hashes to
-            `0596569a159caeba4158cc5d45a807ab55e35fbf52c0959a943ad4bd5215edc3`.
+            `9d73640257a1660048a6d6b782d67c5b75da9e706eecaca5812b8af3b5470f9b`.
     ClosedOrder:
       type: object
       required: [order_id, state, trader_id]

@@ -17,7 +17,7 @@ Why the market stays realistic:
   A move must be 8 basis points and at least 3 ticks.
 
 Phase 4 rebalance: with a 2% lean, an inventory lean of up to 30 basis points and an 8 basis
-point momentum trigger, MONSOON (₹88.20, where one tick is 5.7 basis points) ran 13 to 15% above
+point momentum trigger, HELIOR (₹88.20, where one tick is 5.7 basis points) ran 13 to 15% above
 its reference within an hour in 3 of 5 simulated runs. A market maker that had sold shares bid
 above its fair price to buy them back, the last price followed, and momentum chased a two-tick
 wiggle as a trend. Now the worst of 12 simulated hours is 5.3% (most stay within 2.6%), and
@@ -210,7 +210,7 @@ class BotPlan:
 
 def roster() -> list[BotPlan]:
     """The 20 bots: who runs which strategy on which tickers (a fixed plan, so runs repeat)."""
-    tickers = ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY")
+    tickers = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
     plans: list[BotPlan] = []
     for n, half_spread in enumerate((8, 12, 16, 20), start=1):
         plans.append(BotPlan(f"bot-{n:02d}", MarketMaker(half_spread), tickers))

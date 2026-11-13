@@ -7,11 +7,11 @@
     "ticker": {
       "type": "string",
       "enum": [
-        "CHAIWALA",
-        "JUGAAD",
-        "DABBA",
-        "MONSOON",
-        "FILMY"
+        "CALVERA",
+        "KORVIN",
+        "ASTRYX",
+        "HELIOR",
+        "TAVIRA"
       ]
     },
     "side": {

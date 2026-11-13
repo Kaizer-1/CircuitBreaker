@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { WebSocketServer } from 'ws'
 
 const PORT = Number(process.env.MOCK_WS_PORT ?? 4011)
-const REFERENCE = { CHAIWALA: 24550, JUGAAD: 118000, DABBA: 41275, MONSOON: 8820, FILMY: 53005 }
+const REFERENCE = { CALVERA: 24550, KORVIN: 118000, ASTRYX: 41275, HELIOR: 8820, TAVIRA: 53005 }
 const tick = (p) => Math.max(5, Math.round(p / 5) * 5)
 const iso = (ms) => new Date(ms).toISOString()
 const bucket = (ms) => ms - (ms % 5000)
@@ -115,7 +115,7 @@ for (const m of Object.values(markets)) {
 
 // The caller's portfolio (the Q-09 example's shape), with an occasional fill.
 function portfolio() {
-  const chai = markets.CHAIWALA.price
+  const calvera = markets.CALVERA.price
   return {
     trader_id: '3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d',
     nickname: 'RajuTrader',
@@ -125,20 +125,20 @@ function portfolio() {
     available_cash_paise: 9509000,
     holdings: [
       {
-        ticker: 'CHAIWALA',
+        ticker: 'CALVERA',
         quantity: 20,
         reserved_quantity: 0,
         available_quantity: 20,
         avg_cost_paise: 24550,
-        last_price_paise: chai,
-        market_value_paise: 20 * chai,
-        unrealised_pnl_paise: 20 * (chai - 24550),
+        last_price_paise: calvera,
+        market_value_paise: 20 * calvera,
+        unrealised_pnl_paise: 20 * (calvera - 24550),
       },
     ],
-    net_worth_paise: 9509000 + 20 * chai,
+    net_worth_paise: 9509000 + 20 * calvera,
     starting_value_paise: 10000000,
-    pnl_paise: 9509000 + 20 * chai - 10000000,
-    pnl_percent: Math.round(((9509000 + 20 * chai - 10000000) / 100000) * 100) / 100,
+    pnl_paise: 9509000 + 20 * calvera - 10000000,
+    pnl_percent: Math.round(((9509000 + 20 * calvera - 10000000) / 100000) * 100) / 100,
     as_of: iso(Date.now()),
   }
 }

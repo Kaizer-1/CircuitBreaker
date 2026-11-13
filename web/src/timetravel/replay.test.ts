@@ -26,7 +26,7 @@ function open() {
   const messages: unknown[] = []
   const closes: number[] = []
   const control = openReplay({
-    ticker: 'CHAIWALA',
+    ticker: 'CALVERA',
     from: '2026-11-20T10:40:00.000Z',
     to: '2026-11-20T10:45:00.000Z',
     speed: 10,
@@ -42,7 +42,7 @@ describe('the replay client', () => {
   it('opens the channel with the window, the speed and the token', () => {
     const { socket } = open()
     const url = new URL(socket.url)
-    expect(url.pathname).toBe('/v1/ws/replay/CHAIWALA')
+    expect(url.pathname).toBe('/v1/ws/replay/CALVERA')
     expect(Object.fromEntries(url.searchParams)).toEqual({
       from: '2026-11-20T10:40:00.000Z',
       to: '2026-11-20T10:45:00.000Z',

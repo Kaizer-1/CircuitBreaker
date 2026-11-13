@@ -11,7 +11,7 @@ import {
 let seq = 100
 const trades: Trade[] = []
 const book = (s: number, bid: number): OrderBook => ({
-  ticker: 'CHAIWALA',
+  ticker: 'CALVERA',
   as_of_sequence: s,
   as_of: '2026-11-20T10:42:00.000Z',
   best_bid_paise: bid,

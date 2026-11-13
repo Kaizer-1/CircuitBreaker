@@ -33,7 +33,7 @@ export function Trade() {
 
 function Phone({ session }: { session: TraderSession }) {
   const token = session.token
-  const [ticker, setTicker] = useState<Ticker>('CHAIWALA')
+  const [ticker, setTicker] = useState<Ticker>('CALVERA')
   const [orders, setOrders] = useState<Order[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const [view, stream] = useMarket(ticker, token)

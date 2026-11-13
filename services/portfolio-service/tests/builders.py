@@ -17,7 +17,7 @@ def oid(n: int) -> str:
 def _event(event_type: str, data: dict[str, object]) -> EventEnvelope:
     return build_event(
         event_type,
-        {"sequence": next(_seq), "ticker": data.pop("ticker", "CHAIWALA"), **data},
+        {"sequence": next(_seq), "ticker": data.pop("ticker", "CALVERA"), **data},
         producer="matching-engine",
         environment="dev",
         correlation_id="test",
@@ -26,20 +26,20 @@ def _event(event_type: str, data: dict[str, object]) -> EventEnvelope:
 
 
 def buy(
-    n: int, trader: str, qty: int, price: int | None, *, ticker: str = "CHAIWALA"
+    n: int, trader: str, qty: int, price: int | None, *, ticker: str = "CALVERA"
 ) -> ReservationRequest:
     kind = OrderType.LIMIT if price is not None else OrderType.MARKET
     return ReservationRequest(oid(n), trader, ticker, Side.BUY, kind, qty, price)
 
 
 def sell(
-    n: int, trader: str, qty: int, price: int | None, *, ticker: str = "CHAIWALA"
+    n: int, trader: str, qty: int, price: int | None, *, ticker: str = "CALVERA"
 ) -> ReservationRequest:
     kind = OrderType.LIMIT if price is not None else OrderType.MARKET
     return ReservationRequest(oid(n), trader, ticker, Side.SELL, kind, qty, price)
 
 
-def accepted(n: int, trader: str, *, ticker: str = "CHAIWALA") -> EventEnvelope:
+def accepted(n: int, trader: str, *, ticker: str = "CALVERA") -> EventEnvelope:
     return _event(
         "OrderAccepted",
         {
@@ -66,7 +66,7 @@ def trade(
     buy_left: int,
     sell_left: int,
     *,
-    ticker: str = "CHAIWALA",
+    ticker: str = "CALVERA",
 ) -> EventEnvelope:
     return _event(
         "TradeExecuted",

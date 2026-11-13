@@ -45,7 +45,7 @@ components:
                 type: string
     Ticker:
       type: string
-      enum: [CHAIWALA, JUGAAD, DABBA, MONSOON, FILMY]
+      enum: [CALVERA, KORVIN, ASTRYX, HELIOR, TAVIRA]
       description: One of the five fictional instruments.
     Side:
       type: string
@@ -125,7 +125,7 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/Ticker'
-      example: CHAIWALA
+      example: CALVERA
     Limit:
       name: limit
       in: query

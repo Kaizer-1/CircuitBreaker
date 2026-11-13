@@ -234,7 +234,7 @@ paths:
             schema:
               $ref: './order-service.yaml#/components/schemas/PlaceOrderRequest'
             example:
-              ticker: CHAIWALA
+              ticker: CALVERA
               side: BUY
               order_type: LIMIT
               quantity: 50

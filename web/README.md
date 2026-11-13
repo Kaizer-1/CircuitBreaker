@@ -147,7 +147,7 @@ join page first. The script fails instead of taking a shot when:
 
 **The phone as phones see it:** `make test-phone` (repo root; in CI) runs `scripts/phone_check.mjs` with Playwright
 against `http://cb.test:5173`, a name Chrome maps to the laptop and treats as an ordinary (non-secure) http site;
-`make test-phone url=http://<LAN IP>:5173` uses the real address. At 390×844 in both skins it buys 1 CHAIWALA at
+`make test-phone url=http://<LAN IP>:5173` uses the real address. At 390×844 in both skins it buys 1 CALVERA at
 market and waits for it in Holdings, re-sends the same order key (one order), taps each F-key tab (section at the
 top, tab lit, no reload) and fails on any console error. Needs the bots trading (a seller); it trades as `load-13`,
 which is never ranked.

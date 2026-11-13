@@ -16,11 +16,11 @@ class Instrument:
 INSTRUMENTS = {
     i.ticker: i
     for i in (
-        Instrument("CHAIWALA", "Chaiwala Beverages Ltd", 24550),
-        Instrument("JUGAAD", "Jugaad Technologies Ltd", 118000),
-        Instrument("DABBA", "Dabba Logistics Ltd", 41275),
-        Instrument("MONSOON", "Monsoon Power Ltd", 8820),
-        Instrument("FILMY", "Filmy Studios Ltd", 53005),
+        Instrument("CALVERA", "Calvera Consumer Ltd", 24550),
+        Instrument("KORVIN", "Korvin Technologies Ltd", 118000),
+        Instrument("ASTRYX", "Astryx Logistics Ltd", 41275),
+        Instrument("HELIOR", "Helior Power Ltd", 8820),
+        Instrument("TAVIRA", "Tavira Media Ltd", 53005),
     )
 }
 TICKERS = tuple(INSTRUMENTS)

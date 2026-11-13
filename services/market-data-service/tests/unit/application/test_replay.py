@@ -60,7 +60,7 @@ def market(commands: int = 12, gap_seconds: float = 0.5) -> tuple[Exchange, list
 
 def store_for(exchange: Exchange) -> InMemoryMarketStore:
     store = InMemoryMarketStore()
-    store.trade_rows["CHAIWALA"] = [
+    store.trade_rows["CALVERA"] = [
         Trade(
             e.data["trade_id"],
             int(e.data["sequence"]),
@@ -77,10 +77,10 @@ def store_for(exchange: Exchange) -> InMemoryMarketStore:
 
 def session_for(exchange: Exchange, from_ms: int, to_ms: int, speed: int, **kw: Any) -> Any:
     events = FakeEventStore()
-    events.events["CHAIWALA"] = exchange.log
+    events.events["CALVERA"] = exchange.log
     time_travel = TimeTravel(events, store_for(exchange))
     return ReplaySession(
-        time_travel, ticker="CHAIWALA", from_ms=from_ms, to_ms=to_ms, speed=speed, **kw
+        time_travel, ticker="CALVERA", from_ms=from_ms, to_ms=to_ms, speed=speed, **kw
     )
 
 
@@ -137,7 +137,7 @@ def test_a_replay_sends_the_book_at_from_then_one_frame_per_command_then_end() -
 
 def test_the_frame_candle_is_the_forming_5s_candle_from_the_trades_so_far() -> None:
     exchange, after = market(commands=16, gap_seconds=0.9)
-    trades = store_for(exchange).trade_rows["CHAIWALA"]
+    trades = store_for(exchange).trade_rows["CALVERA"]
     session = session_for(exchange, after[0][0], after[-1][0], speed=60)
     sent = Recorder()
     asyncio.run(session.run(sent))

@@ -38,7 +38,7 @@ export function Dashboard() {
 }
 
 function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
-  const [selected, setSelected] = useState<Ticker>('CHAIWALA')
+  const [selected, setSelected] = useState<Ticker>('CALVERA')
   const markets = useMarkets(token)
   const instruments = useInstruments(token)
   const byTicker = Object.fromEntries(instruments.map((i) => [i.ticker, i])) as Partial<

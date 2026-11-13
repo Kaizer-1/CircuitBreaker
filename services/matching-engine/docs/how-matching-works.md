@@ -1,6 +1,6 @@
 # How matching works
 
-> A walkthrough of what the matching engine does with each order, using one small CHAIWALA book. Rules, events and
+> A walkthrough of what the matching engine does with each order, using one small CALVERA book. Rules, events and
 > field names are those of the [event catalog](../../../docs/03-architecture/03-event-catalog.md); prices are integer
 > paise ([ADR-0012](../../../docs/adr/0012-prices-in-integer-paise.md)), so 24550 means ₹245.50.
 
@@ -41,7 +41,7 @@ flowchart LR
 
 ## A worked example
 
-**The book before** (CHAIWALA, last sequence 1040):
+**The book before** (CALVERA, last sequence 1040):
 
 | Bids (buy) | | | Asks (sell) | | |
 |---|---|---|---|---|---|

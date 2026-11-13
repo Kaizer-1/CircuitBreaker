@@ -129,7 +129,7 @@ function Proof({ verification }: { verification: Verification | null }) {
 }
 
 function Screen({ token, onExpired }: { token: string; onExpired: () => void }) {
-  const [ticker, setTicker] = useState<Ticker>('CHAIWALA')
+  const [ticker, setTicker] = useState<Ticker>('CALVERA')
   const [live, liveState] = useMarket(ticker, token)
   const instruments = useInstruments(token)
   const session = useSession(token, ticker)

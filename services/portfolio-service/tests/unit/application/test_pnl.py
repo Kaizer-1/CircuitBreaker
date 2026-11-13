@@ -47,7 +47,7 @@ async def trade_between(
         await s.apply_event(event)
 
 
-def holding(view: dict[str, Any], ticker: str = "CHAIWALA") -> dict[str, Any]:
+def holding(view: dict[str, Any], ticker: str = "CALVERA") -> dict[str, Any]:
     found: list[dict[str, Any]] = [h for h in view["holdings"] if h["ticker"] == ticker]
     [h] = found
     return h

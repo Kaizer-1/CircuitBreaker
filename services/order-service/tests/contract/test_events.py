@@ -50,7 +50,7 @@ async def test_every_event_order_service_publishes_matches_its_schema() -> None:
     await w.place(order_type=OrderType.MARKET, limit_price_paise=None, side=Side.SELL, quantity=5)
     await w.orders.cancel(RAJU, limit.order_id, correlation_id="c")
     w.clock.now += timedelta(seconds=130)
-    await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CHAIWALA")
+    await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CALVERA")
     sent = [event for _, _, event in w.publisher.sent]
     assert [e.event_type for e in sent] == [
         "OrderPlaced",

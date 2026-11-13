@@ -2,7 +2,7 @@
 
 ## 1. The two ideas in plain words
 
-> **Event sourcing:** instead of storing *current state* ("CHAIWALA book has 30 @ ₹246.00") and overwriting it,
+> **Event sourcing:** instead of storing *current state* ("CALVERA book has 30 @ ₹246.00") and overwriting it,
 > store *every change* as an immutable event ("order accepted", "trade 20 @ ₹245.50", …). Current state is whatever
 > you get by replaying the events in order. Like a bank statement: the balance is derived from the transactions.
 >
@@ -144,7 +144,7 @@ Sequence diagram: [01-seeds/03-sequence-diagrams.md §5](../01-seeds/03-sequence
 
 ### A worked example
 
-CHAIWALA, rebuilt at T = 10:42:15. Shortened order and trader IDs, to keep it readable.
+CALVERA, rebuilt at T = 10:42:15. Shortened order and trader IDs, to keep it readable.
 
 | Step | Sequence | Time | What it says | Book afterwards |
 |---|---|---|---|---|
@@ -158,11 +158,11 @@ CHAIWALA, rebuilt at T = 10:42:15. Shortened order and trader IDs, to keep it re
 The rebuilt book in canonical form (what is hashed):
 
 ```json
-{"as_of":"2026-11-20T10:42:09.870Z","asks":[[24600,[["o-2","meera",20,3996]]]],"bids":[[24550,[["o-3","asha",30,4001]]]],"closed":[["o-1","CANCELLED","raju"],["o-4","FILLED","bot-01"]],"sequence":4004,"ticker":"CHAIWALA"}
+{"as_of":"2026-11-20T10:42:09.870Z","asks":[[24600,[["o-2","meera",20,3996]]]],"bids":[[24550,[["o-3","asha",30,4001]]]],"closed":[["o-1","CANCELLED","raju"],["o-4","FILLED","bot-01"]],"sequence":4004,"ticker":"CALVERA"}
 ```
 
-Its SHA-256 is `6e0cb1787948f3c0f9312f73baf60adf70962160eb05f29030bc055461157ea5` (computed by market-data's own
-`ReplayBook` from exactly these inputs; the snapshot alone hashes to `f4811f98…`). If the live engine's book at sequence
+Its SHA-256 is `1d78a3a2f50b59f8d384e6b8d9518e354d6f8d1a3285d1f41250ada51bd6e9f2` (computed by market-data's own
+`ReplayBook` from exactly these inputs; the snapshot alone hashes to `7b2d9d92…`). If the live engine's book at sequence
 4004 had any difference, even one share or the order of two orders at a price, its hash would not match.
 
 ### Proving it is exact

@@ -6,11 +6,11 @@ TICK_SIZE_PAISE = 5
 MIN_QUANTITY, MAX_QUANTITY = 1, 10_000
 PROTECTION = 0.10  # a MARKET order trades at most 10% away from the last price
 REFERENCE_PRICES = {
-    "CHAIWALA": 24550,
-    "JUGAAD": 118000,
-    "DABBA": 41275,
-    "MONSOON": 8820,
-    "FILMY": 53005,
+    "CALVERA": 24550,
+    "KORVIN": 118000,
+    "ASTRYX": 41275,
+    "HELIOR": 8820,
+    "TAVIRA": 53005,
 }
 TICKERS = tuple(REFERENCE_PRICES)
 

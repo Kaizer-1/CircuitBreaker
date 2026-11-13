@@ -5,7 +5,7 @@
    (load-21, load-22): they start like humans, with ₹1,00,000 and no shares, but are never ranked
    on the leaderboard, so a demo trade never shows on the projector. They keep what they traded
    until make demo-reset. Bots also have shares (no short selling, so someone must sell first).
-2. bot-01 sells 20 CHAIWALA at about ₹245.50; A bids 50 paise more → they trade at bot-01's price.
+2. bot-01 sells 20 CALVERA at about ₹245.50; A bids 50 paise more → they trade at bot-01's price.
 3. A sells 10 at about ₹247.00; B bids 50 paise more → A and B trade at A's price.
 
 Prices are picked inside the book's gap (above every resting bid, below every ask), so orders other
@@ -33,7 +33,7 @@ from stack import (
     wait_until_ready,
 )
 
-TICKER = "CHAIWALA"
+TICKER = "CALVERA"
 BOLD, DIM, GREEN, RESET = "\033[1m", "\033[2m", "\033[32m", "\033[0m"
 
 

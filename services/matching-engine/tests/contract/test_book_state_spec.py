@@ -120,13 +120,13 @@ def test_q15_and_q16_answers_match_book_state_and_the_hash_rule(
     client: TestClient,  # noqa: F811
     engine: MatchingEngine,  # noqa: F811
 ) -> None:
-    q15 = client.get("/internal/v1/snapshots/CHAIWALA", params={"at": "2026-11-20T11:00:00Z"})
+    q15 = client.get("/internal/v1/snapshots/CALVERA", params={"at": "2026-11-20T11:00:00Z"})
     check_book_state(q15.json())
-    empty = client.get("/internal/v1/snapshots/DABBA", params={"at": "2026-11-20T11:00:00Z"})
+    empty = client.get("/internal/v1/snapshots/ASTRYX", params={"at": "2026-11-20T11:00:00Z"})
     check_book_state(empty.json())
-    q16 = client.get("/internal/v1/books/CHAIWALA").json()
+    q16 = client.get("/internal/v1/books/CALVERA").json()
     check_book_state(q16)
     # The engine's own hash and the one computed from the API's answer by the spec's rule agree.
-    live = engine.book("CHAIWALA").snapshot().to_dict()
+    live = engine.book("CALVERA").snapshot().to_dict()
     closed = [{"order_id": o, "state": s, "trader_id": t} for o, s, t in live["closed"]]
     assert OrderBook.from_snapshot(as_snapshot(q16, closed)).state_hash() == q16["state_hash"]

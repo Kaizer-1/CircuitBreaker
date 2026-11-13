@@ -67,11 +67,11 @@ def live(exchange: Exchange) -> FakeLiveBooks:
 def app(settings: Settings, exchange: Exchange, live: FakeLiveBooks) -> FastAPI:
     app = create_app(settings, readiness_checks=[])
     events = FakeEventStore()
-    events.events["CHAIWALA"] = exchange.log
+    events.events["CALVERA"] = exchange.log
     now = ms(exchange.as_of or "") + 60_000
     latest = SimpleNamespace(as_of_ms=ms(exchange.as_of or ""))  # the live read model's last event
     app.state.projection = SimpleNamespace(
-        ready=True, now_ms=lambda: now, markets={"CHAIWALA": latest}
+        ready=True, now_ms=lambda: now, markets={"CALVERA": latest}
     )
     app.state.time_travel = TimeTravel(events, InMemoryMarketStore(), live=live)
     return app
@@ -84,7 +84,7 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 
 def get(client: TestClient, at: str, headers: dict[str, str] | None = None) -> Any:
-    return client.get("/v1/time-travel/CHAIWALA", params={"at": at}, headers=headers or TRADER)
+    return client.get("/v1/time-travel/CALVERA", params={"at": at}, headers=headers or TRADER)
 
 
 def test_the_answer_is_the_book_at_t_with_its_hash(client: TestClient, exchange: Exchange) -> None:

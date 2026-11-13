@@ -25,7 +25,7 @@ from tests.fakes import InMemoryPortfolioStore
 
 HUMANS = ("Raju", "Meera", "Asha")
 BOTS = ("bot-01", "bot-02")
-TICKER, REFERENCE = "CHAIWALA", 24550
+TICKER, REFERENCE = "CALVERA", 24550
 
 
 @dataclass(frozen=True)

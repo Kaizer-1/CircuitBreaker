@@ -39,7 +39,7 @@ or expiry is never published before its order's `OrderPlaced`.
 [ADR-0017 note](../../docs/adr/0017-fail-closed-orphan-release.md#note-no-time-limit-for-cancels-and-expiries-phase-4)):
 until the engine answers them the money stays reserved, so they are retried however long Redpanda was away. The relay
 reads the outbox from the cursor in `outbox_cursor` (the oldest minute that may still hold a row) instead of the last 15
-minutes, which once left three `DABBA` bids that could never be cancelled. A-07 on an order whose cancel is pending, and
+minutes, which once left three `ASTRYX` bids that could never be cancelled. A-07 on an order whose cancel is pending, and
 a repeated A-19, put the same stored request back in the outbox and send it again: the engine drops the second copy by
 `event_id`. `tests/integration/test_outbox_outage.py` stops a real Redpanda for 25 (virtual) minutes and checks that both
 requests arrive afterwards.

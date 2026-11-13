@@ -162,7 +162,7 @@ class RecordingPublisher:
     async def publish_raw(self, topic: str, key: bytes | None, value: bytes) -> None:
         self.raw.append((topic, value))
 
-    def candles_closed(self, ticker: str = "CHAIWALA") -> list[dict[str, Any]]:
+    def candles_closed(self, ticker: str = "CALVERA") -> list[dict[str, Any]]:
         return [
             e.data
             for _, _, e in self.sent
@@ -187,7 +187,7 @@ class _Resting:
 class Exchange:
     """One ticker's book, deciding like the engine and emitting the events it would publish."""
 
-    ticker: str = "CHAIWALA"
+    ticker: str = "CALVERA"
     clock: Clock = field(default_factory=Clock)
     bids: list[_Resting] = field(default_factory=list)  # best first, then time
     asks: list[_Resting] = field(default_factory=list)

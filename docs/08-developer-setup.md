@@ -291,7 +291,7 @@ Only port 5173 needs to be reachable. The page calls the API on the same address
 **not a secure context**, unlike `localhost`, so the page runs exactly as on a phone. A **secure context** is a page
 served over https or from localhost; browsers keep some APIs (for example `crypto.randomUUID`) for secure contexts
 only. In both skins at 390×844, as test account `load-13` (never on the leaderboard), the check:
-- buys 1 CHAIWALA at market through the order ticket and waits for it in Holdings;
+- buys 1 CALVERA at market through the order ticket and waits for it in Holdings;
 - sends the same order key again and expects no second order;
 - taps each F-key tab;
 - fails on any console error.

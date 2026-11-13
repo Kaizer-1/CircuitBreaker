@@ -44,8 +44,8 @@ paths:
                 $ref: '#/components/schemas/InstrumentList'
               example:
                 instruments:
-                  - ticker: CHAIWALA
-                    name: Chaiwala Beverages Ltd
+                  - ticker: CALVERA
+                    name: Calvera Consumer Ltd
                     tick_size_paise: 5
                     lot_size: 1
                     reference_price_paise: 24550
@@ -57,8 +57,8 @@ paths:
                     change_percent: 0.2
                     day_volume: 18230
                     updated_at: '2026-11-20T10:42:05.000Z'
-                  - ticker: MONSOON
-                    name: Monsoon Power Ltd
+                  - ticker: HELIOR
+                    name: Helior Power Ltd
                     tick_size_paise: 5
                     lot_size: 1
                     reference_price_paise: 8820
@@ -117,7 +117,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/CandleSeries'
               example:
-                ticker: CHAIWALA
+                ticker: CALVERA
                 interval: 1m
                 candles:
                   - bucket_start: '2026-11-20T10:41:00Z'
@@ -155,7 +155,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/OrderBookDepth'
               example:
-                ticker: CHAIWALA
+                ticker: CALVERA
                 as_of_sequence: 1042
                 as_of: '2026-11-20T10:42:01.263Z'
                 best_bid_paise: 24600
@@ -200,7 +200,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/TradeList'
               example:
-                ticker: CHAIWALA
+                ticker: CALVERA
                 trades:
                   - trade_id: a0b1c2d3-e4f5-4a6b-8c7d-8e9f0a1b2c3d
                     sequence: 1042
@@ -248,12 +248,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/TimeTravelView'
               example:
-                ticker: CHAIWALA
+                ticker: CALVERA
                 at: '2026-11-20T10:42:15Z'
                 as_of_sequence: 1187
                 last_price_paise: 24570
                 order_book:
-                  ticker: CHAIWALA
+                  ticker: CALVERA
                   as_of_sequence: 1187
                   as_of: '2026-11-20T10:42:14.870Z'
                   best_bid_paise: 24565

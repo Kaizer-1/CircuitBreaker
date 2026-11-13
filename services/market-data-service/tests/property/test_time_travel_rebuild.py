@@ -53,8 +53,8 @@ def test_the_market_rebuilt_at_any_moment_equals_the_live_market_then(
     commands: list[Command], snapshot_every: int, probes: list[int], picks: list[int]
 ) -> None:
     exchange, events = Exchange(), FakeEventStore()
-    events.events["CHAIWALA"] = exchange.log
-    events.history["CHAIWALA"] = []
+    events.events["CALVERA"] = exchange.log
+    events.history["CALVERA"] = []
     empty_hash = exchange.state_hash()
     recorded: list[tuple[int, str]] = []  # (time of the last event, live hash), in order
     last_snapshot = 0
@@ -64,7 +64,7 @@ def test_the_market_rebuilt_at_any_moment_equals_the_live_market_then(
             continue
         recorded.append((ms(exchange.as_of), exchange.state_hash()))
         if exchange.sequence - last_snapshot >= snapshot_every:  # the engine's rule (P-03)
-            events.history["CHAIWALA"].append(exchange.snapshot())
+            events.history["CALVERA"].append(exchange.snapshot())
             last_snapshot = exchange.sequence
     time_travel = TimeTravel(events, InMemoryMarketStore())
     times = [t for t, _ in recorded]
@@ -73,19 +73,19 @@ def test_the_market_rebuilt_at_any_moment_equals_the_live_market_then(
 
     for at in moments:
         live = recorded[bisect_right(times, at) - 1][1] if bisect_right(times, at) else empty_hash
-        book = asyncio.run(time_travel.rebuild("CHAIWALA", at))
+        book = asyncio.run(time_travel.rebuild("CALVERA", at))
         assert book.state_hash() == live, f"rebuild at {at} (sequence {book.sequence})"
 
 
 def test_a_rebuild_reads_only_the_events_after_the_nearest_snapshot() -> None:
     exchange, events = Exchange(), FakeEventStore()
-    events.events["CHAIWALA"] = exchange.log
+    events.events["CALVERA"] = exchange.log
     for n in range(40):
         exchange.place(TRADERS[n % 3], "BUY" if n % 2 else "SELL", 5, 500 + 5 * (n % 3))
         exchange.advance(1)
         if n == 30:
-            events.history["CHAIWALA"] = [exchange.snapshot()]
-    snap = events.history["CHAIWALA"][0]
+            events.history["CALVERA"] = [exchange.snapshot()]
+    snap = events.history["CALVERA"][0]
     applied: list[int] = []
 
     class Counting(FakeEventStore):
@@ -98,7 +98,7 @@ def test_a_rebuild_reads_only_the_events_after_the_nearest_snapshot() -> None:
     counting.events, counting.history = events.events, events.history
     assert exchange.as_of is not None
     book = asyncio.run(
-        TimeTravel(counting, InMemoryMarketStore()).rebuild("CHAIWALA", ms(exchange.as_of))
+        TimeTravel(counting, InMemoryMarketStore()).rebuild("CALVERA", ms(exchange.as_of))
     )
     assert book.state_hash() == exchange.state_hash()
     assert applied and applied[0] == snap.sequence + 1  # nothing before the snapshot is read

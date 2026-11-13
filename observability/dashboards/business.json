@@ -1120,7 +1120,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "CHAIWALA"
+              "options": "CALVERA"
             },
             "properties": [
               {
@@ -1135,7 +1135,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "JUGAAD"
+              "options": "KORVIN"
             },
             "properties": [
               {
@@ -1150,7 +1150,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "DABBA"
+              "options": "ASTRYX"
             },
             "properties": [
               {
@@ -1165,7 +1165,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "MONSOON"
+              "options": "HELIOR"
             },
             "properties": [
               {
@@ -1180,7 +1180,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "FILMY"
+              "options": "TAVIRA"
             },
             "properties": [
               {

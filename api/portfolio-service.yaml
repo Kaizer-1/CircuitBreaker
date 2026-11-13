@@ -50,7 +50,7 @@ paths:
                 reserved_cash_paise: 738000
                 available_cash_paise: 8771000
                 holdings:
-                  - ticker: CHAIWALA
+                  - ticker: CALVERA
                     quantity: 20
                     reserved_quantity: 0
                     available_quantity: 20
@@ -198,7 +198,7 @@ paths:
                 value:
                   order_id: 7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12
                   trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
-                  ticker: CHAIWALA
+                  ticker: CALVERA
                   side: BUY
                   order_type: LIMIT
                   quantity: 50
@@ -208,7 +208,7 @@ paths:
                 value:
                   order_id: 2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d
                   trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
-                  ticker: MONSOON
+                  ticker: HELIOR
                   side: BUY
                   order_type: MARKET
                   quantity: 100
@@ -280,7 +280,7 @@ paths:
                     title: Not enough shares
                     status: 422
                     code: INSUFFICIENT_SHARES
-                    detail: You have 20 available CHAIWALA shares; this order sells 50.
+                    detail: You have 20 available CALVERA shares; this order sells 50.
                     correlation_id: req-6a7b8c
 components:
   schemas:

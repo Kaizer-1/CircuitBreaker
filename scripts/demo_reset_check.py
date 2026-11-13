@@ -16,7 +16,7 @@ import sys
 
 from stack import COMPOSE, ENGINE, bot, http, wait_until_ready
 
-TICKERS = ("CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY")
+TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
 BOT_CASH_PAISE = 50_000_000
 BOT_SHARES = 1_000
 

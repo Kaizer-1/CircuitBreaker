@@ -16,7 +16,7 @@ from matching_engine.domain.model import (
 )
 
 T0 = "2026-11-20T10:42:01.250Z"
-TICKER = "CHAIWALA"
+TICKER = "CALVERA"
 
 # Traders and orders get readable but valid UUIDs: trader 1 is ...-000000000001.
 ALICE = "a11ce000-0000-4000-8000-000000000001"

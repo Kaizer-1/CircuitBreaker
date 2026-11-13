@@ -16,7 +16,7 @@ def event(sequence: int) -> dict[str, Any]:
     body: dict[str, Any] = json.loads(
         build_event(
             "OrderCancelRejected",
-            {"sequence": sequence, "ticker": "CHAIWALA"},
+            {"sequence": sequence, "ticker": "CALVERA"},
             producer="matching-engine",
             environment="dev",
             correlation_id="c",
@@ -37,7 +37,7 @@ async def test_events_after_reads_every_page_in_order() -> None:
         return httpx.Response(
             200,
             json={
-                "ticker": "CHAIWALA",
+                "ticker": "CALVERA",
                 "events": page,
                 "next_after_sequence": last,
                 "has_more": bool(last and last < 5),
@@ -46,20 +46,20 @@ async def test_events_after_reads_every_page_in_order() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
         store = HttpEventStore("http://engine/", client)
-        got = [e.data["sequence"] async for e in store.events_after("CHAIWALA", 0)]
+        got = [e.data["sequence"] async for e in store.events_after("CALVERA", 0)]
     assert got == [1, 2, 3, 4, 5]
     assert [p["after_sequence"] for p in seen] == ["0", "2", "4"]
-    assert seen[0]["limit"] == "1000" and seen[0]["ticker"] == "CHAIWALA"
+    assert seen[0]["limit"] == "1000" and seen[0]["ticker"] == "CALVERA"
 
 
 async def test_snapshot_reads_q15_at_a_time() -> None:
     def answer(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/internal/v1/snapshots/DABBA"
+        assert request.url.path == "/internal/v1/snapshots/ASTRYX"
         assert request.url.params["at"].endswith("Z")
         return httpx.Response(
             200,
             json={
-                "ticker": "DABBA",
+                "ticker": "ASTRYX",
                 "sequence": 9,
                 "as_of": "x",
                 "bids": [],
@@ -68,7 +68,7 @@ async def test_snapshot_reads_q15_at_a_time() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(answer)) as client:
-        snap = await HttpEventStore("http://engine", client).snapshot("DABBA", 1_795_000_000_000)
+        snap = await HttpEventStore("http://engine", client).snapshot("ASTRYX", 1_795_000_000_000)
     assert (snap.sequence, snap.bids, len(snap.asks)) == (9, [], 1)
 
 
@@ -77,7 +77,7 @@ async def test_an_engine_error_is_raised_so_the_caller_retries() -> None:
         transport=httpx.MockTransport(lambda r: httpx.Response(503))
     ) as client:
         with pytest.raises(httpx.HTTPStatusError):
-            await HttpEventStore("http://engine", client).snapshot("DABBA", 0)
+            await HttpEventStore("http://engine", client).snapshot("ASTRYX", 0)
 
 
 class _TP:

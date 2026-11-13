@@ -89,17 +89,17 @@ async def send_while_the_broker_is_stopped(
     """before → (broker stops) → lost, abandoned after 1 s like the relay does → (broker returns
     after D + 2 s) → after. Returns what ended up on the topic."""
     container, bootstrap = redpanda
-    await publisher.publish(topic, "CHAIWALA", message("before"))  # leader now known
+    await publisher.publish(topic, "CALVERA", message("before"))  # leader now known
 
     docker = container.get_wrapped_container()
     docker.stop(timeout=1)
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(publisher.publish(topic, "CHAIWALA", message("lost")), 1.0)
+        await asyncio.wait_for(publisher.publish(topic, "CALVERA", message("lost")), 1.0)
     await asyncio.sleep(DELIVERY_TIMEOUT + 2)  # past the client's deadline, then the broker returns
     docker.start()
     await wait_until_up(container, bootstrap)
 
-    await asyncio.wait_for(publisher.publish(topic, "CHAIWALA", message("after")), 30)
+    await asyncio.wait_for(publisher.publish(topic, "CALVERA", message("after")), 30)
     await asyncio.sleep(1)  # anything the client still held has had time to arrive
     return await labels_on(bootstrap, topic)
 
@@ -138,11 +138,11 @@ async def test_a_bounded_send_gives_up_within_its_deadline_while_the_broker_is_d
     await publisher.start()
     docker = container.get_wrapped_container()
     try:
-        await publisher.publish(topic, "CHAIWALA", message("before"))
+        await publisher.publish(topic, "CALVERA", message("before"))
         docker.stop(timeout=1)
         started = time.monotonic()
         with pytest.raises(KafkaError):
-            await asyncio.wait_for(publisher.publish(topic, "CHAIWALA", message("lost")), 30)
+            await asyncio.wait_for(publisher.publish(topic, "CALVERA", message("lost")), 30)
         assert time.monotonic() - started <= DELIVERY_TIMEOUT + 0.5
     finally:
         docker.start()

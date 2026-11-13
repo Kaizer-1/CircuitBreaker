@@ -7,7 +7,7 @@
 // (not a secure context) without a network; give a LAN address instead to use the real one.
 // At 390×844, in both skins, as a load-test account (load-13, kind LOAD: never on the leaderboard):
 //   1. the page is not a secure context and has no crypto.randomUUID (else the check proves nothing);
-//   2. a MARKET buy of 1 CHAIWALA through the order ticket is sent with a v4 Idempotency-Key, fills,
+//   2. a MARKET buy of 1 CALVERA through the order ticket is sent with a v4 Idempotency-Key, fills,
 //      and appears in Holdings; the same key sent again returns the same order (no second buy);
 //   3. terminal skin: each F-key tab scrolls its section to the top and lights up, with no reload
 //      and no #hash; paper skin: no tab bar;
@@ -20,7 +20,7 @@ import { chromium } from 'playwright'
 const base = new URL(process.argv[2] ?? 'http://localhost:5173')
 const botSecret = process.env.BOT_SECRET ?? 'cb-dev-bot-secret'
 const ACCOUNT = 'load-13'
-const TICKER = 'CHAIWALA'
+const TICKER = 'CALVERA'
 const V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const local = ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)
 const origin = local ? `http://cb.test${base.port ? `:${base.port}` : ''}` : base.origin
@@ -134,7 +134,7 @@ try {
     check(placed.ok(), `order accepted by the gateway (HTTP ${placed.status()})`)
     check(V4.test(key ?? ''), `Idempotency-Key is an RFC 4122 v4 UUID (${key})`)
     const order = await placed.json()
-    // "Order sent…" until the fill arrives, then "Bought 1 CHAIWALA at …" (it can come first).
+    // "Order sent…" until the fill arrives, then "Bought 1 CALVERA at …" (it can come first).
     await page
       .getByRole('status')
       .filter({ hasText: new RegExp(`Order sent|Bought 1 ${TICKER}`) })

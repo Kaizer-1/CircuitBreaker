@@ -42,7 +42,7 @@ function exchange(place: () => Promise<Response>) {
   vi.stubGlobal('fetch', fetch)
   return fetch
 }
-const buy = () => fireEvent.click(screen.getByRole('button', { name: /BUY 10 CHAIWALA/ }))
+const buy = () => fireEvent.click(screen.getByRole('button', { name: /BUY 10 CALVERA/ }))
 
 beforeEach(() => {
   // The phone's origin: no randomUUID (a secure-context-only API), getRandomValues as everywhere.
@@ -64,9 +64,9 @@ describe.each(BOTH)('placing an order from a phone on http (%s theme)', (theme) 
     const fetch = exchange(() => json(202, { order_id: 'o1', status: 'PENDING' }))
     render(<Trade />)
     buy()
-    expect(await screen.findByRole('status')).toHaveTextContent('Order sent: BUY 10 CHAIWALA')
+    expect(await screen.findByRole('status')).toHaveTextContent('Order sent: BUY 10 CALVERA')
     const [, init] = fetch.mock.calls.find(([, i]) => i?.method === 'POST')!
-    expect(JSON.parse(init!.body as string)).toMatchObject({ ticker: 'CHAIWALA', side: 'BUY' })
+    expect(JSON.parse(init!.body as string)).toMatchObject({ ticker: 'CALVERA', side: 'BUY' })
     expect((init!.headers as Record<string, string>)['Idempotency-Key']).toMatch(V4)
   })
 

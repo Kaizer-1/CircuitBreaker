@@ -55,7 +55,7 @@ async def test_events_are_stored_before_they_are_published(
     assert calls[:2] == ["append.before", "append.after"]
     assert calls.index("append.after") < calls.index("publish.before")
     assert calls[-1] == "cursor.after"
-    assert store.cursors["CHAIWALA"] == 1
+    assert store.cursors["CALVERA"] == 1
 
 
 async def test_published_events_have_the_catalog_envelope(
@@ -65,7 +65,7 @@ async def test_published_events_have_the_catalog_envelope(
     command = limit(1, ALICE, "BUY", 10, 24600)
     await engine.handle(command)
     [(ticker, event)] = publisher.sent
-    assert ticker == "CHAIWALA"
+    assert ticker == "CALVERA"
     assert (event.event_type, event.producer, event.environment) == (
         "OrderAccepted",
         "matching-engine",
@@ -87,7 +87,7 @@ async def test_a_duplicate_command_is_skipped(
     command = limit(1, ALICE, "BUY", 10, 24600)
     assert await engine.handle(command) is not None
     assert await engine.handle(command) is None
-    assert len(store.events["CHAIWALA"]) == 1
+    assert len(store.events["CALVERA"]) == 1
     assert len(publisher.sent) == 1
 
 
@@ -103,14 +103,14 @@ async def test_a_failed_publish_keeps_the_cursor_and_a_restart_sends_the_events(
     publisher.hook = broker_down
     with pytest.raises(ConnectionError):
         await engine.handle(limit(1, ALICE, "BUY", 10, 24600))
-    assert len(store.events["CHAIWALA"]) == 1  # stored: it happened
-    assert store.cursors["CHAIWALA"] == 0  # but not published yet
+    assert len(store.events["CALVERA"]) == 1  # stored: it happened
+    assert store.cursors["CALVERA"] == 0  # but not published yet
 
     publisher.hook = lambda point: None
     restarted = await started(store, publisher)
     assert [e.data["sequence"] for _, e in publisher.sent] == [1]
-    assert store.cursors["CHAIWALA"] == 1
-    assert restarted.book("CHAIWALA").state_hash() == engine.book("CHAIWALA").state_hash()
+    assert store.cursors["CALVERA"] == 1
+    assert restarted.book("CALVERA").state_hash() == engine.book("CALVERA").state_hash()
 
 
 async def test_a_redelivered_command_after_a_failed_publish_publishes_the_backlog(
@@ -144,7 +144,7 @@ async def test_a_failed_append_leaves_the_book_unchanged(
 ) -> None:
     engine = await started(store, publisher)
     await engine.handle(limit(1, BOB, "SELL", 5, 24550))
-    before = engine.book("CHAIWALA").state_hash()
+    before = engine.book("CALVERA").state_hash()
 
     def cassandra_down(point: str) -> None:
         if point == "append.before":
@@ -154,7 +154,7 @@ async def test_a_failed_append_leaves_the_book_unchanged(
     command = limit(2, ALICE, "BUY", 5, 24550)
     with pytest.raises(TimeoutError):
         await engine.handle(command)
-    assert engine.book("CHAIWALA").state_hash() == before
+    assert engine.book("CALVERA").state_hash() == before
     store.hook = lambda point: None
     decision = await engine.handle(command)  # the consumer retries the same command
     assert decision is not None and len(decision.events) == 2
@@ -166,9 +166,9 @@ async def test_a_snapshot_is_taken_every_n_events_per_ticker(
     engine = await started(store, publisher, snapshot_every=3)
     for n in range(1, 8):
         await engine.handle(limit(n, ALICE, "BUY", 1, 24000 + 5 * n))
-    await engine.handle(limit(20, ALICE, "BUY", 1, 118000, ticker="JUGAAD"))
-    assert [s["sequence"] for s in store.snapshots["CHAIWALA"]] == [3, 6]
-    assert store.snapshots["JUGAAD"] == []
+    await engine.handle(limit(20, ALICE, "BUY", 1, 118000, ticker="KORVIN"))
+    assert [s["sequence"] for s in store.snapshots["CALVERA"]] == [3, 6]
+    assert store.snapshots["KORVIN"] == []
 
 
 async def test_a_failed_snapshot_loses_nothing_and_is_tried_again(
@@ -184,11 +184,11 @@ async def test_a_failed_snapshot_loses_nothing_and_is_tried_again(
     await engine.handle(limit(1, ALICE, "BUY", 1, 24000))
     with pytest.raises(OSError):
         await engine.handle(limit(2, ALICE, "BUY", 1, 24005))
-    assert len(store.events["CHAIWALA"]) == 2
+    assert len(store.events["CALVERA"]) == 2
     store.hook = lambda point: None
     await engine.handle(limit(3, ALICE, "BUY", 1, 24010))
-    assert [s["sequence"] for s in store.snapshots["CHAIWALA"]] == [3]
-    assert len(publisher.first_copies("CHAIWALA")) == 3
+    assert [s["sequence"] for s in store.snapshots["CALVERA"]] == [3]
+    assert len(publisher.first_copies("CALVERA")) == 3
 
 
 async def test_recovery_loads_the_latest_snapshot_and_replays_only_the_events_after_it(
@@ -200,7 +200,7 @@ async def test_recovery_loads_the_latest_snapshot_and_replays_only_the_events_af
     store.reads = 0
     restarted = await started(store, publisher, snapshot_every=5)
     assert store.reads == 2  # sequence 10 is the latest snapshot; events 11 and 12 are replayed
-    assert restarted.book("CHAIWALA").state_hash() == engine.book("CHAIWALA").state_hash()
+    assert restarted.book("CALVERA").state_hash() == engine.book("CALVERA").state_hash()
 
 
 async def test_killing_the_engine_and_rebuilding_from_the_store_gives_the_same_hash(
@@ -215,7 +215,7 @@ async def test_killing_the_engine_and_rebuilding_from_the_store_gives_the_same_h
         limit(5, BOB, "BUY", 7, 24400),
         cancel(5, BOB),
         expire(6, ALICE),
-        limit(7, CARA, "BUY", 2, 24300, ticker="JUGAAD"),
+        limit(7, CARA, "BUY", 2, 24300, ticker="KORVIN"),
     ]:
         await engine.handle(command)
     before = engine.books_hash()
@@ -244,7 +244,7 @@ async def test_a_refused_command_is_recorded_as_processed_with_no_events(
     decision = await engine.handle(late)
     assert decision is not None and decision.outcome is Outcome.REFUSED
     assert late.command_id in store.processed
-    assert [e.event_type for e in store.events["CHAIWALA"]] == ["OrderExpired"]
+    assert [e.event_type for e in store.events["CALVERA"]] == ["OrderExpired"]
 
 
 async def test_handle_envelope_parses_commands_and_ignores_unknown_event_types(
@@ -256,7 +256,7 @@ async def test_handle_envelope_parses_commands_and_ignores_unknown_event_types(
         {
             "order_id": "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12",
             "trader_id": ALICE,
-            "ticker": "CHAIWALA",
+            "ticker": "CALVERA",
             "side": "BUY",
             "order_type": "LIMIT",
             "quantity": 50,
@@ -307,8 +307,8 @@ async def test_a_crash_between_append_and_apply_is_healed_by_recovery(
     store.hook = lambda point: None
     restarted = await started(store, publisher)
     assert await restarted.handle(command) is None  # the redelivered command is a duplicate
-    assert restarted.book("CHAIWALA").asks() == []
-    assert [e.event_type for e in publisher.first_copies("CHAIWALA")] == [
+    assert restarted.book("CALVERA").asks() == []
+    assert [e.event_type for e in publisher.first_copies("CALVERA")] == [
         "OrderAccepted",
         "OrderAccepted",
         "TradeExecuted",
@@ -331,7 +331,7 @@ async def test_an_append_that_timed_out_but_was_written_is_found_by_rebuilding(
         await engine.handle(command)
     store.hook = lambda point: None
     assert await engine.handle(command) is None  # rebuilt from the store: already processed
-    assert engine.book("CHAIWALA").best_bid() == 24600
+    assert engine.book("CALVERA").best_bid() == 24600
     await engine.handle(limit(2, BOB, "SELL", 4, 24600))
-    assert [e.data["sequence"] for e in store.events["CHAIWALA"]] == [1, 2, 3]
-    assert [e.data["sequence"] for e in publisher.first_copies("CHAIWALA")] == [1, 2, 3]
+    assert [e.data["sequence"] for e in store.events["CALVERA"]] == [1, 2, 3]
+    assert [e.data["sequence"] for e in publisher.first_copies("CALVERA")] == [1, 2, 3]

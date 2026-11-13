@@ -102,8 +102,8 @@ def closed_with(client: TestClient, url: str, **kwargs: Any) -> int:
 
 def test_without_a_valid_token_the_channel_closes_with_4401(gateway: Any) -> None:
     client, _ = gateway
-    assert closed_with(client, "/v1/ws/market/CHAIWALA") == 4401
-    assert closed_with(client, "/v1/ws/market/CHAIWALA?access_token=forged") == 4401
+    assert closed_with(client, "/v1/ws/market/CALVERA") == 4401
+    assert closed_with(client, "/v1/ws/market/CALVERA?access_token=forged") == 4401
 
 
 def test_the_portfolio_stream_is_for_traders_and_bots_only(gateway: Any) -> None:
@@ -133,22 +133,22 @@ def test_identity_comes_only_from_the_token_never_from_the_client(gateway: Any) 
 def test_an_admin_watches_the_market_without_a_trader_id(gateway: Any) -> None:
     client, app = gateway
     admin = token(app, Role.ADMIN, "presenter", "presenter")
-    with client.websocket_connect(f"/v1/ws/market/CHAIWALA?access_token={admin}") as ws:
+    with client.websocket_connect(f"/v1/ws/market/CALVERA?access_token={admin}") as ws:
         hello = ws.receive_json()
     assert "x-trader-id" not in hello["headers"] and hello["headers"]["x-role"] == "admin"
 
 
 def test_other_query_parameters_are_passed_on(gateway: Any) -> None:
     client, app = gateway
-    url = f"/v1/ws/replay/CHAIWALA?from=2026-11-20T10:00:00Z&speed=10&access_token={token(app)}"
+    url = f"/v1/ws/replay/CALVERA?from=2026-11-20T10:00:00Z&speed=10&access_token={token(app)}"
     with client.websocket_connect(url) as ws:
         hello = ws.receive_json()
-    assert hello["path"] == "/v1/ws/replay/CHAIWALA?from=2026-11-20T10%3A00%3A00Z&speed=10"
+    assert hello["path"] == "/v1/ws/replay/CALVERA?from=2026-11-20T10%3A00%3A00Z&speed=10"
 
 
 def test_messages_are_relayed_both_ways_and_close_codes_pass_through(gateway: Any) -> None:
     client, app = gateway
-    with client.websocket_connect(f"/v1/ws/market/CHAIWALA?access_token={token(app)}") as ws:
+    with client.websocket_connect(f"/v1/ws/market/CALVERA?access_token={token(app)}") as ws:
         ws.receive_json()
         ws.send_json({"type": "pong"})
         assert ws.receive_json() == {"type": "echo", "data": {"type": "pong"}}
@@ -163,7 +163,7 @@ def test_try_again_later_reaches_the_client_and_other_upstream_codes_become_1011
     gateway: Any, upstream: int, client_sees: int
 ) -> None:
     client, app = gateway
-    with client.websocket_connect(f"/v1/ws/replay/CHAIWALA?access_token={token(app)}") as ws:
+    with client.websocket_connect(f"/v1/ws/replay/CALVERA?access_token={token(app)}") as ws:
         ws.receive_json()
         ws.send_json({"type": "close", "code": upstream})
         with pytest.raises(WebSocketDisconnect) as e:
@@ -182,7 +182,7 @@ def test_the_access_token_never_appears_in_the_logs(
     client, app = gateway
     secret = token(app)
     caplog.set_level(logging.DEBUG)
-    with client.websocket_connect(f"/v1/ws/market/CHAIWALA?access_token={secret}") as ws:
+    with client.websocket_connect(f"/v1/ws/market/CALVERA?access_token={secret}") as ws:
         ws.receive_json()
     closed_with(client, f"/v1/ws/incidents?access_token={secret}")  # logs a warning
     assert caplog.records
@@ -199,7 +199,7 @@ def test_uvicorns_websocket_log_line_is_redacted(
     logging.getLogger("uvicorn.error").info(
         '%s - "WebSocket %s" [accepted]',
         "172.20.0.6:57446",
-        "/v1/ws/market/CHAIWALA?access_token=eyJhbGciOi.secret.part&x=1",
+        "/v1/ws/market/CALVERA?access_token=eyJhbGciOi.secret.part&x=1",
     )
     line = capsys.readouterr().out
     assert "eyJhbGciOi" not in line

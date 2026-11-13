@@ -65,7 +65,7 @@ async def test_after_120_seconds_it_asks_for_an_expiry_but_releases_nothing(
     service, raju = await orphan(store, clock)
     clock.now += timedelta(seconds=120)
     assert await sweeper(store, orders, clock).sweep_once() == 1
-    assert orders.requests == [(oid(1), raju, "CHAIWALA")]
+    assert orders.requests == [(oid(1), raju, "CALVERA")]
     # Fail-closed: the money is still reserved until the engine answers.
     assert (await service.portfolio(raju))["reserved_cash_paise"] == 1_230_000
     assert store.state.reservations[oid(1)].expiry_requested_at is not None

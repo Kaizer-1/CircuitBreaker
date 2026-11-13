@@ -62,7 +62,7 @@ def test_a_restored_book_decides_exactly_like_the_original() -> None:
 def test_snapshot_plus_the_events_after_it_equals_folding_every_event() -> None:
     m = busy_market()
     half = len(m.log) // 2
-    folded_half = OrderBook("CHAIWALA")
+    folded_half = OrderBook("CALVERA")
     for event in m.log[:half]:
         folded_half.apply(event)
     from_snapshot = OrderBook.from_snapshot(folded_half.snapshot())
@@ -72,9 +72,9 @@ def test_snapshot_plus_the_events_after_it_equals_folding_every_event() -> None:
 
 
 def test_an_empty_book_snapshots_at_sequence_0() -> None:
-    snapshot = OrderBook("JUGAAD").snapshot()
-    assert (snapshot.ticker, snapshot.sequence, snapshot.as_of) == ("JUGAAD", 0, None)
-    assert OrderBook.from_snapshot(snapshot).state_hash() == OrderBook("JUGAAD").state_hash()
+    snapshot = OrderBook("KORVIN").snapshot()
+    assert (snapshot.ticker, snapshot.sequence, snapshot.as_of) == ("KORVIN", 0, None)
+    assert OrderBook.from_snapshot(snapshot).state_hash() == OrderBook("KORVIN").state_hash()
 
 
 def test_the_hash_ignores_event_ids_but_not_the_state() -> None:

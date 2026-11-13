@@ -22,7 +22,7 @@ def shares(name: str, ticker: str, quantity: int, reserved: int = 0) -> Holding:
     return Holding(f"{name}-id", ticker, quantity, reserved, 24_500)
 
 
-PRICES = {"CHAIWALA": 25_000, "JUGAAD": 10_000}
+PRICES = {"CALVERA": 25_000, "KORVIN": 10_000}
 
 
 def ranks(board: list[dict[str, object]]) -> list[tuple[object, object]]:
@@ -31,9 +31,9 @@ def ranks(board: list[dict[str, object]]) -> list[tuple[object, object]]:
 
 def test_traders_are_ranked_by_cash_plus_shares_at_the_last_price() -> None:
     standings = [
-        (account("Asha", 9_000_000), [shares("Asha", "CHAIWALA", 50)]),  # 9,000,000 + 1,250,000
+        (account("Asha", 9_000_000), [shares("Asha", "CALVERA", 50)]),  # 9,000,000 + 1,250,000
         (account("Bilal", 10_100_000), []),
-        (account("Chitra", 8_000_000), [shares("Chitra", "JUGAAD", 150)]),  # + 1,500,000
+        (account("Chitra", 8_000_000), [shares("Chitra", "KORVIN", 150)]),  # + 1,500,000
     ]
     board = leaderboard(standings, PRICES, 20)
     assert ranks(board) == [(1, "Asha"), (2, "Bilal"), (3, "Chitra")]
@@ -46,7 +46,7 @@ def test_traders_are_ranked_by_cash_plus_shares_at_the_last_price() -> None:
 def test_reserved_cash_and_reserved_shares_still_count() -> None:
     """An open order does not make anyone poorer: the money and shares are still theirs."""
     standings = [
-        (account("Dev", 10_000_000, reserved=4_000_000), [shares("Dev", "CHAIWALA", 10, 10)]),
+        (account("Dev", 10_000_000, reserved=4_000_000), [shares("Dev", "CALVERA", 10, 10)]),
         (account("Esha", 10_200_000), []),
     ]
     board = leaderboard(standings, PRICES, 20)
@@ -69,14 +69,14 @@ def test_equal_net_worth_shares_a_rank_and_the_next_rank_skips() -> None:
 
 def test_a_price_move_reorders_the_board() -> None:
     standings = [
-        (account("Farhan", 5_000_000), [shares("Farhan", "CHAIWALA", 200)]),
+        (account("Farhan", 5_000_000), [shares("Farhan", "CALVERA", 200)]),
         (account("Gita", 10_000_000), []),
     ]
     level = leaderboard(standings, PRICES, 20)  # both worth exactly ₹1,00,000: tied, A to Z
     assert ranks(level) == [(1, "Farhan"), (1, "Gita")]
-    falling = PRICES | {"CHAIWALA": 24_000}  # Farhan's shares lose ₹2,000
+    falling = PRICES | {"CALVERA": 24_000}  # Farhan's shares lose ₹2,000
     assert ranks(leaderboard(standings, falling, 20)) == [(1, "Gita"), (2, "Farhan")]
-    rising = PRICES | {"CHAIWALA": 26_000}
+    rising = PRICES | {"CALVERA": 26_000}
     assert ranks(leaderboard(standings, rising, 20)) == [(1, "Farhan"), (2, "Gita")]
 
 

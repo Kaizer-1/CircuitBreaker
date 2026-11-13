@@ -26,11 +26,11 @@
   }
 
   const tickers = [
-    { ticker: 'CHAIWALA', name: 'Chaiwala Beverages Ltd', ref: 24550, last: 24785 },
-    { ticker: 'JUGAAD', name: 'Jugaad Technologies Ltd', ref: 118000, last: 118640 },
-    { ticker: 'DABBA', name: 'Dabba Logistics Ltd', ref: 41275, last: 41020 },
-    { ticker: 'MONSOON', name: 'Monsoon Power Ltd', ref: 8820, last: 8855 },
-    { ticker: 'FILMY', name: 'Filmy Studios Ltd', ref: 53005, last: 52815 },
+    { ticker: 'CALVERA', name: 'Calvera Consumer Ltd', ref: 24550, last: 24785 },
+    { ticker: 'KORVIN', name: 'Korvin Technologies Ltd', ref: 118000, last: 118640 },
+    { ticker: 'ASTRYX', name: 'Astryx Logistics Ltd', ref: 41275, last: 41020 },
+    { ticker: 'HELIOR', name: 'Helior Power Ltd', ref: 8820, last: 8855 },
+    { ticker: 'TAVIRA', name: 'Tavira Media Ltd', ref: 53005, last: 52815 },
   ].map((t) => ({
     ...t,
     change: t.last - t.ref,
@@ -40,7 +40,7 @@
     volume: 18000 + Math.floor(rnd() * 40000),
   }))
 
-  // 72 five-second candles ending at the hero's last price (CHAIWALA).
+  // 72 five-second candles ending at the hero's last price (CALVERA).
   function candles(last, count = 72) {
     const out = []
     let close = last
@@ -79,10 +79,10 @@
   }
   const hhmmss = (d) => d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false })
 
-  // The phone's portfolio: joined with ₹1,00,000, bought 20 CHAIWALA at 245.50, 5 JUGAAD at 1,181.20.
+  // The phone's portfolio: joined with ₹1,00,000, bought 20 CALVERA at 245.50, 5 KORVIN at 1,181.20.
   const holdings = [
-    { ticker: 'CHAIWALA', qty: 20, avg: 24550, last: 24785 },
-    { ticker: 'JUGAAD', qty: 5, avg: 118120, last: 118640 },
+    { ticker: 'CALVERA', qty: 20, avg: 24550, last: 24785 },
+    { ticker: 'KORVIN', qty: 5, avg: 118120, last: 118640 },
   ].map((h) => ({ ...h, value: h.qty * h.last, pnl: h.qty * (h.last - h.avg) }))
   const cash = 10000000 - 20 * 24550 - 5 * 118120
   const netWorth = cash + holdings.reduce((s, h) => s + h.value, 0)
@@ -96,8 +96,8 @@
     pnlPct: ((netWorth - 10000000) / 10000000) * 100,
   }
   const openOrders = [
-    { side: 'BUY', ticker: 'CHAIWALA', type: 'LIMIT', qty: 2, price: 24600, status: 'OPEN' },
-    { side: 'SELL', ticker: 'JUGAAD', type: 'LIMIT', qty: 3, price: 119500, status: 'PARTIALLY_FILLED', filled: 1 },
+    { side: 'BUY', ticker: 'CALVERA', type: 'LIMIT', qty: 2, price: 24600, status: 'OPEN' },
+    { side: 'SELL', ticker: 'KORVIN', type: 'LIMIT', qty: 3, price: 119500, status: 'PARTIALLY_FILLED', filled: 1 },
   ]
 
   // A candlestick chart as SVG, sized to its box. `c` names the colours (CSS values).

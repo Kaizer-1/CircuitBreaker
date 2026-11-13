@@ -40,7 +40,7 @@ def request(
     return ReservationRequest(
         "7f3c9e10-2b4d-4e6f-8a1b-3c5d7e9f0a12",
         RAJU,
-        "CHAIWALA",
+        "CALVERA",
         Side(side),
         OrderType(kind),
         qty,
@@ -76,7 +76,7 @@ def test_round_half_up() -> None:
 
 def test_a_limit_buy_reserves_quantity_times_limit_price() -> None:
     a = account()
-    r = reserved_for(request(), a, Holding(RAJU, "CHAIWALA"))
+    r = reserved_for(request(), a, Holding(RAJU, "CALVERA"))
     assert (r.reserved_cash_paise, r.remaining_cash_paise, r.protection_price_paise) == (
         1_230_000,
         1_230_000,
@@ -90,7 +90,7 @@ def test_a_limit_buy_reserves_quantity_times_limit_price() -> None:
 def test_a_market_buy_reserves_at_the_protection_price() -> None:
     a = account()
     r = reserved_for(
-        request(kind="MARKET", qty=100, price=None), a, Holding(RAJU, "MONSOON"), last=8820
+        request(kind="MARKET", qty=100, price=None), a, Holding(RAJU, "HELIOR"), last=8820
     )
     assert (r.protection_price_paise, r.reserved_cash_paise) == (
         9705,
@@ -101,20 +101,20 @@ def test_a_market_buy_reserves_at_the_protection_price() -> None:
 def test_no_margin_a_buy_needing_more_than_the_available_cash_is_refused() -> None:
     a = account(cash=950_000)
     with pytest.raises(InsufficientFundsError) as refused:
-        reserved_for(request(), a, Holding(RAJU, "CHAIWALA"))
+        reserved_for(request(), a, Holding(RAJU, "CALVERA"))
     assert (refused.value.needed, refused.value.available) == (1_230_000, 950_000)
     assert a.reserved_cash_paise == 0
 
 
 def test_reserved_cash_is_not_available_twice() -> None:
     a = account(cash=2_000_000)
-    reserved_for(request(), a, Holding(RAJU, "CHAIWALA"))
+    reserved_for(request(), a, Holding(RAJU, "CALVERA"))
     with pytest.raises(InsufficientFundsError):
-        reserved_for(request(), a, Holding(RAJU, "CHAIWALA"))
+        reserved_for(request(), a, Holding(RAJU, "CALVERA"))
 
 
 def test_a_sell_reserves_shares_and_short_selling_is_refused() -> None:
-    h = Holding(RAJU, "CHAIWALA", quantity=20)
+    h = Holding(RAJU, "CALVERA", quantity=20)
     r = reserved_for(request(side="SELL", qty=15), account(), h)
     assert (r.reserved_quantity, r.reserved_cash_paise, h.reserved_quantity) == (15, 0, 15)
     with pytest.raises(InsufficientSharesError) as refused:
@@ -124,14 +124,14 @@ def test_a_sell_reserves_shares_and_short_selling_is_refused() -> None:
 
 def test_a_limit_order_needs_a_price_and_a_market_order_must_not_have_one() -> None:
     with pytest.raises(InvalidReservationError):
-        reserved_for(request(price=None), account(), Holding(RAJU, "CHAIWALA"))
+        reserved_for(request(price=None), account(), Holding(RAJU, "CALVERA"))
     with pytest.raises(InvalidReservationError):
-        reserved_for(request(kind="MARKET", price=24600), account(), Holding(RAJU, "CHAIWALA"))
+        reserved_for(request(kind="MARKET", price=24600), account(), Holding(RAJU, "CALVERA"))
 
 
 def test_a_buy_with_price_improvement_releases_the_leftover_when_it_finishes() -> None:
     # Sequence diagram 3: reserved 50 x 24600, filled 20 @ 24550 then 30 @ 24600.
-    a, h = account(), Holding(RAJU, "CHAIWALA")
+    a, h = account(), Holding(RAJU, "CALVERA")
     r = reserved_for(request(), a, h)
     settle_buy(r, a, h, order_id=r.order_id, quantity=20, price_paise=24550, order_remaining=30)
     assert (a.cash_paise, a.reserved_cash_paise, h.quantity, h.avg_cost_paise) == (
@@ -148,7 +148,7 @@ def test_a_buy_with_price_improvement_releases_the_leftover_when_it_finishes() -
 
 
 def test_a_sell_turns_reserved_shares_into_cash() -> None:
-    a, h = account(cash=0), Holding(RAJU, "CHAIWALA", quantity=20, avg_cost_paise=24000)
+    a, h = account(cash=0), Holding(RAJU, "CALVERA", quantity=20, avg_cost_paise=24000)
     r = reserved_for(request(side="SELL", qty=20), a, h)
     settle_sell(r, a, h, order_id=r.order_id, quantity=20, price_paise=24550, order_remaining=0)
     assert (a.cash_paise, h.quantity, h.reserved_quantity, h.avg_cost_paise) == (491_000, 0, 0, 0)
@@ -156,7 +156,7 @@ def test_a_sell_turns_reserved_shares_into_cash() -> None:
 
 
 def test_a_partial_sell_keeps_the_average_cost() -> None:
-    a, h = account(cash=0), Holding(RAJU, "CHAIWALA", quantity=20, avg_cost_paise=24000)
+    a, h = account(cash=0), Holding(RAJU, "CALVERA", quantity=20, avg_cost_paise=24000)
     r = reserved_for(request(side="SELL", qty=20), a, h)
     settle_sell(r, a, h, order_id=r.order_id, quantity=5, price_paise=24550, order_remaining=15)
     assert (h.quantity, h.reserved_quantity, h.avg_cost_paise, r.remaining_quantity) == (
@@ -168,14 +168,14 @@ def test_a_partial_sell_keeps_the_average_cost() -> None:
 
 
 def test_release_returns_what_is_left_and_empties_the_reservation() -> None:
-    a, h = account(), Holding(RAJU, "CHAIWALA")
+    a, h = account(), Holding(RAJU, "CALVERA")
     r = reserved_for(request(), a, h)
     assert release(r, a, h) == 1_230_000
     assert (a.reserved_cash_paise, r.remaining_cash_paise) == (0, 0)
 
 
 def test_a_trade_on_money_that_is_not_reserved_is_refused() -> None:
-    a, h = account(), Holding(RAJU, "CHAIWALA")
+    a, h = account(), Holding(RAJU, "CALVERA")
     r = reserved_for(request(), a, h)
     with pytest.raises(SettlementError, match="costs"):
         settle_buy(r, a, h, order_id=r.order_id, quantity=51, price_paise=24600, order_remaining=0)
@@ -184,12 +184,12 @@ def test_a_trade_on_money_that_is_not_reserved_is_refused() -> None:
         settle_buy(r, a, h, order_id=r.order_id, quantity=1, price_paise=24600, order_remaining=49)
     with pytest.raises(SettlementError, match="missing"):
         settle_buy(None, a, h, order_id="x", quantity=1, price_paise=24600, order_remaining=0)
-    s = reserved_for(request(side="SELL", qty=5), a, Holding(RAJU, "CHAIWALA", quantity=5))
+    s = reserved_for(request(side="SELL", qty=5), a, Holding(RAJU, "CALVERA", quantity=5))
     with pytest.raises(SettlementError, match="sells"):
         settle_sell(
             s,
             a,
-            Holding(RAJU, "CHAIWALA", 5, 5),
+            Holding(RAJU, "CALVERA", 5, 5),
             order_id="y",
             quantity=6,
             price_paise=1,
@@ -200,9 +200,9 @@ def test_a_trade_on_money_that_is_not_reserved_is_refused() -> None:
 def test_the_portfolio_view_matches_the_spec_example() -> None:
     # api/portfolio-service.yaml, getMyPortfolio example.
     a = Account(RAJU, "RajuTrader", AccountKind.HUMAN, 9_509_000, 738_000, 10_000_000, T0)
-    holdings = [Holding(RAJU, "CHAIWALA", 20, 0, 24550), Holding(RAJU, "JUGAAD")]  # JUGAAD: empty
+    holdings = [Holding(RAJU, "CALVERA", 20, 0, 24550), Holding(RAJU, "KORVIN")]  # KORVIN: empty
     view = portfolio_view(
-        a, holdings, {"CHAIWALA": 24600, "JUGAAD": 118000}, "2026-11-20T10:42:05.000Z"
+        a, holdings, {"CALVERA": 24600, "KORVIN": 118000}, "2026-11-20T10:42:05.000Z"
     )
     assert view == {
         "trader_id": RAJU,
@@ -213,7 +213,7 @@ def test_the_portfolio_view_matches_the_spec_example() -> None:
         "available_cash_paise": 8_771_000,
         "holdings": [
             {
-                "ticker": "CHAIWALA",
+                "ticker": "CALVERA",
                 "quantity": 20,
                 "reserved_quantity": 0,
                 "available_quantity": 20,

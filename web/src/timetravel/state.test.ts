@@ -36,7 +36,7 @@ function trade(sequence: number, at: number, price: number): Trade {
   }
 }
 const book = (sequence: number) => ({
-  ticker: 'CHAIWALA' as const,
+  ticker: 'CALVERA' as const,
   as_of_sequence: sequence,
   as_of: iso(T),
   best_bid_paise: 24500,
@@ -46,7 +46,7 @@ const book = (sequence: number) => ({
   asks: [{ price_paise: 24510, quantity: 5, order_count: 1 }],
 })
 const view = (verification: TimeTravelView['verification'] = null): TimeTravelView => ({
-  ticker: 'CHAIWALA',
+  ticker: 'CALVERA',
   at: iso(T),
   as_of_sequence: 40,
   last_price_paise: 24505,

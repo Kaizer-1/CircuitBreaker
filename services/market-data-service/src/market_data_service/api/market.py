@@ -30,7 +30,7 @@ from market_data_service.runtime.problem import problem_response
 
 logger = logging.getLogger("api")
 
-Ticker = Literal["CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY"]
+Ticker = Literal["CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA"]
 Interval = Literal["5s", "1m", "5m"]
 PING_EVERY_SECONDS = 15.0  # api/README.md: server pings every 15 s,
 PONG_TIMEOUT_SECONDS = 45.0  # and closes the connection after 45 s without a pong

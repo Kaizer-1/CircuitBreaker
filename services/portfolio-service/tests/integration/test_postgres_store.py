@@ -171,7 +171,7 @@ async def test_the_leaderboard_reads_humans_with_their_shares_and_marks_them_to_
         everyone = await tx.standings([AccountKind.HUMAN, AccountKind.BOT])
     assert sorted(a.nickname for a, _ in humans) == ["Meera", "Raju"]
     held = {a.nickname: [(h.ticker, h.quantity) for h in hs] for a, hs in humans}
-    assert held == {"Meera": [("CHAIWALA", 40)], "Raju": []}
+    assert held == {"Meera": [("CALVERA", 40)], "Raju": []}
     assert sum(a.kind is AccountKind.BOT for a, _ in everyone) == 20
     assert all(a.kind is not AccountKind.LOAD for a, _ in everyone)
 

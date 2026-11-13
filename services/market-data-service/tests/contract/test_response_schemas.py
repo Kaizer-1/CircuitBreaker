@@ -66,7 +66,7 @@ def test_rest_answers_and_websocket_messages_match_the_spec(settings: Settings) 
         client.portal.call(m.projection.start)
         app.state.projection, app.state.hub = m.projection, m.hub
         app.state.store = m.projection._store
-        with client.websocket_connect("/v1/ws/market/CHAIWALA") as ws:
+        with client.websocket_connect("/v1/ws/market/CALVERA") as ws:
             snapshot = ws.receive_json()
             for _ in range(30):
                 client.portal.call(m.step)
@@ -78,18 +78,18 @@ def test_rest_answers_and_websocket_messages_match_the_spec(settings: Settings) 
                 seen.add(message["type"])
 
         instruments = client.get("/v1/instruments").json()
-        candles = client.get("/v1/market/CHAIWALA/candles", params={"interval": "5s"}).json()
-        book = client.get("/v1/market/CHAIWALA/order-book", params={"depth": 5}).json()
-        trades = client.get("/v1/market/CHAIWALA/trades", params={"limit": 20}).json()
+        candles = client.get("/v1/market/CALVERA/candles", params={"interval": "5s"}).json()
+        book = client.get("/v1/market/CALVERA/order-book", params={"depth": 5}).json()
+        trades = client.get("/v1/market/CALVERA/trades", params={"limit": 20}).json()
         bad = client.get("/v1/market/NOPE/order-book")
 
     check("InstrumentList", instruments)
     assert [i["ticker"] for i in instruments["instruments"]] == [
-        "CHAIWALA",
-        "JUGAAD",
-        "DABBA",
-        "MONSOON",
-        "FILMY",
+        "CALVERA",
+        "KORVIN",
+        "ASTRYX",
+        "HELIOR",
+        "TAVIRA",
     ]
     check("CandleSeries", candles)
     assert candles["candles"], "candles were stored"

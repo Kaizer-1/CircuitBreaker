@@ -106,7 +106,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy
 make infra                           # from the repo root: Redpanda, Cassandra, Postgres and their init jobs
 uv run uvicorn matching_engine.main:create_app --factory --reload --port 8002
 curl localhost:8002/readyz         # or `make up` from the repo root to run its container
-curl localhost:8002/internal/v1/books/CHAIWALA
+curl localhost:8002/internal/v1/books/CALVERA
 ```
 
 **Ready means:**

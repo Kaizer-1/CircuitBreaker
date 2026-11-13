@@ -58,7 +58,7 @@ class World:
 
     async def place(self, trader: str = RAJU, **overrides: Any) -> Order:
         fields: dict[str, Any] = {
-            "ticker": "CHAIWALA",
+            "ticker": "CALVERA",
             "side": Side.BUY,
             "order_type": OrderType.LIMIT,
             "quantity": 50,
@@ -73,7 +73,7 @@ class World:
     def engine(self, event_type: str, **data: object) -> EventEnvelope:
         return build_event(
             event_type,
-            {"sequence": next(self._seq), "ticker": "CHAIWALA", **data},
+            {"sequence": next(self._seq), "ticker": "CALVERA", **data},
             producer="matching-engine",
             environment="dev",
             correlation_id="req-1",
@@ -97,7 +97,7 @@ async def test_placing_an_order_reserves_stores_and_publishes_order_placed(w: Wo
     [(topic, key, event)] = w.publisher.sent
     assert (topic, key, event.event_type, event.producer) == (
         "orders.v1",
-        "CHAIWALA",
+        "CALVERA",
         "OrderPlaced",
         "order-service",
     )
@@ -147,7 +147,7 @@ async def test_a_store_failure_after_reserving_is_503_and_leaves_an_orphan_for_t
     assert len(w.portfolio.calls) == 1 and w.store.orders == {}
     # 120 s later portfolio-service asks for an expiry (A-19); order-service has never heard of it.
     w.clock.now += timedelta(seconds=120)
-    accepted = await w.orders.request_expiry(w.portfolio.calls[0], RAJU, "CHAIWALA")
+    accepted = await w.orders.request_expiry(w.portfolio.calls[0], RAJU, "CALVERA")
     assert accepted.known_order is False
     [(_, _, event)] = w.publisher.sent
     assert event.event_type == "OrderExpiryRequested"
@@ -182,7 +182,7 @@ async def test_a_broker_that_hangs_never_holds_up_the_trader(w: World) -> None:
 
 
 async def test_the_same_idempotency_key_returns_the_same_order(w: World) -> None:
-    request = OrderRequest("CHAIWALA", Side.BUY, OrderType.LIMIT, 5, 24600)
+    request = OrderRequest("CALVERA", Side.BUY, OrderType.LIMIT, 5, 24600)
     first = await w.orders.place(RAJU, request, correlation_id="a", idempotency_key="phone-retry-1")
     again = await w.orders.place(RAJU, request, correlation_id="b", idempotency_key="phone-retry-1")
     assert again.order_id == first.order_id
@@ -196,7 +196,7 @@ async def test_the_same_idempotency_key_returns_the_same_order(w: World) -> None
 async def test_a_retry_after_a_crash_between_claiming_the_key_and_storing_finishes_that_order(
     w: World,
 ) -> None:
-    request = OrderRequest("CHAIWALA", Side.BUY, OrderType.LIMIT, 5, 24600)
+    request = OrderRequest("CALVERA", Side.BUY, OrderType.LIMIT, 5, 24600)
     w.store.fail_create = True
     with pytest.raises(DependencyUnavailableError):
         await w.orders.place(RAJU, request, correlation_id="a", idempotency_key="k")
@@ -206,7 +206,7 @@ async def test_a_retry_after_a_crash_between_claiming_the_key_and_storing_finish
 
 
 async def test_a_retry_of_a_rejected_order_is_rejected_again(w: World) -> None:
-    request = OrderRequest("CHAIWALA", Side.SELL, OrderType.LIMIT, 500, 24600)
+    request = OrderRequest("CALVERA", Side.SELL, OrderType.LIMIT, 500, 24600)
     with pytest.raises(RejectedOrderError):
         await w.orders.place(RAJU, request, correlation_id="a", idempotency_key="k")
     with pytest.raises(RejectedOrderError) as again:
@@ -296,7 +296,7 @@ async def test_listing_is_newest_first_with_filters_and_pages(w: World) -> None:
     for n in range(5):
         w.clock.now += timedelta(seconds=1)
         placed.append(
-            await w.place(ticker="JUGAAD" if n == 2 else "CHAIWALA", limit_price_paise=24600)
+            await w.place(ticker="KORVIN" if n == 2 else "CALVERA", limit_price_paise=24600)
         )
     await w.orders.apply_matching_event(
         w.engine(
@@ -312,8 +312,8 @@ async def test_listing_is_newest_first_with_filters_and_pages(w: World) -> None:
     assert [o.order_id for o in rest] == [p.order_id for p in reversed(placed[:3])] and end is None
     open_orders, _ = await w.orders.list(RAJU, status="open", ticker=None, limit=10, cursor=None)
     assert placed[0].order_id not in {o.order_id for o in open_orders} and len(open_orders) == 4
-    jugaad, _ = await w.orders.list(RAJU, status=None, ticker="JUGAAD", limit=10, cursor=None)
-    assert [o.order_id for o in jugaad] == [placed[2].order_id]
+    of_korvin, _ = await w.orders.list(RAJU, status=None, ticker="KORVIN", limit=10, cursor=None)
+    assert [o.order_id for o in of_korvin] == [placed[2].order_id]
     cancelled, _ = await w.orders.list(RAJU, status="CANCELLED", ticker=None, limit=10, cursor=None)
     assert [o.order_id for o in cancelled] == [placed[0].order_id]
     with pytest.raises(ValueError, match="cursor"):
@@ -326,13 +326,13 @@ async def test_listing_is_newest_first_with_filters_and_pages(w: World) -> None:
 async def test_an_expiry_request_is_idempotent_with_a_deterministic_event_id(w: World) -> None:
     # Asked again (the sweeper re-asks while the engine has not answered), the same request is
     # sent again: one event_id, so the engine handles it once.
-    first = await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CHAIWALA")
+    first = await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CALVERA")
     w.clock.now += timedelta(seconds=30)
-    again = await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CHAIWALA")
+    again = await w.orders.request_expiry("6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f", RAJU, "CALVERA")
     assert again.requested_at == first.requested_at
     assert {(key, event.event_id) for _, key, event in w.publisher.sent} == {
         (
-            "CHAIWALA",
+            "CALVERA",
             deterministic_event_id(
                 "https://circuitbreaker.local/order-expiry/6c7d8e9f-0a1b-4c2d-8e3f-4a5b6c7d8e9f"
             ),  # the catalog's example ID: a3b049e7-…
@@ -347,7 +347,7 @@ async def test_an_expiry_for_a_stored_but_never_published_order_rejects_it_first
     order = await w.place()
     w.clock.now += timedelta(seconds=125)
     w.publisher.down = False
-    accepted = await w.orders.request_expiry(order.order_id, RAJU, "CHAIWALA")
+    accepted = await w.orders.request_expiry(order.order_id, RAJU, "CALVERA")
     assert accepted.known_order
     stored = w.store.orders[order.order_id]
     assert (stored.status, stored.rejection_reason) == (

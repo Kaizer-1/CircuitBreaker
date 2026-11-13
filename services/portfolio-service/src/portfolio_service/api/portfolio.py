@@ -29,7 +29,7 @@ from portfolio_service.domain.model import (
 )
 from portfolio_service.runtime.problem import FieldError, problem_response
 
-Ticker = Literal["CHAIWALA", "JUGAAD", "DABBA", "MONSOON", "FILMY"]
+Ticker = Literal["CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA"]
 
 router = APIRouter()
 

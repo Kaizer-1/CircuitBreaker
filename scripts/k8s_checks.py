@@ -253,7 +253,7 @@ def check_smoke(args: argparse.Namespace) -> bool:
         f"{stack.GATEWAY}/v1/orders",
         method="POST",
         data=json.dumps(
-            {"ticker": "CHAIWALA", "side": "BUY", "order_type": "MARKET", "quantity": 1}
+            {"ticker": "CALVERA", "side": "BUY", "order_type": "MARKET", "quantity": 1}
         ).encode(),
         headers={"Content-Type": "application/json", **trader.auth},
     )
@@ -330,7 +330,7 @@ def check_kill(args: argparse.Namespace) -> bool:
     stack.GATEWAY = gateway(args.env)
     heading(f"Delete an order-service pod while orders flow ({args.env})")
     traders = [stack.tester(n) for n in (41, 42, 43, 44)]
-    limit = {"CHAIWALA": 19640}  # 20% under the reference: rests
+    limit = {"CALVERA": 19640}  # 20% under the reference: rests
     accepted: list[tuple[Any, str]] = []
     failures: list[str] = []
     stop = threading.Event()
@@ -338,7 +338,7 @@ def check_kill(args: argparse.Namespace) -> bool:
     def place(trader: Any) -> None:
         while not stop.is_set():
             try:
-                order = trader.place("BUY", 1, limit["CHAIWALA"])
+                order = trader.place("BUY", 1, limit["CALVERA"])
                 accepted.append((trader, order["order_id"]))
             except stack.ApiError as exc:
                 failures.append(f"HTTP {exc.status}")
@@ -589,7 +589,7 @@ def check_alerts(args: argparse.Namespace) -> bool:
             "produce",
             "candles.v1",
             "-k",
-            "CHAIWALA",
+            "CALVERA",
             input_text=text,
         )
 

@@ -122,15 +122,15 @@ async def test_a_market_buy_uses_the_last_traded_price_or_the_reference_price(
     service: PortfolioService,
 ) -> None:
     raju = await human(service)
-    before, _ = await service.create_reservation(buy(1, raju, 10, None, ticker="MONSOON"))
+    before, _ = await service.create_reservation(buy(1, raju, 10, None, ticker="HELIOR"))
     assert before.protection_price_paise == 9705  # reference price 8820 + 10%
     await service.seed_accounts()
-    await service.create_reservation(buy(2, raju, 1, 9000, ticker="MONSOON"))
-    await service.create_reservation(sell(3, seeded_trader_id("bot-01"), 1, 9000, ticker="MONSOON"))
+    await service.create_reservation(buy(2, raju, 1, 9000, ticker="HELIOR"))
+    await service.create_reservation(sell(3, seeded_trader_id("bot-01"), 1, 9000, ticker="HELIOR"))
     await service.apply_event(
-        trade(2, raju, 3, seeded_trader_id("bot-01"), 1, 9000, 0, 0, ticker="MONSOON")
+        trade(2, raju, 3, seeded_trader_id("bot-01"), 1, 9000, 0, 0, ticker="HELIOR")
     )
-    after, _ = await service.create_reservation(buy(4, raju, 10, None, ticker="MONSOON"))
+    after, _ = await service.create_reservation(buy(4, raju, 10, None, ticker="HELIOR"))
     assert after.protection_price_paise == 9900  # last price 9000 + 10%
 
 
@@ -165,15 +165,15 @@ async def test_a_trade_settles_both_sides_in_one_transaction(
         1_230_000 - 491_000,
     )
     assert [(h["ticker"], h["quantity"], h["avg_cost_paise"]) for h in me["holdings"]] == [
-        ("CHAIWALA", 20, 24550)
+        ("CALVERA", 20, 24550)
     ]
     bot = await service.portfolio(BOT03)
     assert bot["cash_paise"] == BOT_STARTING_CASH + 491_000
-    assert {h["ticker"]: h["quantity"] for h in bot["holdings"]}["CHAIWALA"] == 980
+    assert {h["ticker"]: h["quantity"] for h in bot["holdings"]}["CALVERA"] == 980
     assert store.state.reservations[oid(1)].confirmed
     assert store.state.reservations[oid(2)].status is ReservationStatus.CONSUMED
     assert len(store.state.settlements) == 2
-    assert store.state.last_prices == {"CHAIWALA": 24550}
+    assert store.state.last_prices == {"CALVERA": 24550}
 
 
 async def test_a_duplicate_event_changes_nothing(

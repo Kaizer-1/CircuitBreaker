@@ -14,7 +14,7 @@ BOT07 = "b0b0b0b0-0007-4000-8000-000000000007"
 def book_before() -> OrderBook:
     return OrderBook.from_snapshot(
         BookSnapshot(
-            ticker="CHAIWALA",
+            ticker="CALVERA",
             sequence=1040,
             as_of=T0,
             bids=((24500, ((oid(101), BOT01, 40, 988),)), (24450, ((oid(102), MEERA, 10, 1002),))),
