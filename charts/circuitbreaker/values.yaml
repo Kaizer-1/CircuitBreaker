@@ -44,6 +44,12 @@ api-gateway:
     JWT_SECRET: {secret: jwt-secret, key: value}
     BOT_SECRET: {secret: bot-secret, key: value}
     ADMIN_PASSCODE: {secret: admin-passcode, key: value}
+  # Every request (phones, bots, load) passes through the gateway: 2 cores each, so the front door is never
+  # the bottleneck the order-service capacity check (and Phase 7's traffic spike) is about. Measured: at
+  # 1 core it saturated before order-service did.
+  resources:
+    requests: {cpu: 100m, memory: 96Mi}
+    limits: {cpu: 2000m, memory: 256Mi}
   networkPolicy:
     allowIngressController: true # the public API
     allowFrom: [bot-traders, chaos-service] # bots use the public API; chaos-service's load burst (Phase 7)
@@ -59,6 +65,11 @@ order-service:
     PORTFOLIO_URL: http://portfolio-service:8000 # A-06, the synchronous reservation (ADR-0011)
   secretEnv:
     CASSANDRA_PASSWORD: {secret: order-service-db, key: password}
+  # Half a core per pod: one replica saturates at a load the laptop can produce, so adding replicas visibly
+  # adds capacity (the scale check now, the SRE agent's scale_deployment in Phase 7). Bots alone use < 0.1.
+  resources:
+    requests: {cpu: 100m, memory: 96Mi}
+    limits: {cpu: 500m, memory: 256Mi}
   networkPolicy:
     allowFrom: [api-gateway, portfolio-service] # portfolio: A-19 expiry requests (ADR-0017)
 
