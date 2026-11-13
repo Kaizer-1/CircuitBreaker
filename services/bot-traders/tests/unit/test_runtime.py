@@ -22,7 +22,7 @@ from bot_traders.runtime.events import (
     parse_timestamp,
 )
 from bot_traders.runtime.health import ReadinessCheck, health_router
-from bot_traders.runtime.jsonlog import configure_logging
+from bot_traders.runtime.jsonlog import configure_logging, correlation_id_var
 from bot_traders.runtime.kafka import (
     MAX_ATTEMPTS,
     Delivery,
@@ -312,6 +312,27 @@ async def test_a_handled_message_is_not_dead_lettered(settings: Settings) -> Non
     assert await _consumer(settings, handler, sink).handle(_delivery(event.to_json())) is True
     assert seen == [event.event_id]
     assert sink.letters == []
+
+
+async def test_a_handled_event_is_logged_under_its_own_correlation_id(
+    capsys: pytest.CaptureFixture[str], settings: Settings
+) -> None:
+    # One Loki query by correlation ID follows an order through every service that reacts to it.
+    import logging
+
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        logging.getLogger("handler").info("inside the handler")
+
+    configure_logging(settings.service_name, "INFO")
+    event = _event()
+    assert await _consumer(settings, handler, _Sink()).handle(_delivery(event.to_json()))
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line[:1] == "{"]
+    inside = next(line for line in lines if line["message"] == "inside the handler")
+    handled = next(line for line in lines if line["message"] == "event handled")
+    assert inside["correlation_id"] == handled["correlation_id"] == "cid-ev"
+    assert handled["event_type"] == "SomethingHappened"
+    assert handled["event_id"] == event.event_id
+    assert correlation_id_var.get() is None  # restored afterwards: the next event gets its own
 
 
 async def test_a_message_failing_five_times_goes_to_the_dlq_with_the_error(

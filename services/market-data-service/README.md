@@ -102,7 +102,9 @@ runners.
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
 **Business metrics:** `market_ws_connections` (open Q-06 sockets on this replica), `candles_closed_total{interval}`,
-`projection_gaps_filled_total`.
+`projection_gaps_filled_total`, `time_travel_active{kind}` (replays streaming and Q-12 rebuilds running now on this
+replica, `kind` = `replay` | `rebuild`; read from the slots at scrape time; shown as "active replays" on the Grafana
+business dashboard).
 
 ## Synchronous dependencies
 
