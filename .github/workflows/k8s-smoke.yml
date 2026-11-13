@@ -1,11 +1,13 @@
 # The whole system on kind inside a GitHub runner: make test-k8s (cluster, images, every pod ready, demo trade,
-# bots for 2 minutes, trades/s on the dashboard, one order followed in Loki). Started by hand (Actions tab, or
-# `gh workflow run k8s-smoke.yml --ref <branch>`), not on every pull request: it measures whether the runner has
-# the memory and time for it (docs/03-architecture/07-deployment-and-environments.md, "CI").
+# bots for 2 minutes, trades/s on the dashboard, one order followed in Loki). Not on every pull request: label
+# a pull request `k8s-smoke` (or start it from the Actions tab once it is on main). It also measures whether the
+# runner has the memory and time for it (docs/03-architecture/07-deployment-and-environments.md, "CI").
 name: Kubernetes smoke (kind)
 
 on:
   workflow_dispatch:
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: read
@@ -18,6 +20,7 @@ env:
 jobs:
   smoke:
     name: make test-k8s on kind
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'k8s-smoke'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
