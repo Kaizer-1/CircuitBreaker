@@ -193,6 +193,8 @@ Phase 4 feedback (proving time travel exact to an audience): Q-15 returns the sn
 (`closed`, matching-engine spec 1.2.0); Q-12 returns the rebuilt book's `state_hash` and, at "now", a `verification`
 against the live engine book (market-data spec 1.1.0); Q-13 gained the `speed` message, the `end` hash and every fill per
 frame (`trades`).
+CI feedback (2026-11-14): Q-12 at "now" is answered at the live book's sequence even when the engine traded after
+market-data read its clock, instead of leaving `verification` null (market-data spec 1.1.1).
 
 ## Error code catalog
 

@@ -116,10 +116,16 @@ class TimeTravel:
             book.apply(event.event_type, event.data, event.occurred_at)
         return book
 
-    async def market_at(self, ticker: str, at_ms: int, *, verify: bool = False) -> MarketAt:
+    async def market_at(
+        self, ticker: str, at_ms: int, *, verify: bool = False, now: bool = False
+    ) -> MarketAt:
         """The market at `at_ms`. With `verify`, and T at or after the live book's last event,
-        also compare with the engine's live book (read first: its sequence bounds the rebuild)."""
+        also compare with the engine's live book (read first: its sequence bounds the rebuild).
+        With `now` (T was asked as "now"), T is the live book's moment however recent it is: bots
+        may trade between reading our clock and reading the live book."""
         live = await self._live.live_book(ticker) if verify and self._live else None
+        if now and live is not None and live.sequence:
+            at_ms = max(at_ms, ms_of(live.as_of))
         if not comparable(live, at_ms):
             live = None
         book = await self.rebuild(ticker, at_ms, until_sequence=live.sequence if live else None)

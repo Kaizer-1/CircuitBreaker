@@ -172,6 +172,8 @@ Its SHA-256 is `1d78a3a2f50b59f8d384e6b8d9518e354d6f8d1a3285d1f41250ada51bd6e9f2
   The answer carries `verification {live_sequence, live_state_hash, matches}`, and the presenter's screen shows
   "Verified at sequence S: hashes match". Trading never has to stop: the rebuild stops at S, whatever the bots do next.
   A `T` up to 2 seconds ahead counts as now, because the browser's clock and the server's are never quite equal.
+  "Now" means the live book's moment: if a bot trades between market-data reading its clock and reading Q-16, the
+  answer is the book at that newer sequence, still proved (an e2e run on a slow CI runner caught this race).
 - **In the past:** a property test rebuilds at random moments of a random trading history and compares with the live
   book's hash at that moment; the end-to-end test records the live engine book at three moments while the bots trade
   and rebuilds each one later from snapshot plus events: same sequence, same hash.

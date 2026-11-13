@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: market-data-service API
-  version: 1.1.0
+  version: 1.1.1
   summary: Instruments, candles, order-book depth, trades and time travel.
   description: |
     Owned by the **Market Insights Team** (MD Asif Ali). A CQRS read side: builds its models from `matching.v1`
@@ -226,7 +226,9 @@ paths:
         **Proof of exactness.** When `at` is at or after the ticker's latest event, the live book *is* the market at
         `at`. market-data then reads matching-engine's live book (Q-16) first, stops the rebuild at exactly its
         sequence, and fills `verification` with the live hash and whether the two match. Because both are compared at
-        one sequence, the check works while bots keep trading. For an earlier `at`, `verification` is null.
+        one sequence, the check works while bots keep trading. An `at` at or after the service's clock ("now") is
+        answered at the live book's sequence even when the engine traded after the service read its clock. For an
+        earlier `at`, `verification` is null.
 
         Each replica rebuilds at most 4 books at once, one place kept for the admin role (the presenter); beyond that
         the answer is `503` with code `OVERLOADED`.
