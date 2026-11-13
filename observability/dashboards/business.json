@@ -832,8 +832,8 @@
         "defaults": {
           "unit": "suffix: orders/s",
           "color": {
-            "mode": "shades",
-            "fixedColor": "#ffa028"
+            "mode": "fixed",
+            "fixedColor": "#6f6a60"
           },
           "custom": {
             "drawStyle": "line",
@@ -974,8 +974,8 @@
         "defaults": {
           "unit": "s",
           "color": {
-            "mode": "shades",
-            "fixedColor": "#ffa028"
+            "mode": "fixed",
+            "fixedColor": "#6f6a60"
           },
           "custom": {
             "drawStyle": "line",
@@ -1047,7 +1047,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#ff5c5c"
+                  "fixedColor": "#e8e3d6"
                 }
               }
             ]
@@ -1097,8 +1097,8 @@
         "defaults": {
           "unit": "suffix: trades/s",
           "color": {
-            "mode": "shades",
-            "fixedColor": "#ffa028"
+            "mode": "fixed",
+            "fixedColor": "#6f6a60"
           },
           "custom": {
             "drawStyle": "line",
@@ -1142,7 +1142,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#45d07a"
+                  "fixedColor": "#e8e3d6"
                 }
               }
             ]
@@ -1157,7 +1157,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#e8e3d6"
+                  "fixedColor": "#7fa3c4"
                 }
               }
             ]
@@ -1172,7 +1172,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#a39d90"
+                  "fixedColor": "#b49fc7"
                 }
               }
             ]
@@ -1187,7 +1187,7 @@
                 "id": "color",
                 "value": {
                   "mode": "fixed",
-                  "fixedColor": "#ff5c5c"
+                  "fixedColor": "#a39d90"
                 }
               }
             ]
@@ -1237,8 +1237,8 @@
         "defaults": {
           "unit": "short",
           "color": {
-            "mode": "shades",
-            "fixedColor": "#ffa028"
+            "mode": "fixed",
+            "fixedColor": "#6f6a60"
           },
           "custom": {
             "drawStyle": "line",
@@ -1269,7 +1269,248 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^api-gateway ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e8e3d6"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^order-service ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ffa028"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^portfolio-service ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7fa3c4"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^market-data-service ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#b49fc7"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^matching-engine ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#a39d90"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^bot-traders ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8c867a"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^web ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e8e3d6"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^sre-agent ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7fa3c4"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^chaos-service ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#b49fc7"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^cassandra ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#a39d90"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^redpanda ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8c867a"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^postgres ←.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ffa028"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    6
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1314,8 +1555,8 @@
         "defaults": {
           "unit": "suffix: orders/s",
           "color": {
-            "mode": "shades",
-            "fixedColor": "#ffa028"
+            "mode": "fixed",
+            "fixedColor": "#6f6a60"
           },
           "custom": {
             "drawStyle": "line",
@@ -1439,8 +1680,8 @@
         "defaults": {
           "unit": "suffix: orders/s",
           "color": {
-            "mode": "shades",
-            "fixedColor": "#ffa028"
+            "mode": "fixed",
+            "fixedColor": "#6f6a60"
           },
           "custom": {
             "drawStyle": "line",
@@ -1459,7 +1700,98 @@
           "min": 0,
           "noValue": "none refused"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "INSUFFICIENT_FUNDS"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ffa028"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "INSUFFICIENT_SHARES"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e8e3d6"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PUBLISH_TIMEOUT"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7fa3c4"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "VALIDATION_FAILED"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#b49fc7"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "INVALID_TICK_SIZE"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#a39d90"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "UNKNOWN_TICKER"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8c867a"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -1514,8 +1846,8 @@
         "defaults": {
           "unit": "short",
           "color": {
-            "mode": "shades",
-            "fixedColor": "#ffa028"
+            "mode": "fixed",
+            "fixedColor": "#6f6a60"
           },
           "custom": {
             "drawStyle": "line",

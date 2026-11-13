@@ -16,6 +16,13 @@ to these folders); `make k8s-up` installs that chart.
   data source uids are fixed: `prometheus` and `loki`. Colours follow the web app's Terminal skin (amber `#ffa028`,
   green `#45d07a`, red `#ff5c5c`, neutrals `#e8e3d6`, `#a39d90`, `#8c867a`); business counts are `orders/s` and
   `trades/s`, never `req/s`.
+- **Every series of a panel has its own colour.** Red and green only where they mean something: buy/sell,
+  placed/refused, good/bad. Categories (tickers, services, namespaces, percentiles, reasons) take amber, cream
+  `#e8e3d6`, stone `#a39d90`, dust `#8c867a` and two neutral tints, steel `#7fa3c4` and mauve `#b49fc7`; a dashed
+  line doubles the set. A service has the same colour on every panel (order-service amber, api-gateway cream,
+  portfolio-service steel, market-data-service mauve, matching-engine stone, bot-traders dust); a pod takes its
+  service's colour. A series no rule names is dim grey `#6f6a60`, so a new one shows up without hiding the others.
+  Never the default "shades" mode: it paints every series in shades of one colour.
 - An alert's labels are what the agent reads: `service` (the Deployment it may act on), `severity`, `remediable`
   (`"false"` = escalate, never act). Never point a `remediable` alert at a data store.
 - Every rule change needs a test in `tests/alerts_test.yaml`; `make test-alerts` must pass. The timing, thresholds and
