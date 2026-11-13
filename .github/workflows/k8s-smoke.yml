@@ -1,0 +1,41 @@
+# The whole system on kind inside a GitHub runner: make test-k8s (cluster, images, every pod ready, demo trade,
+# bots for 2 minutes, trades/s on the dashboard, one order followed in Loki). Started by hand (Actions tab, or
+# `gh workflow run k8s-smoke.yml --ref <branch>`), not on every pull request: it measures whether the runner has
+# the memory and time for it (docs/03-architecture/07-deployment-and-environments.md, "CI").
+name: Kubernetes smoke (kind)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HELM_VERSION: "4.3.0"
+  KIND_VERSION: "0.33.0"
+  KUBECTL_VERSION: "1.37.0"
+
+jobs:
+  smoke:
+    name: make test-k8s on kind
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - name: The runner
+        run: nproc; free -m; df -h /
+      - name: Install helm, kind, kubectl
+        run: |
+          curl -sSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz linux-amd64/helm
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          curl -sSLo kind "https://kind.sigs.k8s.io/dl/v${KIND_VERSION}/kind-linux-amd64"
+          curl -sSLo kubectl "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kind kubectl && sudo mv kind kubectl /usr/local/bin/
+          helm version --short; kind version; kubectl version --client
+      - name: make test-k8s
+        run: make test-k8s
+      - name: Memory and pods at the end
+        if: always()
+        run: |
+          free -m
+          python3 scripts/k8s.py status || true

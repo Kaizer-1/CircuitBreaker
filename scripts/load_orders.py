@@ -26,16 +26,21 @@ import http.client
 import json
 import os
 import random
+import signal
 import sys
 import threading
 import time
 import urllib.parse
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 GATEWAY = os.environ.get("GATEWAY", "http://localhost")  # Kubernetes prod; Compose: :8080
 BOT_SECRET = os.environ.get("BOT_SECRET", "cb-dev-bot-secret")  # the local placeholder
 WINDOW = 5.0
+# Set by SIGTERM (a check stopping the load early): the workers finish and the clean-up still runs,
+# so no order is left resting with the account's cash reserved.
+STOPPING = threading.Event()
 
 
 @dataclass
@@ -43,6 +48,9 @@ class Account:
     name: str
     token: str
     resting: collections.deque[str] = field(default_factory=collections.deque)
+    # Idempotency-Keys of placements that got no answer (timeout, 503 from the gateway): the order
+    # may exist anyway. Placing again with the same key returns it, so the clean-up can cancel it.
+    unanswered: list[dict[str, Any]] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -80,8 +88,12 @@ class Client:
         self.host, self.port = url.hostname or "localhost", url.port or 80
         self.conn = http.client.HTTPConnection(self.host, self.port, timeout=15)
 
-    def call(self, method: str, path: str, token: str | None, body: Any = None) -> tuple[int, Any]:
+    def call(
+        self, method: str, path: str, token: str | None, body: Any = None, key: str | None = None
+    ) -> tuple[int, Any]:
         headers = {"Content-Type": "application/json"}
+        if key:
+            headers["Idempotency-Key"] = key
         if token:
             headers["Authorization"] = f"Bearer {token}"
         else:
@@ -143,7 +155,7 @@ def worker(
     tickers = list(limits)
     while True:
         slot, at = next_slot()
-        if at > deadline:
+        if at > deadline or STOPPING.is_set():
             return
         delay = at - time.monotonic()
         if delay > 0:
@@ -167,12 +179,23 @@ def worker(
                     "quantity": 1,
                     "limit_price_paise": limits[ticker],
                 }
-                status, body = client.call("POST", "/v1/orders", account.token, order)
-                if status == 202:
-                    with account.lock:
+                key = str(uuid.uuid4())
+                try:
+                    status, body = client.call("POST", "/v1/orders", account.token, order, key)
+                except (http.client.HTTPException, OSError):
+                    status, body = 0, None
+                with account.lock:
+                    if status == 202:
                         account.resting.append(body["order_id"])
+                    elif status == 0 or status >= 500:
+                        account.unanswered.append({"order": order, "key": key})
+                if status == 0:
+                    raise OSError("no answer")
             elif kind == "DELETE":
                 status, _ = client.call("DELETE", f"/v1/orders/{oldest}", account.token)
+                if status >= 500:  # try again in the clean-up
+                    with account.lock:
+                        account.resting.append(str(oldest))
             else:
                 status, _ = client.call("GET", "/v1/orders", account.token)
             code = str(status)
@@ -188,13 +211,15 @@ def main() -> int:
     parser.add_argument("--rate", type=float, default=200, help="requests per second (all kinds)")
     parser.add_argument("--mix", choices=sorted(MIXES), default="orders")
     parser.add_argument("--seconds", type=float, default=120)
-    parser.add_argument("--accounts", type=int, default=10, help="load-01 ... load-NN")
+    parser.add_argument("--accounts", type=int, default=10, help="how many load accounts")
+    parser.add_argument("--first-account", type=int, default=1, help="load-NN to start from")
     # Enough workers that requests start on schedule even when responses are slow (open loop).
     parser.add_argument("--workers", type=int, default=300)
     parser.add_argument("--json", action="store_true", help="print a JSON summary at the end")
     args = parser.parse_args()
 
-    accounts = sign_in([f"load-{n:02d}" for n in range(1, args.accounts + 1)])
+    first = args.first_account
+    accounts = sign_in([f"load-{n:02d}" for n in range(first, first + args.accounts)])
     limits = prices(accounts[0].token)
     stats = Stats()
     start = time.monotonic() + 0.5
@@ -222,7 +247,8 @@ def main() -> int:
     head = ["t (s)", "req/s", "POST p50", "POST p95", "DEL p95", "GET p95"]
     print(" ".join(f"{h:>9}" for h in head) + "  errors")
     windows = []
-    while time.monotonic() < deadline + 1:
+    signal.signal(signal.SIGTERM, lambda *_: STOPPING.set())
+    while time.monotonic() < deadline + 1 and not STOPPING.is_set():
         time.sleep(WINDOW)
         ms, codes = stats.take()
         row = {
@@ -243,14 +269,23 @@ def main() -> int:
     for t in threads:
         t.join(timeout=20)
 
-    # Leave nothing resting: cancel what is left (the load accounts start clean next time).
+    # Leave nothing resting, so the load accounts start clean next time: find the orders whose
+    # placement got no answer (same Idempotency-Key = the same order, if it was created), then
+    # cancel every order still resting.
     client = Client()
-    left = 0
+    left = found = 0
     for account in accounts:
+        for attempt in account.unanswered:
+            status, body = client.call(
+                "POST", "/v1/orders", account.token, attempt["order"], attempt["key"]
+            )
+            if status in (200, 201, 202) and body and "order_id" in body:
+                account.resting.append(body["order_id"])
+                found += 1
         while account.resting:
             client.call("DELETE", f"/v1/orders/{account.resting.popleft()}", account.token)
             left += 1
-    print(f"cancelled the {left} orders still resting")
+    print(f"cancelled the {left} orders still resting ({found} found again by Idempotency-Key)")
     if args.json:
         steady = windows[2:-1] or windows
         print(

@@ -558,6 +558,30 @@ def cmd_status(_: argparse.Namespace) -> None:
         check=False,
     )
     print("\nmemory (Docker):\n" + stats)
+    # The RAM budget's numbers (deployment doc): what each namespace's pods use (working set, from
+    # the kubelet), and the node's memory split into what the processes hold (anon) and the page
+    # cache the kernel can give back (file).
+    summary = json.loads(
+        run(kubectl("get", "--raw", f"/api/v1/nodes/{NODE}/proxy/stats/summary"), capture=True)
+    )
+    per_ns: dict[str, float] = {}
+    for pod in summary["pods"]:
+        used = (pod.get("memory") or {}).get("workingSetBytes") or 0
+        per_ns[pod["podRef"]["namespace"]] = (
+            per_ns.get(pod["podRef"]["namespace"], 0) + used / 2**20
+        )
+    print("\nmemory by namespace (pods' working set, MiB):")
+    for ns, mib in sorted(per_ns.items(), key=lambda kv: -kv[1]):
+        print(f"   {ns:<20} {mib:7.0f}")
+    print(f"   {'all pods':<20} {sum(per_ns.values()):7.0f}")
+    cgroup = run(["docker", "exec", NODE, "cat", "/sys/fs/cgroup/memory.stat"], capture=True)
+    stat = dict(line.split() for line in cgroup.splitlines())
+    anon, file_ = int(stat["anon"]) / 2**20, int(stat["file"]) / 2**20
+    kernel = int(stat.get("kernel", 0)) / 2**20
+    print(
+        f"\nnode: processes (anon) {anon:.0f} MiB + kernel {kernel:.0f} MiB;"
+        f" page cache {file_:.0f} MiB (the kernel can give it back)"
+    )
 
 
 def cmd_images(args: argparse.Namespace) -> None:
