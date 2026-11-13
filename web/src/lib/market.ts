@@ -107,6 +107,13 @@ export class ApiError extends Error {
   }
 }
 
+/** fetch() itself failed: no answer from the exchange (Wi-Fi gone, laptop unreachable). */
+export class NetworkError extends Error {
+  constructor(readonly reason: unknown) {
+    super('No connection to the exchange.')
+  }
+}
+
 async function call<T>(
   method: string,
   path: string,
@@ -114,16 +121,21 @@ async function call<T>(
   body?: unknown,
   headers: Record<string, string> = {},
 ): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    headers: {
-      Accept: 'application/json',
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  let response: Response
+  try {
+    response = await fetch(path, {
+      method,
+      headers: {
+        Accept: 'application/json',
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+  } catch (e) {
+    throw new NetworkError(e)
+  }
   if (!response.ok) {
     let code = 'HTTP_' + response.status
     let detail = `The exchange answered HTTP ${response.status}.`

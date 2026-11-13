@@ -18,7 +18,7 @@ ADMIN_PASSCODE ?= cb-dev-admin-passcode
 .DEFAULT_GOAL := help
 .PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
         k8s-up k8s-down k8s-status k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade test-alerts \
-        test-k8s k8s-check k8s-lint
+        test-k8s k8s-check k8s-lint test-phone
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -109,6 +109,9 @@ test-deep: ## Property tests at 25,000 examples each (slow): make test-deep [s=<
 
 demo-trade: ## Two traders and a bot trade through the gateway; prints trades, portfolios, orders (needs make up)
 	@python3 scripts/demo_trade.py
+
+test-phone: ## The phone on a non-secure origin (Playwright, 390x844, both skins; needs bots): make test-phone [url=http://localhost:5173]
+	@cd web && node scripts/phone_check.mjs $(if $(url),$(url),http://localhost:5173)
 
 test-e2e: ## End-to-end checks on the running stack: trade, kill -9 the engine, orphan rule (~3 min; needs make up)
 	@python3 scripts/e2e_test.py

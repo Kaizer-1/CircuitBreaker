@@ -89,6 +89,20 @@ jobs:
         run: make demo-trade
       - name: make test-e2e
         run: make test-e2e
+      # The phone over a non-secure origin (http://cb.test, like a phone on the LAN), with the
+      # runner's Google Chrome: a MARKET buy reaches Holdings, the F-key tabs, both skins.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: web dependencies (Playwright)
+        working-directory: web
+        run: npm ci
+      - name: make test-phone (the bots trade, so the MARKET buy has a seller)
+        run: |
+          make bots seed=42
+          make test-phone
       - name: Container logs (on failure)
         if: failure()
         run: docker compose --profile infra --profile app logs --tail=300
