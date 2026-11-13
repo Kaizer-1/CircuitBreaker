@@ -16,7 +16,8 @@ GATEWAY  := http://localhost:8080
 ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
-.PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status
+.PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
+        k8s-up k8s-down k8s-status k8s-images k8s-reset
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -115,3 +116,21 @@ status: ## Ask the gateway for the combined system status (signs in as admin fir
 	@token=$$(curl -sS --max-time 10 -X POST $(GATEWAY)/v1/admin/sessions -H 'Content-Type: application/json' \
 	  -d '{"nickname":"presenter","passcode":"$(ADMIN_PASSCODE)"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])') && \
 	  curl -sS --max-time 10 -H "Authorization: Bearer $$token" $(GATEWAY)/v1/system/status | python3 -m json.tool
+
+# --------------------------------------------------------------------------- Kubernetes (kind), Phase 5
+# The demo platform. Compose stays the fast developer loop. Phase 6 moves cluster creation to Terraform.
+
+k8s-up: ## Kubernetes: cluster + registry + images + everything installed (env=prod|staging, default prod)
+	@python3 scripts/k8s.py up --env $(if $(env),$(env),prod)
+
+k8s-down: ## Kubernetes: stop the cluster (data kept, RAM freed; k8s-up starts it again)
+	@python3 scripts/k8s.py down
+
+k8s-status: ## Kubernetes: pods in every namespace and the cluster's memory
+	@python3 scripts/k8s.py status
+
+k8s-images: ## Kubernetes: build changed images and push them to the local registry: make k8s-images [s=<service>]
+	@python3 scripts/k8s.py images $(s)
+
+k8s-reset: ## Kubernetes: DELETE the cluster and all its data (asks; run by a person, never a script)
+	@python3 scripts/k8s.py reset
