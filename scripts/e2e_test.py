@@ -5,7 +5,11 @@
    makes is a load-test account (stack.tester): never on the leaderboard.
 2. Crash recovery: the matching engine is killed (SIGKILL) in the middle of a workload and
    restarted; afterwards the rebuilt book has the same hash as before an idle kill, every order
-   agrees with the engine's trades, and cash and shares are conserved.
+   agrees with the engine's trades, and cash and shares are conserved. Placements retry a
+   transient 503 or timeout with the same Idempotency-Key, like a real client (stack.Trader.place),
+   and no tester ends up with an order the workload never got back.
+   Then a placement made while portfolio-service is paused gets a real 503; retried with the same
+   key it is exactly one order, and cancelling it leaves no money reserved.
 3. The orphan rule, fail-closed (ADR-0011, ADR-0017), with Redpanda stopped: an order that cannot
    be published is REJECTED within 60 s; its money, and the money of a reservation whose order was
    never stored, stays reserved while the engine cannot answer, and is released only after it
@@ -133,6 +137,7 @@ def test_crash_recovery_by_hash() -> None:
     start = {t.trader_id: t.portfolio() for t in everyone}
     sequence_before = live_book(ticker)["sequence"]
     placed: list[tuple[Trader, str]] = []
+    workload_began = now_iso()
 
     def workload() -> None:
         for n in range(160):
@@ -180,6 +185,19 @@ def test_crash_recovery_by_hash() -> None:
     ours = {o["order_id"]: o for trader in everyone for o in trader.orders()}
     for _, order_id in placed:
         assert ours[order_id]["filled_quantity"] == filled.get(order_id, 0), order_id
+    # A placement retried after a transient 503 or timeout (same Idempotency-Key, Trader.place)
+    # made exactly one order: no tester has an order the workload never got back.
+    known = {order_id for _, order_id in placed}
+    for trader in testers:
+        extra = [
+            o["order_id"]
+            for o in trader.orders()
+            if o["placed_at"] >= workload_began
+            and o["status"] != "REJECTED"
+            and o["order_id"] not in known
+        ]
+        assert not extra, f"{trader.nickname} has orders the workload never placed: {extra}"
+    retries = sum(trader.retries for trader in everyone)
 
     # Cancel what rests; then every trader's cash and shares are exactly what the trades say.
     cancel_everything(everyone)
@@ -199,9 +217,51 @@ def test_crash_recovery_by_hash() -> None:
         )
         assert (now["cash_paise"], held(now, ticker)) == (cash, shares), trader.nickname
     print(
-        f"     {len(placed)} orders, {len(trades)} trades; book hash"
-        f" {after['state_hash'][:16]}… before and after kill -9"
+        f"     {len(placed)} orders ({retries} placements retried with the same key),"
+        f" {len(trades)} trades; book hash {after['state_hash'][:16]}… before and after kill -9"
     )
+
+
+def test_a_placement_retried_after_a_503_is_one_order() -> None:
+    """A real client retries a transient 503 with the SAME Idempotency-Key. Make the 503 happen the
+    way it did on a 2-CPU CI runner (portfolio-service too slow to answer the reservation in time),
+    then retry: exactly one order, and once it is cancelled no money is left reserved."""
+    trader = tester(20)
+    TESTERS.add(trader.trader_id)
+    cancel_everything([trader])
+    start = trader.portfolio()
+    began = now_iso()
+    key = str(uuid.uuid4())
+    order = {
+        "ticker": "ASTRYX",
+        "side": "BUY",
+        "order_type": "LIMIT",
+        "quantity": 1,
+        "limit_price_paise": 33000,
+    }  # 20% under the reference price: it rests
+    compose("pause", "portfolio-service")
+    try:
+        headers = {**trader.auth, "Idempotency-Key": key}
+        try:
+            http("POST", f"{GATEWAY}/v1/orders", order, headers)
+            raise AssertionError("the placement succeeded with portfolio-service paused")
+        except ApiError as exc:
+            assert exc.status == 503, exc
+    finally:
+        compose("unpause", "portfolio-service")
+    first = trader.place("BUY", 1, 33000, "ASTRYX", key=key)  # retries while it recovers
+    again = trader.place("BUY", 1, 33000, "ASTRYX", key=key)  # a duplicate retry: same answer
+    assert again["order_id"] == first["order_id"]
+    mine = [o for o in trader.orders() if o["placed_at"] >= began]
+    assert [o["order_id"] for o in mine] == [first["order_id"]], mine
+    trader.cancel(first["order_id"])
+    now = wait_for(
+        "the cancel to release the reservation",
+        lambda: (p := trader.portfolio())["reserved_cash_paise"] == 0 and p,
+        timeout=30,
+    )
+    assert now["cash_paise"] == start["cash_paise"]
+    print(f"     503 while portfolio-service was paused; retry {first['order_id'][:8]}…: one order")
 
 
 def cancel_everything(traders: list[Trader]) -> None:
@@ -550,6 +610,7 @@ TESTERS: set[str] = set()  # trader IDs the tests made
 TESTS: list[Callable[[], None]] = [
     test_place_trade_settle,
     test_crash_recovery_by_hash,
+    test_a_placement_retried_after_a_503_is_one_order,
     test_orphan_rule_is_fail_closed,
     test_bots_keep_a_sound_market,
     test_time_travel_rebuilds_three_moments_exactly,

@@ -31,6 +31,10 @@ ADMIN_PASSCODE = os.environ.get(
 COMPOSE = ["docker", "compose", "--profile", "infra", "--profile", "app"]
 
 
+# Pauses before each retry of a placement that got a transient 503 or timed out: 4 retries, 7.5 s.
+PLACE_RETRY_PAUSES = (0.5, 1.0, 2.0, 4.0)
+
+
 class ApiError(Exception):
     def __init__(self, status: int, body: Any) -> None:
         super().__init__(f"HTTP {status}: {body}")
@@ -67,14 +71,25 @@ class Trader:
         self.token = session["access_token"]
         self.trader_id: str = session["trader_id"]
         self.nickname: str = session["nickname"]
+        self.retries = 0  # placements retried after a transient 503 or timeout (same key)
 
     @property
     def auth(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"}
 
     def place(
-        self, side: str, quantity: int, price: int | None, ticker: str = "CALVERA"
+        self,
+        side: str,
+        quantity: int,
+        price: int | None,
+        ticker: str = "CALVERA",
+        *,
+        key: str | None = None,
     ) -> dict[str, Any]:
+        """A-05 like a real client: every placement carries an Idempotency-Key, and a transient
+        503 or a timeout (a dependency briefly slow, e.g. portfolio-service on a 2-CPU CI runner)
+        is retried with the SAME key, a bounded number of times with growing pauses. The server
+        returns the first attempt's order instead of placing a second (api/order-service.yaml)."""
         order = {
             "ticker": ticker,
             "side": side,
@@ -83,8 +98,18 @@ class Trader:
         }
         if price is not None:
             order["limit_price_paise"] = price
-        result: dict[str, Any] = http("POST", f"{GATEWAY}/v1/orders", order, self.auth)
-        return result
+        headers = {**self.auth, "Idempotency-Key": key or str(uuid.uuid4())}
+        for pause in (*PLACE_RETRY_PAUSES, None):
+            try:
+                result: dict[str, Any] = http("POST", f"{GATEWAY}/v1/orders", order, headers)
+                return result
+            except (ApiError, TimeoutError, urllib.error.URLError) as exc:
+                transient = not isinstance(exc, ApiError) or exc.status == 503
+                if not transient or pause is None:
+                    raise
+                self.retries += 1
+                time.sleep(pause)
+        raise AssertionError("unreachable")
 
     def order(self, order_id: str) -> dict[str, Any]:
         result: dict[str, Any] = http("GET", f"{GATEWAY}/v1/orders/{order_id}", headers=self.auth)
@@ -125,8 +150,8 @@ def join(prefix: str) -> Trader:
 def tester(n: int) -> Trader:
     """A trader for scripts and tests: load-test account `load-NN` (A-03, kind LOAD), never ranked
     on the leaderboard (Q-11), so test traders never reach the projector. load-01 ... load-10 are
-    chaos-service's; tests use 11 and up. These accounts carry over between runs (until make
-    demo-reset), so checks compare with each one's own portfolio at the start."""
+    scripts/load_orders.py's; tests use 11 and up. These accounts carry over between runs (until
+    make demo-reset), so checks compare with each one's own portfolio at the start."""
     if not 11 <= n <= 99:
         raise ValueError("test traders are load-11 ... load-99")
     return bot(f"load-{n:02d}")
