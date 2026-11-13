@@ -268,6 +268,7 @@ if you enable the optional module. `make doctor` checks all of this.
 | `make test s=order-service` | Unit, smoke and contract tests for one service (all if `s` is omitted) |
 | `make lint` / `make fmt` | ruff, mypy, redocly, template drift, eslint and prettier / auto-format |
 | `make k8s-up` / `make k8s-down` / `make test-k8s` | The system on a local kind cluster with Prometheus, Grafana and Loki / stop it (data kept) / its smoke test ([developer setup §11](08-developer-setup.md#11-kubernetes-kind)) |
+| `make k8s-set-url url=http://<LAN IP>` | Point the join QR code at a new address on the cluster (data kept) |
 | `make test-phone [url=]` | The phone pages on a non-secure origin with Playwright: a MARKET buy reaches Holdings, the tabs, both skins (needs the bots) |
 | `make platform` | *(Phase 6)* Terraform plan + apply of `infra/envs/local`: kind cluster, namespaces, RBAC, Secrets, Argo CD |
 | `make sync env=staging` | Ask Argo CD to refresh and sync now (instead of waiting for its poll) |

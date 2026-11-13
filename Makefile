@@ -17,8 +17,8 @@ ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
 .PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
-        k8s-up k8s-down k8s-status k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade test-alerts \
-        test-k8s k8s-check k8s-lint test-phone
+        k8s-up k8s-down k8s-status k8s-set-url k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade \
+        test-alerts test-k8s k8s-check k8s-lint test-phone
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -134,14 +134,18 @@ status: ## Ask the gateway for the combined system status (signs in as admin fir
 # --------------------------------------------------------------------------- Kubernetes (kind), Phase 5
 # The demo platform. Compose stays the fast developer loop. Phase 6 moves cluster creation to Terraform.
 
-k8s-up: ## Kubernetes: cluster + registry + images + everything installed (env=prod|staging, default prod)
+k8s-up: ## Kubernetes: cluster + registry + images + everything (env=prod|staging); PUBLIC_BASE_URL=http://<LAN IP> sets the QR code
 	@python3 scripts/k8s.py up --env $(if $(env),$(env),prod)
 
 k8s-down: ## Kubernetes: stop the cluster (data kept, RAM freed; k8s-up starts it again)
 	@python3 scripts/k8s.py down
 
-k8s-status: ## Kubernetes: pods in every namespace and the cluster's memory
+k8s-status: ## Kubernetes: pods in every namespace, the cluster's memory, the URL in the join QR code
 	@python3 scripts/k8s.py status
+
+k8s-set-url: ## Kubernetes: point the join QR code at a new address, data kept: make k8s-set-url url=http://<LAN IP> [env=]
+	@test -n "$(url)" || { echo "usage: make k8s-set-url url=http://<this laptop's LAN IP> [env=staging]"; exit 2; }
+	@python3 scripts/k8s.py set-url --env $(if $(env),$(env),prod) "$(url)"
 
 k8s-images: ## Kubernetes: build changed images and push them to the local registry: make k8s-images [s=<service>]
 	@python3 scripts/k8s.py images $(s)
@@ -162,5 +166,5 @@ test-k8s: ## Kubernetes smoke test: k8s-up, every pod ready, demo trade, bots 2 
 	@python3 scripts/k8s.py up --env $(if $(env),$(env),prod)
 	@python3 scripts/k8s_checks.py --env $(if $(env),$(env),prod) smoke
 
-k8s-check: ## Kubernetes checks: make k8s-check c=netpol|kill|scale|alerts (they change the system on purpose)
+k8s-check: ## Kubernetes checks: make k8s-check c=netpol|kill|scale|alerts|url (they change the system on purpose)
 	@python3 scripts/k8s_checks.py --env $(if $(env),$(env),prod) $(c)

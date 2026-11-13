@@ -3,7 +3,8 @@
 
     up [--env prod|staging]  cluster + registry + images + everything installed, then wait
     down                     stop the cluster's node container (data kept, RAM freed)
-    status                   pods per namespace and the cluster's memory
+    status                   pods per namespace, the cluster's memory, the URL phones are sent to
+    set-url URL [--env]      change only the URL in the join QR code (PUBLIC_BASE_URL), data kept
     images [svc ...]         build changed images, push them to the local registry
     reset                    DELETE the cluster and all its data (asks; run by a person)
 
@@ -17,11 +18,13 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -377,11 +380,77 @@ def install_platform() -> None:
     )
 
 
-def public_base_url(env: str) -> str:
-    """Where phones reach this environment: PUBLIC_BASE_URL, else localhost (the QR box warns)."""
+def local_url(env: str) -> str:
+    """The environment's entry from this laptop (Traefik's host port)."""
     port = ENV_PORTS[env]
-    default = "http://localhost" if port == 80 else f"http://localhost:{port}"
-    return os.environ.get("PUBLIC_BASE_URL", default).rstrip("/")
+    return "http://localhost" if port == 80 else f"http://localhost:{port}"
+
+
+def release_url(env: str) -> str | None:
+    """The PUBLIC_BASE_URL the environment's release was deployed with; None before the first."""
+    out = run(
+        ["helm", "get", "values", RELEASE, "--kube-context", CONTEXT, "-n", env, "-o", "json"],
+        capture=True,
+        check=False,
+    )
+    try:
+        url = (json.loads(out) or {}).get("global", {}).get("publicBaseUrl")
+    except json.JSONDecodeError:
+        return None  # no release yet
+    return str(url) if url else None
+
+
+def public_base_url(env: str) -> str:
+    """Where phones reach this environment (the join QR code). PUBLIC_BASE_URL when given, always;
+    otherwise the URL the environment already has, so a restart, an upgrade or k8s-bots never puts
+    the QR code back to localhost; localhost only on the first install (the QR box warns)."""
+    given = os.environ.get("PUBLIC_BASE_URL", "").strip()
+    if given:
+        return checked_url(given)
+    return release_url(env) or local_url(env)
+
+
+def checked_url(url: str) -> str:
+    """http(s)://host[:port] and nothing else: the web container writes it into /config.js."""
+    parsed = urllib.parse.urlsplit(url.strip().rstrip("/"))
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.path:
+        sys.exit(f"not a base URL: {url!r} (expected e.g. http://172.20.10.3)")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def served_url(env: str) -> str | None:
+    """The URL the running web pod puts in the QR code (its /config.js), or None if unreachable."""
+    try:
+        with urllib.request.urlopen(f"{local_url(env)}/config.js", timeout=5) as response:  # noqa: S310
+            text = response.read().decode()
+    except (urllib.error.URLError, OSError):
+        return None
+    found = re.search(r'publicBaseUrl:\s*"([^"]*)"', text)
+    return found.group(1) if found else None
+
+
+def lan_address() -> str | None:
+    """This laptop's address on its current network (the hotspot), if it has one."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            sock.connect(("192.0.2.1", 80))  # no packet is sent; it only picks the route
+            address = str(sock.getsockname()[0])
+        except OSError:
+            return None
+    return None if address.startswith("127.") else address
+
+
+def print_public_url(env: str) -> None:
+    url = served_url(env)
+    print(f"\nQR code / phones ({env}): {url or 'web not reachable'}")
+    lan = lan_address()
+    host = urllib.parse.urlsplit(url).hostname if url else None
+    if url and host in ("localhost", "127.0.0.1"):
+        print(f"   phones cannot reach localhost: make k8s-set-url url=http://{lan or '<LAN IP>'}")
+    if url and lan and host not in (lan, "localhost", "127.0.0.1"):
+        print(f"   but this laptop is now {lan} on its network: make k8s-set-url url=http://{lan}")
 
 
 def ensure_namespace(name: str) -> None:
@@ -430,13 +499,14 @@ def deploy(env: str, extra: dict[str, dict[str, object]] | None = None) -> None:
     tags = json.loads(TAGS_FILE.read_text()) if TAGS_FILE.exists() else {}
     if not tags:
         sys.exit("no images built yet: run make k8s-images")
+    url = public_base_url(env)
     overrides: dict[str, dict[str, object]] = {
-        "global": {"environment": env, "publicBaseUrl": public_base_url(env)},
+        "global": {"environment": env, "publicBaseUrl": url},
         **{name: {"image": {"tag": tag}} for name, tag in tags.items()},
     }
     for key, value in (extra or {}).items():
         overrides.setdefault(key, {}).update(value)
-    step(f"namespace {env}: Secrets (local placeholders) and the umbrella chart")
+    step(f"namespace {env}: Secrets (local placeholders) and the umbrella chart (QR code: {url})")
     ensure_namespace(env)
     apply_secrets(env)
     run(
@@ -524,8 +594,8 @@ def cmd_up(args: argparse.Namespace) -> None:
     deploy(args.env)
     step(f"waiting until every pod in {args.env} and the platform is ready")
     took = sum(wait_ready(ns) for ns in [*sorted({p[4] for p in PLATFORM}), args.env])
-    url = public_base_url(args.env)
-    print(f"\nall pods in {args.env} ready ({took:.0f} s).  {url}/   (kubectl context {CONTEXT})")
+    print(f"\nall pods in {args.env} ready ({took:.0f} s).  (kubectl context {CONTEXT})")
+    print_public_url(args.env)
 
 
 def cmd_down(_: argparse.Namespace) -> None:
@@ -582,6 +652,42 @@ def cmd_status(_: argparse.Namespace) -> None:
         f"\nnode: processes (anon) {anon:.0f} MiB + kernel {kernel:.0f} MiB;"
         f" page cache {file_:.0f} MiB (the kernel can give it back)"
     )
+    for env in ENV_PORTS:
+        if release_url(env) is not None or env == "prod":
+            print_public_url(env)
+
+
+def cmd_set_url(args: argparse.Namespace) -> None:
+    """Point the join QR code at a new address (make k8s-set-url url=...). Only the URL changes:
+    the release's other values (image tags, the bots on or off) are reused, so only the web pod
+    restarts (its ConfigMap checksum changed); no data is touched."""
+    if node_state() != "running":
+        sys.exit("the cluster is not running: PUBLIC_BASE_URL=http://<LAN IP> make k8s-up")
+    url = checked_url(args.url)
+    step(f"{args.env}: the join QR code now points at {url}")
+    run(
+        [
+            "helm",
+            "upgrade",
+            RELEASE,
+            str(CHART),
+            "--kube-context",
+            CONTEXT,
+            "--namespace",
+            args.env,
+            "--reuse-values",
+            "--set-string",
+            f"global.publicBaseUrl={url}",
+        ],
+        capture=True,
+    )
+    run(kubectl("rollout", "status", "-n", args.env, "deployment/web", "--timeout=180s"))
+    deadline = time.monotonic() + 30
+    while served_url(args.env) != url:
+        if time.monotonic() > deadline:
+            sys.exit(f"the web pod still serves {served_url(args.env)!r}, not {url!r}")
+        time.sleep(1)
+    print_public_url(args.env)
 
 
 def cmd_images(args: argparse.Namespace) -> None:
@@ -675,6 +781,10 @@ def main() -> None:
     up.set_defaults(func=cmd_up)
     sub.add_parser("down").set_defaults(func=cmd_down)
     sub.add_parser("status").set_defaults(func=cmd_status)
+    set_url = sub.add_parser("set-url", help="change the URL in the join QR code, data kept")
+    set_url.add_argument("url")
+    set_url.add_argument("--env", choices=["prod", "staging"], default="prod")
+    set_url.set_defaults(func=cmd_set_url)
     images = sub.add_parser("images")
     images.add_argument("services", nargs="*")
     images.set_defaults(func=cmd_images)

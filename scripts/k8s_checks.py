@@ -7,6 +7,8 @@
     kill     delete an order-service pod while orders flow: replaced, nothing lost
     scale    more order-service replicas = more capacity (no autoscaler: ADR-0007)
     alerts   trigger each Phase 7 alert's condition for real and time how fast it fires
+    url      the join QR code's URL survives a restart and k8s-bots, changes only when asked
+             (PUBLIC_BASE_URL with k8s-up, or k8s-set-url), and no data is lost
 
 Standard library only. The environment is prod unless --env staging. These checks change the
 running system on purpose (scale, stop, patch); each one puts it back as it found it.
@@ -118,6 +120,91 @@ def bots_on(env: str) -> None:
         if result.returncode != 0:
             sys.exit(f"could not start the bots: {result.stderr}")
         time.sleep(30)
+
+
+# --------------------------------------------------------------------------- url (PUBLIC_BASE_URL)
+
+
+def check_url(args: argparse.Namespace) -> bool:
+    """Restart the cluster with a new PUBLIC_BASE_URL, then do what a presenter does next (bots on,
+    k8s-up again without the variable, k8s-set-url) and read the URL the web pod really serves
+    (/config.js) after each step. A test account's portfolio must be the same after the restart."""
+    import k8s
+
+    env = args.env
+    heading(f"The join QR code's URL across restarts ({env})")
+    original = k8s.served_url(env)
+    bots_were_on = bots_enabled(env)
+    print(f"  now: {original}; bots {'on' if bots_were_on else 'off'}")
+    session = k8s_portfolio_session(env)
+    before = portfolio_of(env, session)
+    first, second = "http://10.9.8.7", "http://10.9.8.8:8000"
+
+    def script(*args: str, url: str | None = None) -> None:
+        extra = {"PUBLIC_BASE_URL": url} if url else {}
+        result = subprocess.run(  # noqa: S603 (fixed command)
+            [sys.executable, str(ROOT / "scripts" / "k8s.py"), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**{k: v for k, v in os.environ.items() if k != "PUBLIC_BASE_URL"}, **extra},
+        )
+        if result.returncode != 0:
+            sys.exit(f"k8s.py {' '.join(args)} failed:\n{result.stdout[-2000:]}{result.stderr}")
+
+    ok = True
+    try:
+        script("down")
+        script("up", "--env", env, "--skip-images", url=first)
+        ok &= verdict(k8s.served_url(env) == first, f"stop, PUBLIC_BASE_URL={first} k8s-up: served")
+        ok &= verdict(portfolio_of(env, session) == before, "test account unchanged (data kept)")
+        script("bots", "--env", env)
+        ok &= verdict(k8s.served_url(env) == first, "k8s-bots keeps it")
+        script("up", "--env", env, "--skip-images")
+        ok &= verdict(k8s.served_url(env) == first, "k8s-up without PUBLIC_BASE_URL keeps it")
+        script("bots", "--env", env)
+        script("set-url", "--env", env, second)
+        ok &= verdict(
+            k8s.served_url(env) == second and bots_enabled(env),
+            f"k8s-set-url {second}: served, the bots still on",
+        )
+    finally:
+        if original:
+            script("set-url", "--env", env, original)
+        script("bots", "--env", env, *([] if bots_were_on else ["--stop"]))
+        print(f"  put back: {k8s.served_url(env)}; bots {'on' if bots_were_on else 'off'}")
+    return ok
+
+
+def bots_enabled(env: str) -> bool:
+    """Whether the release was last deployed with the bots on (make k8s-bots)."""
+    values = json.loads(
+        subprocess.run(  # noqa: S603 (fixed command)
+            ["helm", "get", "values", "circuitbreaker", "--kube-context", "kind-circuitbreaker"]
+            + ["-n", env, "-o", "json"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+    return bool(values.get("bot-traders", {}).get("env", {}).get("BOTS_ENABLED") == "true")
+
+
+def k8s_portfolio_session(env: str) -> str:
+    """A test account (load-13, never ranked) to compare before and after."""
+    import stack
+
+    stack.GATEWAY = gateway(env)
+    return str(stack.tester(13).token)
+
+
+def portfolio_of(env: str, token: str) -> tuple[int, list[tuple[str, int]]]:
+    request = urllib.request.Request(  # noqa: S310 (local http:// URL)
+        f"{gateway(env)}/v1/portfolio", headers={"Authorization": f"Bearer {token}"}
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310
+        body = json.load(response)
+    return body["cash_paise"], sorted((h["ticker"], h["quantity"]) for h in body["holdings"])
 
 
 # --------------------------------------------------------------------------- smoke (make test-k8s)
@@ -772,6 +859,7 @@ def main() -> int:
         help="cases to run (default: all but the 10-minute over-provisioned one)",
     )
     alerts.set_defaults(func=check_alerts)
+    sub.add_parser("url").set_defaults(func=check_url)
     args = parser.parse_args()
     ok = args.func(args)
     print(f"\n{GREEN + 'all passed' if ok else RED + 'FAILED'}{RESET}")

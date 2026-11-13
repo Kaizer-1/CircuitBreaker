@@ -236,6 +236,7 @@ stores in kind, which will need much more; we will re-measure then. The limits a
 | The pre-commit hook rejects a commit | Lint error, a secret was detected, or `private/` / `CLAUDE.md` was staged | Read the message; `git restore --staged <file>` for the last case |
 | The presenter dashboard says "QR points to localhost. Phones can't join." | `PUBLIC_BASE_URL` is not set, or is `localhost` (the Compose default) | [§10](#10-phones-on-a-hotspot-demo-day): set it to the laptop's LAN address and restart `web` |
 | A phone cannot open the join address | Not on the same network, the network isolates its clients, or the laptop's firewall blocks Docker | [§10](#10-phones-on-a-hotspot-demo-day), "If a phone cannot connect" |
+| Kubernetes: the QR code still shows an old or localhost address | The laptop rejoined the hotspot and got a new address, or the cluster was first started without `PUBLIC_BASE_URL` | `make k8s-status` prints the address in the QR code and the laptop's current one; `make k8s-set-url url=http://<new address>` (data kept) |
 | `make k8s-up`: `port is already allocated` for 80, 8090, 3000 or 9090 | Another program on the laptop uses that port | `lsof -nP -iTCP:80 -sTCP:LISTEN`; stop it, then `make k8s-up` again |
 | `make k8s-up` stops at "could not download chart" | The chart registry was unreachable (slow network) | Try again; once downloaded, charts are kept in `build/k8s/charts/` and never fetched again |
 | `kubectl` prints a version-skew warning | Your kubectl is several versions older than the cluster (1.37) | Harmless; `brew upgrade kubectl` removes it |
@@ -285,6 +286,21 @@ Wi-Fi setting, common on campus and guest networks, that stops devices on the ne
 
 Only port 5173 needs to be reachable. The page calls the API on the same address, and nginx forwards it to the gateway.
 
+**Check a phone's view from the laptop** with `make test-phone url=http://192.168.43.12:5173` (bots trading). Plain
+`make test-phone` does the same against `http://cb.test:5173`, a name Chrome is told to send to the laptop. Both are
+**not a secure context**, unlike `localhost`, so the page runs exactly as on a phone. A **secure context** is a page
+served over https or from localhost; browsers keep some APIs (for example `crypto.randomUUID`) for secure contexts
+only. In both skins at 390×844, as test account `load-13` (never on the leaderboard), the check:
+- buys 1 CHAIWALA at market through the order ticket and waits for it in Holdings;
+- sends the same order key again and expects no second order;
+- taps each F-key tab;
+- fails on any console error.
+
+Before 2026-11-14 orders from phones failed silently over the LAN for exactly this reason
+([coding standards §6](05-coding-standards.md#6-testing-rules)). If an action fails on a phone, the message says why
+(no connection, the exchange's own reason, an exchange error with its HTTP status, or an app error), and the browser
+console logs the full error.
+
 ## 11. Kubernetes (kind)
 
 The demo platform: the same images on a one-node Kubernetes cluster, with Prometheus, Grafana and Loki. Compose stays
@@ -294,7 +310,8 @@ the fast developer loop. Layout and reasoning: [deployment §3](03-architecture/
 make k8s-up          # cluster + local registry + images + platform + prod; waits until every pod is ready
 make k8s-bots        # the 20 bots trade (seed=, activity= as with make bots)
 make k8s-demo-trade  # the demo trade, against the cluster
-make k8s-status      # pods, and the memory per namespace (the RAM budget's numbers)
+make k8s-status      # pods, the memory per namespace (the RAM budget's numbers), the QR code's address
+make k8s-set-url url=http://192.168.43.12   # point the QR code at the laptop's hotspot address (data kept)
 make k8s-down        # stop the cluster: data kept, RAM freed; make k8s-up starts it again in seconds
 ```
 
@@ -309,9 +326,20 @@ changes). `make k8s-up env=staging` adds staging on port 8090 (about 2 GiB more;
 | <http://localhost:3000/> | Grafana: dashboards *CircuitBreaker — Business*, *System*, *Follow an order*. Anyone may look; sign in as `admin` / `cb-dev-grafana` (local placeholder) to change things |
 | <http://localhost:9090/> | Prometheus: targets, alert rules (`/alerts`) |
 
-**Phones on Kubernetes.** Exactly as in [§10](#10-phones-on-a-hotspot-demo-day), without the port:
-`PUBLIC_BASE_URL=http://192.168.43.12 make k8s-up`, then phones open `http://192.168.43.12/join` (or scan the QR
-code). Port 80 is open to the network (kind maps it on all interfaces); Grafana and Prometheus are not.
+**Phones on Kubernetes.** Exactly as in [§10](#10-phones-on-a-hotspot-demo-day), without the port. **Join the hotspot
+first** (the laptop's address belongs to the network it is on), then:
+
+```bash
+PUBLIC_BASE_URL=http://192.168.43.12 make k8s-up   # or, cluster already up: make k8s-set-url url=http://192.168.43.12
+make k8s-status                                    # ends with "QR code / phones (prod): http://192.168.43.12"
+make test-phone url=http://192.168.43.12           # a phone's view over that address (needs the bots)
+```
+
+Phones open `http://192.168.43.12/join` (or scan the QR code). The address is kept through `make k8s-down` /
+`k8s-up`, `make k8s-bots` and upgrades; only `PUBLIC_BASE_URL=… make k8s-up` or `make k8s-set-url` change it
+(`k8s-set-url` restarts only the web pod and touches no data). `make k8s-status` also warns when the QR code still
+says localhost, or when the laptop's current address differs from it (you rejoined the hotspot and got a new one).
+Port 80 is open to the network (kind maps it on all interfaces); Grafana and Prometheus are not.
 
 **Checks** (each changes the running system on purpose and puts it back):
 
@@ -322,6 +350,8 @@ code). Port 80 is open to the network (kind maps it on all interfaces); Grafana 
 | `make k8s-check c=kill` | An order-service pod deleted while orders flow is replaced, and every accepted order finishes with nothing left reserved |
 | `make k8s-check c=scale` | 200 orders/s: order p95 high at 2 order-service replicas, back down at 4 (`scripts/load_orders.py`) |
 | `make k8s-check c=alerts` | Each Phase 7 alert's condition is caused for real (about 20 minutes) and the alert fires; `--only over-provisioned` adds the 10-minute one |
+| `make k8s-check c=url` | The QR code's address survives a stopped and restarted cluster, `k8s-bots` and a plain `k8s-up`, changes with `PUBLIC_BASE_URL=… k8s-up` and `k8s-set-url`, and a test account's portfolio is unchanged (about 2 minutes) |
+| `make test-phone url=http://localhost` | The phone pages from a non-secure origin (below), against the cluster |
 | `python3 scripts/k8s.py run bots_check.py 120` | Any `scripts/` check against the cluster (port-forwards stand in for Compose's host ports) |
 
 **Follow one order** in Grafana's *Follow an order* dashboard: paste the `X-Correlation-Id` a response returned (or
