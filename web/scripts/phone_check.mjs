@@ -134,7 +134,11 @@ try {
     check(placed.ok(), `order accepted by the gateway (HTTP ${placed.status()})`)
     check(V4.test(key ?? ''), `Idempotency-Key is an RFC 4122 v4 UUID (${key})`)
     const order = await placed.json()
-    await page.getByRole('status').filter({ hasText: 'Order sent' }).waitFor()
+    // "Order sent…" until the fill arrives, then "Bought 1 CHAIWALA at …" (it can come first).
+    await page
+      .getByRole('status')
+      .filter({ hasText: new RegExp(`Order sent|Bought 1 ${TICKER}`) })
+      .waitFor()
 
     const deadline = Date.now() + 15_000
     let after = before
