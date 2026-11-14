@@ -84,6 +84,13 @@ matching-engine:
     CASSANDRA_USERNAME: matching_engine_role
   secretEnv:
     CASSANDRA_PASSWORD: {secret: matching-engine-db, key: password}
+  # Measured on kind (2026-11-14): 124-138 MiB over 60 minutes at 40 orders/s plus the bots, with an hour of
+  # finished orders remembered (about 100,000; ADR-0017 note "A memory of one hour"). The limit leaves room for a
+  # 5-minute traffic spike at 400 requests/s: about 120,000 more orders in the hour, about 250 bytes each, plus
+  # about 280 more each while a snapshot is written.
+  resources:
+    requests: {cpu: 100m, memory: 96Mi}
+    limits: {cpu: 1000m, memory: 384Mi}
   networkPolicy:
     allowFrom: [api-gateway, market-data-service] # market-data: Q-14/Q-15/Q-16
 
