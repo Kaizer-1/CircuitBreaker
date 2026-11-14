@@ -105,6 +105,14 @@ message it could not deliver within 10 s, and the relay starts no `OrderPlaced` 
 relay retries them however long Redpanda was away. It reads the outbox from a saved cursor (the oldest minute that may
 still hold a row), not just the last few minutes, and a retried A-07 or A-19 sends the same request again
 ([ADR-0017 note](../adr/0017-fail-closed-orphan-release.md#note-no-time-limit-for-cancels-and-expiries-phase-4)).
+Since 2026-11-14 a published row is marked done instead of deleted and expires after an hour (a TTL), so a relay pass
+reads only new rows and never a tombstone; a request still waiting is written again every 20 minutes so the TTL never
+catches it ([ADR-0017 note](../adr/0017-fail-closed-orphan-release.md#note-the-outbox-without-tombstones-pre-chaos-hardening-2026-11-14)).
+
+> **Tombstone:** in Cassandra a delete does not remove data at once; it writes a marker saying "this is deleted",
+> because other copies or older files may still hold the value. Reads must skip every tombstone in their range, and
+> compaction may drop it only after `gc_grace_seconds`. A table read in the same range again and again after many
+> deletes (a queue) gets slower and slower: the classic Cassandra queue anti-pattern.
 
 **Orphaned reservations are released fail-closed** ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)): after 120 s
 without `OrderAccepted`, portfolio-service asks order-service to publish an `OrderExpiryRequested`. It lands in the same

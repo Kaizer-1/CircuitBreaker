@@ -68,19 +68,20 @@ anything that slips through is off the screen with **B**.
 
 ## 4. Fallback: the last known-good version
 
-Two annotated Git tags mark versions that were verified end to end. Falling back changes the code, not the data, so
-it takes minutes, not a reset.
+Annotated Git tags mark versions that were verified end to end. Falling back changes the code, not the data, so it
+takes minutes, not a reset, as long as the data is from the same tickers.
 
 | Tag | Verified | Runs on |
 |---|---|---|
-| **`v0.5.1-demoable`** (preferred) | Phones ordering over the hotspot address (`make test-phone` on a LAN IP), the tab bar, the QR address kept on Kubernetes, CI green | Compose **and** Kubernetes |
-| `v0.4-demoable` | Phase 4: time travel, leaderboard; phone ordering over the LAN did **not** work yet (only on the laptop) | Compose only (Kubernetes came in Phase 5) |
+| **`v0.5.2-demoable`** (preferred) | The professional ticker names (CALVERA, KORVIN, ASTRYX, HELIOR, TAVIRA), plus everything in `v0.5.1-demoable`; CI green | Compose **and** Kubernetes |
+| `v0.5.1-demoable` | Phones ordering over the hotspot address (`make test-phone` on a LAN IP), the tab bar, the QR address kept on Kubernetes, CI green. **Old ticker names:** it cannot read data made with the new ones, so a person resets first | Compose **and** Kubernetes |
+| `v0.4-demoable` | Phase 4: time travel, leaderboard; phone ordering over the LAN did **not** work yet (only on the laptop). Old ticker names, as above | Compose only (Kubernetes came in Phase 5) |
 
 **Compose:**
 
 ```bash
 make down                                         # stops the containers; volumes (data) are kept
-git switch -c demo-fallback v0.5.1-demoable       # a branch at the tag (the working tree must be clean)
+git switch -c demo-fallback v0.5.2-demoable       # a branch at the tag (the working tree must be clean)
 PUBLIC_BASE_URL=http://<LAN IP>:5173 make up      # builds that version's images
 make bots
 ```
@@ -88,7 +89,7 @@ make bots
 **Kubernetes:**
 
 ```bash
-git switch -c demo-fallback v0.5.1-demoable
+git switch -c demo-fallback v0.5.2-demoable
 PUBLIC_BASE_URL=http://<LAN IP> make k8s-up       # builds and rolls only the images that differ; data kept
 make k8s-bots
 ```
@@ -99,11 +100,9 @@ make k8s-reset` (Kubernetes) first; data-wiping commands are never run by a scri
 
 ## 5. The Later list
 
-Found while building, outside the frozen design, to reconsider in Phase 8 or after the course.
-
-| Idea | Found | Why it waits |
-|---|---|---|
-| An index of each trader's open orders in order-service. `GET /v1/orders?status=open` (Q-07) now reads one row per order in the trader's history (up to 1,000 per call), and every bot lists its open orders after a reconnect | Phase 4: after two hours of trading, a gateway restart made 20 bots list at once and order-service ran out of memory | Owner's decision (2026-11-11): a data-model change. The bots back off after a failure and list at most two at a time, which keeps it safe for the demo |
+Found while building, outside the frozen design, to reconsider in Phase 8 or after the course. Nothing is waiting on
+it now: its only item, an index of each trader's open orders (Q-07 `status=open` read the whole order history), was
+built in the pre-chaos hardening PR of 2026-11-14 (the `open_orders_by_trader` table).
 
 ## Viva Notes
 

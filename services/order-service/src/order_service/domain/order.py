@@ -136,8 +136,15 @@ class Order:
             return None
         return round_half_up(self.filled_value_paise, self.filled_quantity)
 
+    @property
+    def is_open(self) -> bool:
+        """It may still trade (Q-07 `status=open`, the open-orders table). A rejected order can
+        open again: a late OrderAccepted after a PUBLISH_TIMEOUT (the engine is the source of
+        truth)."""
+        return self.status not in FINISHED
+
     def cancellable(self) -> bool:
-        return self.status not in FINISHED and not self.cancel_requested
+        return self.is_open and not self.cancel_requested
 
     # ---------------------------------------------------------- what matching.v1 events do
 

@@ -149,6 +149,28 @@ avoids cancelling an order that was accepted and is still resting just because p
 The 60 s publish limit in order-service stays. It is no longer what protects the money; it is what tells a trader
 quickly (`REJECTED`, `PUBLISH_TIMEOUT`) that an order did not get through.
 
+**Note: the outbox without tombstones (pre-chaos hardening, 2026-11-14).** Phase 5 measured the price of change 1
+above: a published row was *deleted*, and Cassandra keeps a deleted row as a **tombstone** (a marker that hides the old
+value until compaction may drop it). Every relay pass re-read the last minutes' partitions, so under load one poll read
+about 2,000 tombstones to find about one live row. The outbox now never deletes:
+
+1. **Rows are marked, not deleted.** Publishing (or dropping) a row writes `done = true`, an ordinary write. Every row
+   expires one hour after it was written (the table's TTL), and leveled compaction removes the expired rows; nothing
+   the relay reads is a tombstone of its own making.
+2. **The relay never reads an old row again.** Each pass reads the rows written since the newest one it has seen, the
+   slice that has just become settled (older than the 2-minute clock margin, so a row written late is found, once),
+   and the few rows it saw that are not done yet. The cursor of change 1 stays: the oldest minute that may still hold a
+   waiting row, where a restarted replica starts.
+3. **The TTL cannot lose a request.** A cancel or expiry request still waiting after 20 minutes is written again at
+   "now" (the same event, so the engine still acts on it once) and its old row marked done: while the service runs, a
+   waiting request never reaches the TTL. When the relay starts, it sends again the stored cancel of every open order
+   that asked for one (from the open-orders table), which covers a service or laptop stopped for longer than the TTL.
+   An expiry request lost that way is asked again by the sweeper (change 3).
+
+The tests of change 1 still pass unchanged (25 minutes of failed passes; a real Redpanda stopped for 25 virtual minutes;
+the cursor across a restart), with two more: a request waiting 20 minutes is written again before its row expires, and
+after a restart an open order's lost cancel is sent again.
+
 ## Alternatives considered
 
 | Alternative | Why rejected |

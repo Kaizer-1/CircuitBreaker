@@ -1,5 +1,6 @@
 """In-memory fakes for order-service's ports, with the same column rules as the Cassandra store:
-save_status never writes cancel_requested unless asked, and set_cancel_requested writes only it."""
+save_status never writes cancel_requested unless asked, and set_cancel_requested writes only it.
+The open-orders table is kept by the same rule as Cassandra's: written with the status."""
 
 import asyncio
 from dataclasses import replace
@@ -32,6 +33,7 @@ def _row(entry: OutboxEntry) -> tuple[str, str]:
 class InMemoryOrderStore:
     def __init__(self) -> None:
         self.orders: dict[str, Order] = {}
+        self.open: set[str] = set()  # the open-orders table: order IDs
         self.events: dict[str, list[EventEnvelope]] = {}  # order_events, per order
         self.outbox: list[OutboxEntry] = []
         self.keys: dict[tuple[str, str], str] = {}
@@ -47,6 +49,7 @@ class InMemoryOrderStore:
         if self.fail_create:
             raise TimeoutError("cassandra write timed out")
         self.orders[order.order_id] = replace(order)
+        self._index(order)
         if outbox is not None:
             await self.add_outbox(outbox)
 
@@ -57,6 +60,7 @@ class InMemoryOrderStore:
             stored = self.orders[order.order_id]
             for name in STATUS_FIELDS + (("cancel_requested",) if cancel_flag else ()):
                 setattr(stored, name, getattr(order, name))
+            self._index(order)
         if processed_event_id is not None:
             self.processed.add(processed_event_id)
 
@@ -103,6 +107,27 @@ class InMemoryOrderStore:
         if before is not None:
             mine = [o for o in mine if (o.placed_at, o.order_id) < before]
         return [replace(o) for o in mine[:limit]]
+
+    async def open_orders_of(
+        self, trader_id: str, *, before: tuple[str, str] | None, limit: int
+    ) -> list[Order]:
+        mine = sorted(
+            (self.orders[i] for i in self.open if self.orders[i].trader_id == trader_id),
+            key=lambda o: (o.placed_at, o.order_id),
+            reverse=True,
+        )
+        if before is not None:
+            mine = [o for o in mine if (o.placed_at, o.order_id) < before]
+        return [replace(o) for o in mine[:limit]]
+
+    async def open_orders(self) -> list[Order]:
+        return [replace(self.orders[i]) for i in sorted(self.open)]
+
+    def _index(self, order: Order) -> None:
+        if order.is_open:
+            self.open.add(order.order_id)
+        else:
+            self.open.discard(order.order_id)
 
     async def is_processed(self, event_id: str) -> bool:
         return event_id in self.processed
