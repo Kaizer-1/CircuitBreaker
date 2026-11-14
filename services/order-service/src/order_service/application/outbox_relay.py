@@ -12,9 +12,16 @@ Every second it re-publishes outbox rows that are still unpublished 5 s after th
 
 A cancel or an expiry request has **no time limit**: it is retried until it is published, however
 long Redpanda or this service was down, because until the engine answers it the trader's money stays
-reserved (ADR-0017 note "No time limit for cancels and expiries"). The store finds a row of any age
-(adapters/cassandra_store.py: a cursor over the minute partitions). Until Phase 4 the relay looked
+reserved (ADR-0017 note "No time limit for cancels and expiries"). Until Phase 4 the relay looked
 back only 15 minutes, and a cancel left behind by a long outage kept its order resting for ever.
+Since the outbox rows expire an hour after they are written (a TTL keeps the table small), two rules
+keep that promise:
+
+- a request still waiting after 20 minutes is written again at "now" (the same event) and the old
+  row marked done, so a waiting request never reaches the TTL while the service runs;
+- when the relay starts, it sends again the stored cancel of every open order that asked for one:
+  that covers a service (or laptop) stopped for longer than the TTL. An expiry request lost the same
+  way is asked again by portfolio-service's sweeper every 5 minutes (ADR-0017).
 
 Several replicas may run it at once: a row can be published twice, and the engine drops the copy
 by event_id.
@@ -23,6 +30,7 @@ by event_id.
 import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from order_service.application.orders import must_wait
@@ -33,13 +41,16 @@ from order_service.domain.order import (
     OrderStatus,
     RejectionReason,
 )
-from order_service.ports.order_store import TOPIC, OrderStore
+from order_service.ports.order_store import TOPIC, OrderStore, OutboxEntry
 from order_service.ports.publisher import OrderPublisher
 from order_service.runtime.events import format_timestamp, parse_timestamp
 
 logger = logging.getLogger("outbox")
 
 RETRY_AFTER_SECONDS = 5
+# Well inside the outbox rows' 1-hour TTL (adapters/cassandra_store.py OUTBOX_TTL).
+CARRY_FORWARD_AFTER = timedelta(minutes=20)
+REQUESTS = {"OrderCancelRequested", "OrderExpiryRequested"}
 DELIVERY_TIMEOUT_SECONDS = 10  # the publisher's delivery_timeout_seconds (config.py)
 # A replica writes a row at its own clock. Rows are never written further than this in the past, so
 # the store may stop re-reading empty minutes older than it. Every replica runs on the host's clock
@@ -68,6 +79,7 @@ class OutboxRelay:
         self._last_send = timedelta(seconds=publish_timeout_seconds - delivery_timeout_seconds)
         self._retry_after = timedelta(seconds=retry_after_seconds)
         self._on_rejected = on_rejected
+        self._resumed = False  # the open orders' pending cancels were sent again (start-up)
 
     async def run_once(self) -> int:
         """One pass over the outbox. Returns how many rows were published.
@@ -76,7 +88,12 @@ class OutboxRelay:
         so a hung Redpanda cannot delay a PUBLISH_TIMEOUT; then one bounded attempt per row.
         """
         now = self._clock()
-        entries = await self._store.pending_outbox(format_timestamp(now - CLOCK_MARGIN))
+        entries = await self._one_row_per_event(
+            await self._store.pending_outbox(format_timestamp(now - CLOCK_MARGIN))
+        )
+        if not self._resumed:
+            await self._resend_open_cancels(now, waiting={e.event.event_id for e in entries})
+            self._resumed = True
         to_publish = []
         for entry in entries:
             order = await self._store.get(entry.order_id)
@@ -100,6 +117,11 @@ class OutboxRelay:
                 if order.status in FINISHED:
                     await self._store.drop_outbox(entry)  # nothing left to cancel
                     continue
+            if entry.event_type in REQUESTS and now - written_at(entry) > CARRY_FORWARD_AFTER:
+                # Written again before the row's TTL runs out: the request never expires.
+                await self._store.requeue(replace(entry, written_at=format_timestamp(now)))
+                await self._store.drop_outbox(entry)
+                continue
             to_publish.append((entry, order))
 
         published = 0
@@ -122,6 +144,29 @@ class OutboxRelay:
             published += 1
         return published
 
+    async def _one_row_per_event(self, entries: list[OutboxEntry]) -> list[OutboxEntry]:
+        """Copies of one event (both replicas carried it forward, or A-07 asked again) collapse
+        to the newest row; the older ones are marked done. Without it the copies doubled every 20
+        minutes (found by the 60-minute soak). `entries` are oldest first."""
+        newest = {entry.event.event_id: entry for entry in entries}
+        for entry in entries:
+            if newest[entry.event.event_id] is not entry:
+                await self._store.drop_outbox(entry)
+        return [entry for entry in entries if newest[entry.event.event_id] is entry]
+
+    async def _resend_open_cancels(self, now: datetime, *, waiting: set[str]) -> None:
+        """Start-up: the stored cancel of every open order that asked for one goes back in the
+        outbox, unless it is still `waiting` there. Its row may have expired while the service was
+        stopped; a copy the engine already has is dropped there by event_id. The next pass sends
+        it."""
+        for order in await self._store.open_orders():
+            if not order.cancel_requested:
+                continue
+            event = await self._store.find_event(order.order_id, "OrderCancelRequested")
+            if event is not None and event.event_id not in waiting:
+                entry = OutboxEntry(order.order_id, order.ticker, event, format_timestamp(now))
+                await self._store.requeue(entry)
+
     def _too_late(self, order: Order) -> bool:
         return self._clock() - parse_timestamp(order.placed_at) > self._last_send
 
@@ -132,3 +177,7 @@ class OutboxRelay:
             except Exception:
                 logger.exception("outbox relay pass failed")
             await asyncio.sleep(every_seconds)
+
+
+def written_at(entry: OutboxEntry) -> datetime:
+    return parse_timestamp(entry.row_at)

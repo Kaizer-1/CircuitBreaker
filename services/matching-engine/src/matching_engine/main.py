@@ -21,7 +21,7 @@ from matching_engine.api import event_store
 from matching_engine.application.engine import MatchingEngine
 from matching_engine.business_metrics import BusinessMetrics, register_business_metrics
 from matching_engine.config import Settings
-from matching_engine.domain.model import Decision, TradeExecuted
+from matching_engine.domain.model import TICKERS, Decision, TradeExecuted
 from matching_engine.runtime.checks import cassandra_check, redpanda_check
 from matching_engine.runtime.events import EventEnvelope
 from matching_engine.runtime.health import ReadinessCheck, health_router
@@ -115,7 +115,12 @@ async def run_engine(app: FastAPI, settings: Settings, metrics: Metrics) -> None
     app.state.engine = engine
 
     async def handle(envelope: EventEnvelope, delivery: Delivery) -> None:
-        count(app.state.business_metrics, envelope, await engine.handle_envelope(envelope))
+        business: BusinessMetrics = app.state.business_metrics
+        count(business, envelope, await engine.handle_envelope(envelope))
+        ticker = envelope.data.get("ticker")
+        if ticker in TICKERS:
+            remembered = engine.book(ticker).remembered_count()
+            business.closed_orders_remembered.labels(ticker).set(remembered)
 
     consumer = EventConsumer(
         bootstrap_servers=settings.kafka_bootstrap_servers,

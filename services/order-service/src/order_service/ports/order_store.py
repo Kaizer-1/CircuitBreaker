@@ -32,13 +32,15 @@ class OrderStore(Protocol):
     async def get(self, order_id: str) -> Order | None: ...
 
     async def create(self, order: Order, outbox: OutboxEntry | None) -> None:
-        """Store a new order, its first event and (if given) the outbox row, all or nothing."""
+        """Store a new order, its first event and (if given) the outbox row, all or nothing; an
+        open order also joins the trader's open orders."""
 
     async def save_status(
         self, orders: list[Order], *, processed_event_id: str | None, cancel_flag: bool
     ) -> None:
         """Write the status columns (and, if cancel_flag, cancel_requested) of these orders, plus
-        the processed event, all or nothing. Never touches the columns the API writes."""
+        the processed event, all or nothing. Never touches the columns the API writes. In the same
+        write, each order joins or leaves the trader's open orders (Order.is_open)."""
 
     async def set_cancel_requested(self, order_id: str, now: str, outbox: OutboxEntry) -> None:
         """The API's write: cancel_requested = true, plus the OrderCancelRequested outbox row."""
@@ -68,5 +70,16 @@ class OrderStore(Protocol):
         self, trader_id: str, *, before: tuple[str, str] | None, limit: int
     ) -> list[Order]:
         """The trader's orders, newest first, strictly older than `before` (placed_at, order_id)."""
+
+    async def open_orders_of(
+        self, trader_id: str, *, before: tuple[str, str] | None, limit: int
+    ) -> list[Order]:
+        """The trader's open orders only (Order.is_open), newest first, strictly older than
+        `before`. Reads the open-orders table: the cost follows how many orders are open, not how
+        many the trader ever placed."""
+
+    async def open_orders(self) -> list[Order]:
+        """Every trader's open orders (a scan of the open-orders table: what is open, not the
+        history). The relay reads it once at start-up."""
 
     async def is_processed(self, event_id: str) -> bool: ...

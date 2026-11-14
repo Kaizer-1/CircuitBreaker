@@ -10,7 +10,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from matching_engine.application.engine import MatchingEngine
-from matching_engine.domain.model import PriceLevel
+from matching_engine.domain.model import BookSnapshot, PriceLevel
 from matching_engine.runtime.events import format_timestamp
 from matching_engine.runtime.problem import problem_response
 
@@ -107,8 +107,8 @@ async def get_book_snapshot(request: Request, ticker: Ticker, at: datetime) -> A
     engine = _engine(request)
     if engine is None:
         return _recovering(request)
-    snapshot = await engine.store.latest_snapshot(ticker, format_timestamp(at))
-    if snapshot is None:  # none yet: replay starts from the first event
+    stored = await engine.store.latest_snapshot(ticker, format_timestamp(at))
+    if stored is None:  # none yet: replay starts from the first event
         return {
             "ticker": ticker,
             "sequence": 0,
@@ -116,19 +116,22 @@ async def get_book_snapshot(request: Request, ticker: Ticker, at: datetime) -> A
             "bids": [],
             "asks": [],
             "closed": [],
+            "forget_before": None,
         }
+    snapshot = BookSnapshot.from_dict(stored)  # also reads snapshots stored before closed_at
     return {
         "ticker": ticker,
-        "sequence": snapshot["sequence"],
-        "as_of": snapshot["as_of"],
-        "bids": _levels_from_snapshot(snapshot["bids"]),
-        "asks": _levels_from_snapshot(snapshot["asks"]),
-        # Finished and expired orders: Q-16's state_hash covers them, so a rebuild elsewhere
-        # (time travel) needs them to reproduce the same hash.
+        "sequence": snapshot.sequence,
+        "as_of": snapshot.as_of,
+        "bids": _levels_from_snapshot(stored["bids"]),
+        "asks": _levels_from_snapshot(stored["asks"]),
+        # Finished and expired orders the book still remembers: Q-16's state_hash covers them,
+        # so a rebuild elsewhere (time travel) needs them to reproduce the same hash.
         "closed": [
-            {"order_id": order_id, "state": state, "trader_id": trader_id}
-            for order_id, state, trader_id in snapshot["closed"]
+            {"order_id": order_id, "state": state, "trader_id": trader_id, "closed_at": closed_at}
+            for order_id, state, trader_id, closed_at in snapshot.closed
         ],
+        "forget_before": snapshot.forget_before,
     }
 
 
@@ -155,5 +158,6 @@ async def get_live_book(request: Request, ticker: Ticker) -> Any:
         "as_of": book.as_of or format_timestamp(datetime.now(UTC)),
         "bids": _levels_from_view(book.bids()),
         "asks": _levels_from_view(book.asks()),
+        "forget_before": book.forget_before,
         "state_hash": book.state_hash(),
     }

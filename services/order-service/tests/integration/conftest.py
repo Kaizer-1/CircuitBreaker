@@ -19,6 +19,8 @@ TABLES = (
     "outbox_cursor",
     "orders_by_idempotency_key",
     "processed_events",
+    "open_orders_by_trader",
+    "data_migrations",
 )
 
 

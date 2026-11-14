@@ -22,6 +22,11 @@
   within an hour; bot-traders README, "Phase 4 rebalance"). Its drift (first to last price) is
   printed. Run it for 30 minutes to check the band: `python3 scripts/bots_check.py 1800`.
 
+It also prints, without judging them, what explains a market maker's missing quotes (pre-chaos
+hardening, CI flake of 2026-11-14): the bots' own timing over the window (bot_quote_gap_seconds,
+how long a side had no quote after a fill; bot_order_lateness_seconds, how late orders went out
+against their plan) and how busy the machine was (CPUs, load average, the containers' CPU).
+
 Usage: python3 scripts/bots_check.py [seconds]   (default 60). Prints a summary; exit 1 on failure.
 """
 
@@ -68,6 +73,58 @@ def refused() -> float:
         for line in text.splitlines()
         if line.startswith("bot_orders_total{") and 'result="refused"' in line
     )
+
+
+def bot_histograms() -> dict[str, dict[str, float]]:
+    """bot-traders' timing histograms: {name{strategy}: {bucket le: count, "sum", "count"}}."""
+    with urllib.request.urlopen(f"{BOTS}/metrics", timeout=5) as response:  # noqa: S310
+        text = response.read().decode()
+    found: dict[str, dict[str, float]] = {}
+    for line in text.splitlines():
+        if not line.startswith(("bot_quote_gap_seconds", "bot_order_lateness_seconds")):
+            continue
+        name_labels, value = line.rsplit(" ", 1)
+        name, _, labels = name_labels.partition("{")
+        strategy = labels.split('strategy="')[1].split('"')[0] if "strategy=" in labels else ""
+        series = found.setdefault(f"{name.rsplit('_', 1)[0]}{{{strategy}}}", {})
+        if name.endswith("_bucket"):
+            series[labels.split('le="')[1].split('"')[0]] = float(value)
+        elif name.endswith(("_sum", "_count")):
+            series[name.rsplit("_", 1)[1]] = float(value)
+    return found
+
+
+def timing(before: dict[str, float], after: dict[str, float]) -> tuple[float, float, float]:
+    """count, mean and p95 (bucket upper bound) of what was observed between two reads."""
+    delta = {k: after.get(k, 0.0) - before.get(k, 0.0) for k in after}
+    count = delta.get("count", 0.0)
+    if not count:
+        return 0.0, 0.0, 0.0
+    buckets = sorted(
+        ((float(k), v) for k, v in delta.items() if k not in ("sum", "count") and k != "+Inf")
+    )
+    p95 = next((le for le, n in buckets if n >= 0.95 * count), float("inf"))
+    return count, delta.get("sum", 0.0) / count, p95
+
+
+def container_cpu() -> dict[str, float]:
+    """CPU % per Compose container (docker stats), or {} where there is no Docker (Kubernetes)."""
+    try:
+        out = subprocess.run(  # noqa: S603, S607 (fixed command)
+            ["docker", "stats", "--no-stream", "--format", "{{.Name}} {{.CPUPerc}}"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    cpu = {}
+    for line in out.splitlines():
+        name, _, value = line.partition(" ")
+        if name.startswith("circuitbreaker-") and value.endswith("%"):
+            cpu[name.removeprefix("circuitbreaker-").rsplit("-", 1)[0]] = float(value[:-1])
+    return cpu
 
 
 def server_errors(since: str) -> dict[str, int]:
@@ -162,6 +219,9 @@ def main() -> int:
         for i in http("GET", f"{MARKET}/v1/instruments")["instruments"]
     }
     refused_before = refused()
+    timing_before = bot_histograms()
+    loads: list[float] = []
+    cpu_samples: list[dict[str, float]] = []
     first = {
         t: http("GET", f"{MARKET}/v1/market/{t}/order-book")["as_of_sequence"] for t in TICKERS
     }
@@ -180,6 +240,9 @@ def main() -> int:
             if crossed(depth["best_bid_paise"], depth["best_ask_paise"]):
                 failures.append(f"market-data depth crossed: {ticker} at {depth['as_of_sequence']}")
             samples += 1
+        loads.append(os.getloadavg()[0])
+        if len(cpu_samples) < 3 and time.monotonic() > end - seconds * (3 - len(cpu_samples)) / 3:
+            cpu_samples.append(container_cpu())  # a third, two thirds and the end of the run
         time.sleep(1)
 
     window = min(int(seconds // 5), 500)  # Q-03 returns at most 500 candles
@@ -216,6 +279,37 @@ def main() -> int:
             )
     market_rate = sum(rates) / len(rates)
     print(f"  market: {market_rate:.1f} trades/min per ticker on average")
+    timing_after = bot_histograms()
+    gaps, gap_mean, gap_p95 = timing(
+        timing_before.get("bot_quote_gap_seconds{market_maker}", {}),
+        timing_after.get("bot_quote_gap_seconds{market_maker}", {}),
+    )
+    late = [
+        timing(timing_before.get(k, {}), v)
+        for k, v in timing_after.items()
+        if k.startswith("bot_order_lateness")
+    ]
+    late_count = sum(c for c, _, _ in late)
+    late_mean = sum(c * m for c, m, _ in late) / late_count if late_count else 0.0
+    late_p95 = max((p for c, _, p in late if c), default=0.0)
+    print(
+        f"  bots' timing: market-maker quote gaps {gaps:.0f}, mean {gap_mean:.1f} s,"
+        f" p95 <= {gap_p95:g} s; orders late: mean {late_mean:.2f} s, p95 <= {late_p95:g} s"
+    )
+    busiest = {
+        name: sum(sample.get(name, 0.0) for sample in cpu_samples) / len(cpu_samples)
+        for name in ("bot-traders", "order-service", "api-gateway", "cassandra")
+        if cpu_samples and any(name in sample for sample in cpu_samples)
+    }
+    print(
+        f"  machine: {os.cpu_count()} CPUs, load average (1 min) mean"
+        f" {sum(loads) / len(loads):.1f}, max {max(loads):.1f}"
+        + (
+            "; containers' CPU: " + ", ".join(f"{k} {v:.0f}%" for k, v in busiest.items())
+            if busiest
+            else ""
+        )
+    )
     if market_rate < TRADES_PER_MINUTE_FLOOR:
         failures.append(
             f"the market trades {market_rate:.1f} times a minute per ticker,"

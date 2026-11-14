@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Order load through the public API: shows that more order-service replicas mean more capacity.
 
-    python3 scripts/load_orders.py [--rate 200] [--seconds 120] [--mix orders|spike] [--json]
+    python3 scripts/load_orders.py [--rate 200] [--seconds 120] [--mix orders|spike|panic] [--json]
 
 It signs in the load-test accounts load-01 ... load-10 (A-03, kind LOAD: never on the leaderboard),
 the accounts chaos scenarios section 3.3 assigns to the traffic spike, and sends a steady rate of
@@ -10,7 +10,12 @@ Every order is BUY 1 share, LIMIT 20% below the reference price: it rests and ne
 
     --mix orders (default)  50% POST /v1/orders, 50% DELETE /v1/orders/{id} (cancel the oldest),
                             so the accounts' ₹1,00,000 never runs out and it can run for any length
-    --mix spike             the traffic spike's mix: 30% POST /v1/orders, 70% GET /v1/orders
+    --mix spike             Phase 5's spike: 30% POST /v1/orders, 70% GET /v1/orders
+    --mix panic             the traffic spike as a panic sell (chaos scenarios section 3.3): 90%
+                            POST /v1/orders MARKET SELL of 1 share, 10% GET /v1/orders. Sellers need
+                            shares, so it signs in the bots' accounts (bot-01 ... bot-20, which hold
+                            them); stop the bot fleet first (make k8s-bots-stop), or the two would
+                            trade the same accounts. A MARKET order never rests: no clean-up.
 
 Every 5 seconds it prints the rate it achieved and the latency (p50, p95) per kind of request as the
 client saw it, plus any errors; at the end it cancels what is left. Phase 5's scale check
@@ -140,6 +145,7 @@ def prices(token: str) -> dict[str, int]:
 MIXES = {
     "orders": ("POST", "DELETE"),
     "spike": ("POST", "POST", "POST", "GET", "GET", "GET", "GET", "GET", "GET", "GET"),
+    "panic": ("SELL",) * 9 + ("GET",),
 }
 
 
@@ -191,6 +197,16 @@ def worker(
                         account.unanswered.append({"order": order, "key": key})
                 if status == 0:
                     raise OSError("no answer")
+            elif kind == "SELL":  # a panic sell: at market, so it trades or is cancelled at once
+                order = {
+                    "ticker": random.choice(tickers),  # noqa: S311 (load mix, not security)
+                    "side": "SELL",
+                    "order_type": "MARKET",
+                    "quantity": 1,
+                }
+                status, _ = client.call(
+                    "POST", "/v1/orders", account.token, order, str(uuid.uuid4())
+                )
             elif kind == "DELETE":
                 status, _ = client.call("DELETE", f"/v1/orders/{oldest}", account.token)
                 if status >= 500:  # try again in the clean-up
@@ -211,7 +227,9 @@ def main() -> int:
     parser.add_argument("--rate", type=float, default=200, help="requests per second (all kinds)")
     parser.add_argument("--mix", choices=sorted(MIXES), default="orders")
     parser.add_argument("--seconds", type=float, default=120)
-    parser.add_argument("--accounts", type=int, default=10, help="how many load accounts")
+    parser.add_argument(
+        "--accounts", type=int, default=None, help="how many accounts (10 load, or 20 bots: panic)"
+    )
     parser.add_argument("--first-account", type=int, default=1, help="load-NN to start from")
     # Enough workers that requests start on schedule even when responses are slow (open loop).
     parser.add_argument("--workers", type=int, default=300)
@@ -219,7 +237,10 @@ def main() -> int:
     args = parser.parse_args()
 
     first = args.first_account
-    accounts = sign_in([f"load-{n:02d}" for n in range(first, first + args.accounts)])
+    if args.mix == "panic":
+        accounts = sign_in([f"bot-{n:02d}" for n in range(first, first + (args.accounts or 20))])
+    else:
+        accounts = sign_in([f"load-{n:02d}" for n in range(first, first + (args.accounts or 10))])
     limits = prices(accounts[0].token)
     stats = Stats()
     start = time.monotonic() + 0.5
@@ -254,8 +275,8 @@ def main() -> int:
         row = {
             "t": round(time.monotonic() - start),
             "rate": round(sum(len(v) for v in ms.values()) / WINDOW, 1),
-            "post_p50_ms": round(percentile(ms["POST"], 0.5), 1),
-            "post_p95_ms": round(percentile(ms["POST"], 0.95), 1),
+            "post_p50_ms": round(percentile(ms["POST"] + ms["SELL"], 0.5), 1),
+            "post_p95_ms": round(percentile(ms["POST"] + ms["SELL"], 0.95), 1),
             "delete_p95_ms": round(percentile(ms["DELETE"], 0.95), 1),
             "get_p95_ms": round(percentile(ms["GET"], 0.95), 1),
             "errors": dict(codes),

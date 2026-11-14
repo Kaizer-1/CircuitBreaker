@@ -11,6 +11,11 @@ Matching rules: the best price matches first, then the earliest order at that pr
 the resting order's price; an incoming order whose next match would be its own trader's resting
 order has its remainder cancelled (self-trade prevention, "cancel newest"); a MARKET order never
 trades beyond its protection price and its unfilled part is cancelled; LIMIT remainders rest.
+
+Finished orders are remembered for one hour of event time (ADR-0017 note "A memory of one hour"):
+`forget_before` trails the latest event by CLOSED_MEMORY_MS and never moves back. An order that
+closed before it is forgotten, and a placement made before it is refused, so a late copy of a
+forgotten order can still never trade. Memory stays proportional to one hour of orders.
 """
 
 import bisect
@@ -22,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from matching_engine.domain.model import (
+    CLOSED_MEMORY_MS,
     MAX_QUANTITY,
     TICK_SIZE_PAISE,
     BookSnapshot,
@@ -47,6 +53,8 @@ from matching_engine.domain.model import (
     RestingOrder,
     Side,
     TradeExecuted,
+    ms_of,
+    timestamp_of,
 )
 
 
@@ -103,7 +111,11 @@ class OrderBook:
         self._live: dict[str, _Live] = {}
         self._levels: dict[Side, dict[int, deque[_Live]]] = {Side.BUY: {}, Side.SELL: {}}
         self._prices: dict[Side, list[int]] = {Side.BUY: [], Side.SELL: []}  # ascending
-        self._closed: dict[str, tuple[OrderState, str]] = {}  # order_id -> (state, trader_id)
+        # order_id -> (state, trader_id, closed_at, closed_at in ms), and the same orders by closing
+        # time, oldest first, so forgetting costs only what is forgotten.
+        self._closed: dict[str, tuple[OrderState, str, str, int]] = {}
+        self._closing: deque[tuple[int, str]] = deque()
+        self._forget_before: int | None = None  # ms; None until the first event
 
     # ------------------------------------------------------------------ queries
 
@@ -142,11 +154,29 @@ class OrderBook:
             return None
         return RestingOrder(o.order_id, o.trader_id, o.remaining, o.accepted_sequence)
 
+    def _remembered(self, order_id: str) -> tuple[OrderState, str] | None:
+        """(state, trader_id) of a finished order the book still remembers."""
+        entry = self._closed.get(order_id)
+        if entry is None or not self._kept(entry[3]):
+            return None  # never seen, or closed before forget_before
+        return entry[0], entry[1]
+
+    def _kept(self, closed_ms: int) -> bool:
+        return self._forget_before is None or closed_ms >= self._forget_before
+
     def status_of(self, order_id: str) -> OrderState | None:
         if order_id in self._live:
             return OrderState.RESTING
-        closed = self._closed.get(order_id)
+        closed = self._remembered(order_id)
         return closed[0] if closed else None
+
+    @property
+    def forget_before(self) -> str | None:
+        return None if self._forget_before is None else timestamp_of(self._forget_before)
+
+    def remembered_count(self) -> int:
+        """Finished orders held in memory (a metric; bounded by about one hour of orders)."""
+        return len(self._closed)
 
     # ------------------------------------------------------------------ decide (business rules)
 
@@ -183,6 +213,9 @@ class OrderBook:
 
     def _decide_place(self, c: PlaceOrder, events: _Events) -> Decision:
         limit = self._validate(c)
+        if self._forget_before is not None and ms_of(c.placed_at) < self._forget_before:
+            # Older than the book's memory: it may be a late copy of an order already forgotten.
+            return Decision((), Outcome.REFUSED, "placed before forget_before: never trades")
         known = self.status_of(c.order_id)
         if known is OrderState.EXPIRED:
             return Decision((), Outcome.REFUSED, "order id was expired (tombstone): never trades")
@@ -269,7 +302,7 @@ class OrderBook:
             )
             return events.decision()
         reason = CancelRejectReason.UNKNOWN_ORDER  # never seen, expired, or not this trader's
-        state, owner = self._closed.get(c.order_id, (None, None))
+        state, owner = self._remembered(c.order_id) or (None, None)
         if live is None and owner == c.trader_id:
             if state is OrderState.FILLED:
                 reason = CancelRejectReason.ALREADY_FILLED
@@ -299,7 +332,7 @@ class OrderBook:
                 )
             )
             return events.decision()
-        if c.order_id in self._closed:
+        if self._remembered(c.order_id) is not None:
             return Decision((), Outcome.NOTHING_TO_DO, "order already finished")
         events.add(OrderExpired(**events.next(), order_id=c.order_id, trader_id=c.trader_id))
         return events.decision()
@@ -319,15 +352,33 @@ class OrderBook:
             self._apply_cancelled(event)
         elif isinstance(event, OrderExpired):
             self._check_new_id(event.order_id)
-            self._closed[event.order_id] = (OrderState.EXPIRED, event.trader_id)
+            self._close(event.order_id, OrderState.EXPIRED, event.trader_id, event.occurred_at)
         elif not isinstance(event, OrderCancelRejected):  # a rejection changes nothing
             raise CorruptEventError(f"unknown event type {event.event_type}")
         self.sequence = event.sequence
         self.as_of = event.occurred_at
+        self._forget(ms_of(event.occurred_at) - CLOSED_MEMORY_MS)
 
     def _check_new_id(self, order_id: str) -> None:
-        if order_id in self._live or order_id in self._closed:
+        if order_id in self._live or self._remembered(order_id) is not None:
             raise CorruptEventError(f"order {order_id} is already known")
+
+    def _close(self, order_id: str, state: OrderState, trader_id: str, at: str) -> None:
+        at_ms = ms_of(at)
+        self._closed[order_id] = (state, trader_id, at, at_ms)
+        self._closing.append((at_ms, order_id))
+
+    def _forget(self, before: int) -> None:
+        """Move forget_before up to `before` (never back) and drop what closed before it."""
+        if self._forget_before is not None and before <= self._forget_before:
+            return
+        self._forget_before = before
+        closing = self._closing
+        while closing and closing[0][0] < before:
+            at_ms, order_id = closing.popleft()
+            entry = self._closed.get(order_id)
+            if entry is not None and entry[3] == at_ms:  # not closed again since (a tombstone)
+                del self._closed[order_id]
 
     def _live_order(self, order_id: str) -> _Live:
         try:
@@ -360,7 +411,7 @@ class OrderBook:
         for order in (buy, sell):
             order.remaining -= e.quantity
             if order.remaining == 0:
-                self._finish(order, OrderState.FILLED)
+                self._finish(order, OrderState.FILLED, e.occurred_at)
 
     def _apply_cancelled(self, e: OrderCancelled) -> None:
         order = self._live_order(e.order_id)
@@ -368,7 +419,7 @@ class OrderBook:
             raise CorruptEventError(
                 f"cancelled_quantity {e.cancelled_quantity} != remaining {order.remaining}"
             )
-        self._finish(order, OrderState.CANCELLED)
+        self._finish(order, OrderState.CANCELLED, e.occurred_at)
 
     def _add_to_level(self, order: _Live, price: int) -> None:
         levels = self._levels[order.side]
@@ -377,9 +428,9 @@ class OrderBook:
             bisect.insort(self._prices[order.side], price)
         levels[price].append(order)
 
-    def _finish(self, order: _Live, state: OrderState) -> None:
+    def _finish(self, order: _Live, state: OrderState, at: str) -> None:
         del self._live[order.order_id]
-        self._closed[order.order_id] = (state, order.trader_id)
+        self._close(order.order_id, state, order.trader_id, at)
         if order.price is None:
             return  # a MARKET order was never in a price level
         level = self._levels[order.side][order.price]
@@ -407,10 +458,18 @@ class OrderBook:
             )
 
         closed = tuple(
-            (oid, state.value, trader) for oid, (state, trader) in sorted(self._closed.items())
+            (oid, state.value, trader, at)
+            for oid, (state, trader, at, at_ms) in sorted(self._closed.items())
+            if self._kept(at_ms)
         )
         return BookSnapshot(
-            self.ticker, self.sequence, self.as_of, side(Side.BUY), side(Side.SELL), closed
+            self.ticker,
+            self.sequence,
+            self.as_of,
+            side(Side.BUY),
+            side(Side.SELL),
+            closed,
+            self.forget_before,
         )
 
     @classmethod
@@ -425,7 +484,12 @@ class OrderBook:
                     )
                     book._live[order_id] = order
                     book._add_to_level(order, price)
-        book._closed = {oid: (OrderState(state), trader) for oid, state, trader in snapshot.closed}
+        for order_id, state, trader, at in sorted(
+            snapshot.closed, key=lambda c: (ms_of(c[3]), c[0])
+        ):
+            book._close(order_id, OrderState(state), trader, at)
+        if snapshot.forget_before is not None:
+            book._forget(ms_of(snapshot.forget_before))  # drops what closed before it, if any
         bid, ask = book.best_bid(), book.best_ask()
         if bid is not None and ask is not None and bid >= ask:
             raise CorruptEventError(f"snapshot has a crossed book: bid {bid} >= ask {ask}")

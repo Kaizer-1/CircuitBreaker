@@ -73,8 +73,10 @@ clusters without changing any code.
 
 `market_events` columns: `sequence`, `event_id`, `event_type`, `occurred_at`, `payload` (the full JSON envelope).
 `day` bucketing keeps partitions from growing forever. A command's events, its `ticker_days` row (on a new day) and its
-`processed_commands` row are written in **one logged batch**. A snapshot's `state` is the whole book, including every
-finished or expired order ID (so cancel rejections and tombstones give the same answer after a restart).
+`processed_commands` row are written in **one logged batch**. A snapshot's `state` is the whole book, including the
+orders finished or expired in the last hour of event time, with when each closed, and `forget_before`, where that hour
+begins (so cancel rejections and tombstones give the same answer after a restart; ADR-0017 note "A memory of one
+hour"). `processed_commands` keeps every command ID for ever, on disk: an exact redelivery is always a duplicate.
 
 ### Keyspace `order_service` (owner: order-service)
 
@@ -82,9 +84,11 @@ finished or expired order ID (so cancel rejections and tombstones give the same 
 |---|---|---|---|
 | `orders_by_id` | `order_id` | — | Q-08 Get one order |
 | `orders_by_trader` | `trader_id` | `placed_at DESC, order_id DESC` | Q-07 List my orders, newest first |
+| `open_orders_by_trader` | `trader_id` | `placed_at DESC, order_id DESC` | Q-07 `status=open`: "Which of my orders may still trade?" Only open orders: a row is written with the order's status, in the same batch, and deleted when the order finishes (or comes back if a late `OrderAccepted` reopens it). Listing costs what is open, not the whole history. Leveled compaction, `gc_grace_seconds` 1 hour (one node, replication factor 1) |
 | `order_events` | `order_id` | `occurred_at ASC` | Order history; outbox (column `published` boolean) |
-| `outbox` | `bucket` (minutes since 1970) | `occurred_at ASC, event_id` | "Which events are not yet published?" for the relay; a row is deleted once published. `order_events` alone cannot answer this: it is partitioned by order. `occurred_at` is when the row was written (a retried cancel or expiry is a fresh row of the same event) |
-| `outbox_cursor` | `name` (one row, `relay`) | — | "From which minute must the relay read?" The oldest minute that may still hold an unpublished row, so a cancel or expiry request is found however old it is ([ADR-0017 note](../adr/0017-fail-closed-orphan-release.md#note-no-time-limit-for-cancels-and-expiries-phase-4)) |
+| `outbox` | `bucket` (minutes since 1970) | `occurred_at ASC, event_id` | "Which events are not yet published?" for the relay. A published (or dropped) row is marked `done`, never deleted, and every row expires an hour after it was written (TTL; leveled compaction, `gc_grace_seconds` 1 hour), so the relay reads no tombstones ([ADR-0017 note](../adr/0017-fail-closed-orphan-release.md#note-the-outbox-without-tombstones-pre-chaos-hardening-2026-11-14)). `order_events` alone cannot answer this: it is partitioned by order. `occurred_at` is when the row was written (a retried or carried-forward cancel or expiry is a fresh row of the same event) |
+| `outbox_cursor` | `name` (one row, `relay`) | — | "From which minute must the relay read?" The oldest minute that may still hold a waiting row, so a cancel or expiry request is found however old it is ([ADR-0017 note](../adr/0017-fail-closed-orphan-release.md#note-no-time-limit-for-cancels-and-expiries-phase-4)) |
+| `data_migrations` | `name` | — | "Has this one-time data migration run?" (the open-orders backfill) |
 | `orders_by_idempotency_key` | `(trader_id, idempotency_key)` | — | "Did this trader already send this `Idempotency-Key`?" (24 h TTL, claimed with a lightweight transaction) |
 | `processed_events` | `event_id` | — | Idempotent consumption of `matching.v1` |
 
@@ -165,7 +169,10 @@ decides how its data is exposed.
 
 **Q: Why design one Cassandra table per query?**
 A: Cassandra can only query efficiently by partition key and in clustering order. So we model tables around queries
-(e.g. `orders_by_trader`) and accept duplication.
+(e.g. `orders_by_trader`) and accept duplication. `open_orders_by_trader` is the clearest case: "my open orders" from
+the history table meant reading every order the trader ever placed and filtering (a bot: 1.2 s per listing after a
+quarter of an hour). A table holding only open orders answers it in one partition read, whatever the history; the
+price is one more write per status change, in the same batch, so the two tables never disagree.
 
 **Q: What is the cost of data duplication and how do you handle it?**
 A: Copies can be briefly stale (eventual consistency) and use extra storage. We accept it: copies are updated by

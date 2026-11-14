@@ -160,3 +160,71 @@ async def test_a_requeued_request_is_a_fresh_row_of_the_same_event(
     assert pending == again
     await store.mark_published(pending)
     assert await store.pending_outbox(format_timestamp(now - timedelta(minutes=2))) == []
+
+
+# ------------------------------------------------------------------ the outbox without deletes
+
+
+async def test_published_rows_are_marked_done_and_a_pass_reads_only_what_is_new(
+    store: CassandraOrderStore, session: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Before (Phase 2-5) a published row was deleted, and every pass read the last minutes'
+    # partitions again: thousands of tombstones per read under load.
+    now = datetime.now(UTC)
+    settled = format_timestamp(now - timedelta(minutes=2))
+    for n in range(200):
+        o, entry = placed(100 + n, now - timedelta(seconds=30) + timedelta(milliseconds=n))
+        await store.create(o, entry)
+        await store.mark_published(entry)  # as the request path does
+    assert await store.pending_outbox(settled) == []
+    left = session.execute("SELECT COUNT(*) AS n FROM outbox WHERE done = true ALLOW FILTERING")
+    assert left.one().n == 200  # kept, marked done: no tombstones
+
+    read: list[int] = []
+    run = store._run
+
+    async def counting(query: Any, params: Any = ()) -> list[Any]:
+        rows = await run(query, params)
+        read.append(len(rows))
+        return rows
+
+    monkeypatch.setattr(store, "_run", counting)
+    o, entry = placed(400, datetime.now(UTC))
+    await store.create(o, entry)
+    [pending] = await store.pending_outbox(settled)
+    assert pending.order_id == o.order_id
+    assert sum(read) <= 3, read  # the new row, then the waiting one: not the 200 done rows
+
+
+async def test_a_row_written_late_behind_the_newest_one_is_still_found(
+    store: CassandraOrderStore,
+) -> None:
+    # Another replica's row stamped earlier but stored after this replica read past it: the
+    # newest-row read (1) skips it, the settled read (2) finds it once it is 2 minutes old.
+    now = datetime.now(UTC)
+    o, entry = placed(30, now)
+    await store.create(o, entry)
+    await store.mark_published(entry)
+    assert await store.pending_outbox(format_timestamp(now - timedelta(minutes=2))) == []
+    late, late_entry = placed(31, now - timedelta(seconds=40))
+    await store.create(late, late_entry)
+    assert await store.pending_outbox(format_timestamp(now - timedelta(minutes=2))) == []
+    found = await store.pending_outbox(format_timestamp(now - timedelta(seconds=30)))
+    assert [e.order_id for e in found] == [late.order_id]
+
+
+async def test_outbox_and_open_orders_tables_expire_and_compact_as_designed(
+    store: CassandraOrderStore, session: Any
+) -> None:
+    rows = session.execute(
+        "SELECT table_name, default_time_to_live, gc_grace_seconds, compaction,"
+        " memtable_flush_period_in_ms"
+        " FROM system_schema.tables WHERE keyspace_name = 'order_service_it'"
+    )
+    tables = {r.table_name: r for r in rows}
+    outbox, open_orders = tables["outbox"], tables["open_orders_by_trader"]
+    assert (outbox.default_time_to_live, outbox.gc_grace_seconds) == (3600, 3600)
+    assert (open_orders.default_time_to_live, open_orders.gc_grace_seconds) == (0, 600)
+    assert open_orders.memtable_flush_period_in_ms == 60000
+    for table in (outbox, open_orders):
+        assert table.compaction["class"].endswith("LeveledCompactionStrategy")

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: market-data-service API
-  version: 1.1.1
+  version: 1.1.2
   summary: Instruments, candles, order-book depth, trades and time travel.
   description: |
     Owned by the **Market Insights Team** (MD Asif Ali). A CQRS read side: builds its models from `matching.v1`
@@ -564,8 +564,8 @@ components:
           type: string
           pattern: '^[0-9a-f]{64}$'
           description: |
-            SHA-256 of the whole rebuilt book at `as_of_sequence` (every resting order and every finished or expired order
-            ID), by the rule of matching-engine's `BookState.state_hash`. Equal to the live engine's Q-16 hash when the
+            SHA-256 of the whole rebuilt book at `as_of_sequence` (every resting order, the finished or expired orders the
+            engine still remembered, and `forget_before`), by the rule of matching-engine's `BookState.state_hash`. Equal to the live engine's Q-16 hash when the
             live book is at the same sequence: the proof that the rebuild is exact.
         verification:
           oneOf:

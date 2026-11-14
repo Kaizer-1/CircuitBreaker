@@ -25,6 +25,7 @@ from tests.fakes import RecordingPublisher
 pytestmark = pytest.mark.integration
 
 DAY1 = datetime(2026, 11, 20, 23, 59, 58, tzinfo=UTC)
+STARTED = "2026-11-20T22:59:58.000Z"  # DAY1 - 1 hour: the load test's clock starts here
 
 
 @pytest.fixture(scope="module")
@@ -211,7 +212,11 @@ async def test_reads_under_load_return_every_event_once_in_order_and_rebuild_exa
             else:
                 trader, side = rng.choice(traders), rng.choice(("BUY", "SELL"))
                 price = 24500 + 5 * rng.randint(-8, 8)
-                command = limit(n, trader, side, rng.randint(1, 30), price, ticker=ticker)
+                # Placed when the engine's clock starts: the engine refuses placements older than
+                # its memory of one hour (forget_before), and T0 is half a day before this clock.
+                command = limit(
+                    n, trader, side, rng.randint(1, 30), price, ticker=ticker, placed_at=STARTED
+                )
                 resting.append((n, trader, ticker))
             await engine.handle(command)
             book = engine.book(ticker)

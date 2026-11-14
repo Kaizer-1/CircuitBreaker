@@ -44,6 +44,15 @@ a repeated A-19, put the same stored request back in the outbox and send it agai
 `event_id`. `tests/integration/test_outbox_outage.py` stops a real Redpanda for 25 (virtual) minutes and checks that both
 requests arrive afterwards.
 
+**The outbox reads no tombstones** (2026-11-14,
+[ADR-0017 note](../../docs/adr/0017-fail-closed-orphan-release.md#note-the-outbox-without-tombstones-pre-chaos-hardening-2026-11-14)):
+a published or dropped row is marked `done` instead of deleted, and every row expires an hour after it was written. A
+relay pass reads the rows written since the newest one it has seen, the slice that just became settled (a row written
+late is found there, once), and the rows still waiting. A request still waiting after 20 minutes is written again
+(same event) so the TTL never catches it, and on start-up the relay sends again the stored cancel of every open order
+that asked for one (a service stopped for longer than the TTL). Both replicas run the relay, so copies of one request
+collapse to the newest row. A cancel or expiry waits for its order's `OrderPlaced` only while the order is `PENDING`.
+
 **The Kafka producer has a 10 s delivery timeout and is not idempotent** (Phase 3,
 [ADR-0017 note](../../docs/adr/0017-fail-closed-orphan-release.md#note-making-the-60-s-rule-true-phase-3)): an idempotent
 aiokafka producer never gives up on a message, so a send that hung while Redpanda was down was delivered whenever it came
@@ -105,16 +114,24 @@ Other business metrics: `orders_placed_total{order_type,side}`, `orders_rejected
   framing (`CrcException`): the driver dropped the connection, and with one Cassandra node that marked the whole
   cluster down for about a second, so every request failed (`NoHostAvailable`). matching-engine and market-data-service
   use v4 too.
-- Q-07 with a status filter reads one row per order (`orders_by_trader` holds only IDs). Those reads share **8 slots**
-  across all callers, so a few long listings cannot fill the worker threads and delay a placement. Bots therefore list
-  their open orders only at start-up; they follow their Q-10 stream for fills.
+- Q-07 `status=open` reads `open_orders_by_trader`: only what is open, however long the trader's history (before
+  2026-11-14 it walked the history, at most 1,000 rows per call). Any other filter still walks `orders_by_trader` and
+  reads one row per order; those reads share **8 slots** across all callers, so a few long listings cannot fill the
+  worker threads and delay a placement.
+- The open-orders table is kept in the same batch as the order's status, with the same timestamp, so the two never
+  disagree. Orders stored before it existed were added once at start-up (`data_migrations`), each row written with its
+  order's status timestamp, so an order that closed meanwhile cannot come back. A property test plays random lives of
+  orders (fills, cancels, expiries, a rejection reopened by a late `OrderAccepted`) on the in-memory store and on a real
+  Cassandra and checks after every step that the table equals the orders not finished.
 
 ## Owned data
 
 Cassandra keyspace `order_service` (schema: [`src/order_service/migrations/`](src/order_service/migrations/), applied at
-start-up): `orders_by_id`, `orders_by_trader`, `order_events` (with a `published` flag), `outbox` (unpublished rows,
-one partition per minute, deleted once published), `outbox_cursor` (where the relay starts reading), `orders_by_idempotency_key`
-(24 h TTL), `processed_events`.
+start-up): `orders_by_id`, `orders_by_trader`, `open_orders_by_trader` (only the orders that may still trade, written with each
+status change; Q-07 `status=open`), `order_events` (with a `published` flag), `outbox` (one partition per minute; a
+published row is marked `done`, never deleted, and expires after an hour), `outbox_cursor` (where the relay starts
+reading), `orders_by_idempotency_key` (24 h TTL), `processed_events`, `data_migrations` (one-time migrations done: the
+open-orders backfill).
 
 ## Events
 
@@ -177,6 +194,14 @@ Cassandra in one batch, and a relay re-sends anything unpublished after 5 s, but
 
 **Q: How do you stop overspending?**
 A: A synchronous reservation in portfolio-service before publishing; it fails with 422 if cash or shares are insufficient.
+
+**Q: What are tombstones, and why does the outbox use a TTL and compaction instead of deleting rows?**
+A: A Cassandra delete writes a tombstone, a marker that hides the old value until compaction may drop it, after
+`gc_grace_seconds`. Every read must step over the tombstones in its range. The relay re-read the last minutes after
+deleting each published row: about 2,000 tombstones per poll under load, to find one live row. Now a published row is
+only marked `done`, the relay never re-reads old rows, and the TTL makes every row expire after an hour; leveled
+compaction then removes the expired rows and their versions, and a 1-hour `gc_grace_seconds` (one node, nothing to
+repair) lets it do so soon. A request still waiting is written again before the TTL, so none is ever lost.
 
 **Q: What does the circuit breaker protect?**
 A: When portfolio-service is down, every order would wait 500 ms and fail. After 5 failures the breaker opens and

@@ -108,8 +108,28 @@ def test_q15_returns_the_latest_snapshot_at_or_before_a_time(client: TestClient)
     assert body["bids"][0]["orders"][0]["remaining_quantity"] == 30
     # BOB's sell was filled by the trade at sequence 3: the snapshot says so, for the hash.
     assert body["closed"] == [
-        {"order_id": "0dde0000-0000-4000-8000-000000000001", "state": "FILLED", "trader_id": BOB}
+        {
+            "order_id": "0dde0000-0000-4000-8000-000000000001",
+            "state": "FILLED",
+            "trader_id": BOB,
+            "closed_at": body["as_of"],  # the trade was the snapshot's last event
+        }
     ]
+    assert body["forget_before"] == "2026-11-20T09:42:01.250Z"  # an hour before as_of
+    assert body["as_of"] == "2026-11-20T10:42:01.250Z"
+
+
+def test_q15_serves_a_snapshot_stored_before_closed_at_existed(
+    client: TestClient, engine: MatchingEngine
+) -> None:
+    # Snapshots stored before 2026-11-14 have [order_id, state, trader_id] and no forget_before:
+    # their closed orders count as closed at the snapshot's moment.
+    stored = engine.store.snapshots["CALVERA"][-1]  # type: ignore[attr-defined]
+    stored["closed"] = [c[:3] for c in stored["closed"]]
+    del stored["forget_before"]
+    body = client.get("/internal/v1/snapshots/CALVERA", params={"at": "2026-11-20T11:00:00Z"})
+    assert body.json()["closed"][0]["closed_at"] == body.json()["as_of"]
+    assert body.json()["forget_before"] is None
 
 
 def test_q15_without_a_snapshot_yet_is_an_empty_book_at_sequence_0(client: TestClient) -> None:
@@ -121,6 +141,7 @@ def test_q15_without_a_snapshot_yet_is_an_empty_book_at_sequence_0(client: TestC
         "bids": [],
         "asks": [],
         "closed": [],
+        "forget_before": None,
     }
 
 

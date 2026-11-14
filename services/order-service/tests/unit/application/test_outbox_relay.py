@@ -1,6 +1,7 @@
 """The outbox relay: retry after 5 s, never publish an OrderPlaced older than 60 s (ADR-0011), and
 never give up on a cancel or an expiry request (ADR-0017 note)."""
 
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -132,6 +133,43 @@ async def test_cancels_and_expiries_have_no_time_limit(w: World) -> None:
     assert w.store.outbox == []
 
 
+async def test_a_request_waiting_20_minutes_is_written_again_before_its_row_expires(
+    w: World,
+) -> None:
+    # Outbox rows expire an hour after they are written (a TTL): a request still waiting is
+    # written again at "now", the same event, and its old row is marked done.
+    order = await w.place()
+    w.publisher.down = True
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+    [first] = w.store.outbox
+    w.clock.now += timedelta(minutes=21)
+    assert await w.relay.run_once() == 0
+    [again] = w.store.outbox
+    assert again.event == first.event and again.row_at == "2026-11-20T11:03:01.248Z"
+    w.publisher.down = False
+    w.clock.now += timedelta(seconds=10)
+    assert await w.relay.run_once() == 1
+    assert w.publisher.types() == ["OrderPlaced", "OrderCancelRequested"]
+
+
+async def test_after_a_restart_an_open_orders_lost_cancel_is_sent_again(w: World) -> None:
+    # The service (or the laptop) was stopped for longer than the outbox rows' TTL: the cancel's
+    # row expired. On start-up the relay sends the stored cancel of every open order again.
+    waiting, untouched = await w.place(), await w.place()
+    w.publisher.down = True
+    await w.orders.cancel(RAJU, waiting.order_id, correlation_id="c")
+    w.store.outbox.clear()  # expired while nothing ran
+    w.publisher.down = False
+    restarted = OutboxRelay(w.store, w.publisher, clock=w.clock)
+    assert await restarted.run_once() == 0  # queued again at "now"
+    w.clock.now += timedelta(seconds=10)
+    assert await restarted.run_once() == 1
+    assert w.publisher.types() == ["OrderPlaced", "OrderPlaced", "OrderCancelRequested"]
+    assert w.publisher.sent[-1][2].data["order_id"] == waiting.order_id
+    assert await restarted.run_once() == 0  # once only, and nothing for the order left alone
+    assert untouched.order_id not in {e.data.get("order_id") for _, _, e in w.publisher.sent[2:]}
+
+
 async def test_the_relay_tells_the_store_how_far_back_rows_can_still_appear(w: World) -> None:
     await w.relay.run_once()
     assert w.store.settled_before == ["2026-11-20T10:40:01.248Z"]  # now - 2 min (clock margin)
@@ -175,3 +213,36 @@ async def test_a_failing_pass_is_logged_and_the_loop_goes_on(
     with pytest.raises(KeyboardInterrupt):
         await w.relay.run(every_seconds=0)
     assert calls == 2
+
+
+async def test_a_cancel_waits_for_its_order_only_while_the_engine_has_not_seen_it(w: World) -> None:
+    # Found by the 60-minute soak: the request path's publish attempt timed out although Kafka
+    # delivered, so `published` stayed false; the engine accepted the order, the relay dropped its
+    # OrderPlaced row ("no longer PENDING") and the cancel waited for a flag that never came.
+    order = await w.place()
+    w.store.orders[order.order_id].published = False  # delivered, but never marked
+    await w.orders.apply_matching_event(w.engine("OrderAccepted", order_id=order.order_id))
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+    assert w.publisher.types() == ["OrderPlaced", "OrderCancelRequested"]  # not held back
+
+
+async def test_two_waiting_rows_of_one_request_become_one(w: World) -> None:
+    # Both order-service replicas run a relay: both may carry the same waiting request forward,
+    # and every 20 minutes the copies doubled. Copies of one event collapse to the newest row.
+    order = await w.place()
+    w.publisher.down = True
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+    [first] = w.store.outbox
+    w.clock.now += timedelta(minutes=21)
+    await w.relay.run_once()  # this replica carries it forward ...
+    [carried] = w.store.outbox
+    late = (w.clock.now + timedelta(milliseconds=128)).isoformat().replace("+00:00", "Z")
+    await w.store.requeue(replace(carried, written_at=late))  # ... and so did the other one
+    assert len(w.store.outbox) == 2
+    w.clock.now += timedelta(seconds=1)
+    await w.relay.run_once()
+    [kept] = w.store.outbox
+    assert kept.event == first.event
+    w.publisher.down = False
+    w.clock.now += timedelta(seconds=10)
+    assert await w.relay.run_once() == 1

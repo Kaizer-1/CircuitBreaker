@@ -56,6 +56,13 @@ class Run:
                     self.spreads[ticker].append((ask - bid) / ((ask + bid) / 2))
                 await self.fleet.on_candle(self.candle(ticker, end))
         await self.time.run_until((count + 1) * INTERVAL)
+        # A market maker filled in the last interval re-quotes at once (a quick step): let its
+        # virtual seconds pass too, or wait_idle would wait for a sleep nobody wakes.
+        for _ in range(10):
+            if self.fleet.idle:
+                break
+            await self.time.run_until(self.time.now + INTERVAL)
+        assert self.fleet.idle, "bot steps still running after 10 more intervals"
         await self.fleet.wait_idle()
 
     def candle(self, ticker: str, end_seconds: float) -> Any:

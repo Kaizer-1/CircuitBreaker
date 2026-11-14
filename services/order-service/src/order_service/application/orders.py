@@ -35,7 +35,6 @@ from order_service.runtime.events import EventEnvelope, format_timestamp
 
 logger = logging.getLogger("orders")
 
-OPEN_STATUSES = {OrderStatus.PENDING, OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED}
 # The request path tries to publish once, briefly; if Redpanda is slow or down the relay takes over,
 # so a trader never waits on the broker (the gateway would time out first).
 PUBLISH_ATTEMPT_SECONDS = 1.0
@@ -67,13 +66,15 @@ class ExpiryAccepted:
 
 def must_wait(entry: OutboxEntry, order: Order | None) -> bool:
     """A cancel or expiry is never published before its order's OrderPlaced (same partition, so
-    the engine would see it first and answer "unknown order"). A rejected order's OrderPlaced will
-    never be published, so an expiry for it need not wait."""
+    the engine would see it first and answer "unknown order"). Only a PENDING order may still be
+    unseen: once the engine has answered (OPEN, a fill, a cancel) its OrderPlaced went out, even
+    if `published` was never set (a publish attempt that timed out although Kafka delivered). A
+    rejected order's OrderPlaced will never be published, so an expiry for it need not wait."""
     return (
         entry.event_type != "OrderPlaced"
         and order is not None
         and not order.published
-        and order.status is not OrderStatus.REJECTED
+        and order.status is OrderStatus.PENDING
     )
 
 
@@ -242,21 +243,29 @@ class Orders:
         limit: int,
         cursor: str | None,
     ) -> tuple[list[Order], str | None]:
-        """Newest first. `status` is a status or "open" (PENDING, OPEN, PARTIALLY_FILLED)."""
+        """Newest first. `status` is a status or "open" (PENDING, OPEN, PARTIALLY_FILLED).
+
+        "open" reads the open-orders table, so it costs what is open, however long the history;
+        the pages are read until the filter (ticker) fills one. Any other filter walks the history:
+        at most 10 pages of it per call, so one listing cannot keep a reader busy for long."""
+        open_only = status == "open"
 
         def wanted(o: Order) -> bool:
             if ticker is not None and o.ticker != ticker:
                 return False
-            if status == "open":
-                return o.status in OPEN_STATUSES
+            if open_only:
+                return o.is_open
             return status is None or o.status == status
 
+        read = self._store.open_orders_of if open_only else self._store.orders_of
         before = decode_cursor(cursor) if cursor else None
         found: list[Order] = []
-        for _ in range(10):  # read at most 10 pages to fill one filtered page
-            page = await self._store.orders_of(trader_id, before=before, limit=limit)
+        pages = 0
+        while True:
+            page = await read(trader_id, before=before, limit=limit)
+            pages += 1
             found += [o for o in page if wanted(o)]
-            if len(found) >= limit or len(page) < limit:
+            if len(found) >= limit or len(page) < limit or (not open_only and pages == 10):
                 break
             before = (page[-1].placed_at, page[-1].order_id)
         items = found[:limit]

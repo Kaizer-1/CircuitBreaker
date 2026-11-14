@@ -149,6 +149,86 @@ avoids cancelling an order that was accepted and is still resting just because p
 The 60 s publish limit in order-service stays. It is no longer what protects the money; it is what tells a trader
 quickly (`REJECTED`, `PUBLISH_TIMEOUT`) that an order did not get through.
 
+**Note: the outbox without tombstones (pre-chaos hardening, 2026-11-14).** Phase 5 measured the price of change 1
+above: a published row was *deleted*, and Cassandra keeps a deleted row as a **tombstone** (a marker that hides the old
+value until compaction may drop it). Every relay pass re-read the last minutes' partitions, so under load one poll read
+about 2,000 tombstones to find about one live row. The outbox now never deletes:
+
+1. **Rows are marked, not deleted.** Publishing (or dropping) a row writes `done = true`, an ordinary write. Every row
+   expires one hour after it was written (the table's TTL), and leveled compaction removes the expired rows; nothing
+   the relay reads is a tombstone of its own making.
+2. **The relay never reads an old row again.** Each pass reads the rows written since the newest one it has seen, the
+   slice that has just become settled (older than the 2-minute clock margin, so a row written late is found, once),
+   and the few rows it saw that are not done yet. The cursor of change 1 stays: the oldest minute that may still hold a
+   waiting row, where a restarted replica starts.
+3. **The TTL cannot lose a request.** A cancel or expiry request still waiting after 20 minutes is written again at
+   "now" (the same event, so the engine still acts on it once) and its old row marked done: while the service runs, a
+   waiting request never reaches the TTL. When the relay starts, it sends again the stored cancel of every open order
+   that asked for one (from the open-orders table), which covers a service or laptop stopped for longer than the TTL.
+   An expiry request lost that way is asked again by the sweeper (change 3).
+
+The tests of change 1 still pass unchanged (25 minutes of failed passes; a real Redpanda stopped for 25 virtual minutes;
+the cursor across a restart), with two more: a request waiting 20 minutes is written again before its row expires, and
+after a restart an open order's lost cancel is sent again.
+
+The 60-minute soak that measured this found two more faults, both fixed with a test. (a) Both order-service replicas
+run a relay, so both carried a waiting request forward and its copies doubled every 20 minutes; copies of one event now
+collapse to the newest row. (b) Older than this note: a cancel waited for its order's `published` flag, which stays
+unset when a publish attempt times out although Kafka delivered; the engine accepted the order, so the flag never came
+and the cancel was never sent. A cancel now waits only while its order is `PENDING` (once the engine has answered, its
+`OrderPlaced` went out).
+
+Measured on kind over 60 minutes each (40 requests/s of 1-share placements and cancels from the load accounts, plus
+the 20 bots; Cassandra's own counters, `nodetool tablestats`; both runs on mains power, because a laptop on battery
+slows its CPU and one such run was thrown away):
+
+| | Before (old outbox, history scan) | After |
+|---|---|---|
+| Tombstones per outbox read, average | 2,143 at minute 5, 2,750 at minute 41 (max 3,973) | 1.0 throughout (max 1) |
+| Live cells per outbox read | 1–3 | 71–75: the rows written since the previous pass, the relay's real work |
+| `POST /v1/orders` p95, order-service, whole run | 324 ms | 281 ms |
+| order-service CPU per request (all its work, relay included) | 12.7 ms | 12.0 ms |
+| Q-07 `status=open` for `load-01` (p50 / p95) | 1,695 / 2,757 ms, 2 errors | 38 / 436 ms, 0 errors |
+| Q-07 `status=open` for `bot-01` (p50 / p95) | 1,694 / 2,828 ms, 2 errors | 25 / 224 ms, 0 errors |
+
+Placement latency changed little: the tombstones cost Cassandra CPU on every relay pass, but a placement was never
+waiting for that read. The open-orders table's own tombstones (a closed order's row is deleted) stay bounded at about
+the last 10 minutes of a trader's closed orders (about 1,000 per listing for a load account closing 2 orders a second,
+a handful for a person), because the table is flushed every minute and its tombstones may be purged after 10.
+
+**Note: a memory of one hour (pre-chaos hardening, 2026-11-14).** The consequence below, "the engine must remember
+every order ID it has seen", was estimated at about 100 bytes per order. Measured, it is about 250 bytes in memory and
+about 280 more while a snapshot is written (the set is sorted and turned into JSON). After about 600,000 orders of load
+tests on kind, the engine passed its 256 MiB limit and was killed at every start-up, so it could not trade at all. A
+Phase 7 traffic spike adds about 100,000 orders in five minutes. The engine now remembers finished orders for **one
+hour of event time**:
+
+1. **`forget_before`** is one hour before the latest event the book applied, and never moves back (a wall clock can be
+   corrected backwards). Event time, not the wall clock, so a rebuild elsewhere (time travel) forgets exactly what the
+   live engine forgot, and the state hash still matches. It is part of the snapshot and of the hash.
+2. **An order that closed before `forget_before` is forgotten.** Each finished or expired order now carries
+   `closed_at`, the time of the event that closed it.
+3. **An `OrderPlaced` whose `placed_at` is before `forget_before` is refused**, with no events, like a tombstoned ID.
+   This is what keeps the guarantee: a copy of a forgotten order was placed before that order closed (order-service
+   stamps `placed_at` before it reserves; the engine accepts, fills or expires it later), so its `placed_at` is before
+   `forget_before` too. Inside the hour, the order is still remembered and refused as known. The one assumption is that
+   order-service's clock is not ahead of the engine's (an order filled at once closes milliseconds after `placed_at`);
+   here every pod reads the same node's clock. A legitimate order is never refused this way: the relay never publishes
+   an `OrderPlaced` older than 60 s.
+4. **What forgetting changes, and why it is harmless.** A cancel for a forgotten order is rejected as `UNKNOWN_ORDER`
+   instead of `ALREADY_FILLED`; order-service answers a finished order's cancel itself. An expiry request for a
+   forgotten finished order produces an `OrderExpired`, which changes nothing: portfolio-service releases only an
+   `ACTIVE` reservation and order-service rejects only a `PENDING` order. An exact redelivery of any command is still a
+   duplicate, because `processed_commands` keeps every command ID on disk.
+
+Tests: a property test plays placements that arrive late or twice, expiries that come before their placement, clock
+steps across the hour's edge and backwards, and restarts from snapshots, and checks that a placement is accepted
+exactly when the order is new and placed after `forget_before`, and that every restarted book makes the same decisions
+and has the same hash; a four-hour simulated run keeps the memory flat after the first hour (7,200 finished orders);
+a snapshot stored before this change (200,000 orders, none with `closed_at`) counts them as closed at its own moment,
+so they are forgotten together an hour later. Snapshots stored before 2026-11-14 are read that way. Specs: matching-engine
+1.3.0 (`closed_at`, `forget_before`, and the hash rule), market-data 1.1.2.
+
 ## Alternatives considered
 
 | Alternative | Why rejected |
@@ -171,9 +251,9 @@ quickly (`REJECTED`, `PUBLISH_TIMEOUT`) that an order did not get through.
   cycle, but A-19 is one more internal contract between the two teams.
 - ❌ Two more event types (`OrderExpiryRequested`, `OrderExpired`), one more cancel reason (`ORDER_EXPIRED`), one more
   internal endpoint and action ID (A-19, from J-36).
-- ❌ The engine must remember every order ID it has seen per ticker (also in snapshots), to tell "never seen" from
-  "finished". That is about 100 bytes per order (≈ 10 MB for 100,000 orders): fine for a demo; a real exchange would
-  start fresh each trading day.
+- ❌ The engine must remember the order IDs it has seen per ticker (also in snapshots), to tell "never seen" from
+  "finished". Measured 2026-11-14: about 250 bytes per order, plus about 280 while a snapshot is written; since then it
+  remembers one hour of them (note "A memory of one hour" above), with placements older than that refused.
 - ❌ An order that was accepted but whose `OrderAccepted` took more than 120 s to reach portfolio-service is cancelled
   (`ORDER_EXPIRED`). The sweeper scope above makes this rare.
 - ❌ Cancels and expiry requests have no time limit, so after a long outage the relay re-reads every minute partition

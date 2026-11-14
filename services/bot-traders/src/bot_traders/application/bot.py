@@ -10,6 +10,11 @@ history; polling it from 20 bots slowed order placement for everyone.
 `CandleClosed` (policy P-09), but if every bot sent its orders the moment a candle closed, trades
 would arrive in a burst every 5 s. So each bot spreads its orders over the following interval at
 random offsets (5% to 95% of it) from its own generator, seeded by `BOT_RANDOM_SEED`.
+
+**A market maker re-quotes a filled side at once** (2026-11-14). Waiting for the next candle left
+the side without its quote for 3.3 s on average, up to about 8 s, after every fill: on a busy
+ticker the four makers then averaged fewer than 3.5 quotes on a side (a CI failure). Now a fill that
+empties a maker's side asks for a quick step on that ticker, spread over REQUOTE_WINDOW_SECONDS.
 """
 
 import asyncio
@@ -23,7 +28,7 @@ from typing import Any
 
 from bot_traders.domain.ledger import Ledger
 from bot_traders.domain.market import Cancel, Intent, OpenOrder, Place, Requote
-from bot_traders.domain.strategies import BotPlan, TickerView
+from bot_traders.domain.strategies import BotPlan, MarketMaker, TickerView
 from bot_traders.ports.exchange import Exchange, OrderRefusedError, Session, SessionExpiredError
 
 logger = logging.getLogger("bot")
@@ -36,6 +41,7 @@ REFRESH_AFTER_SECONDS = 4.0  # a portfolio read is reused for this long
 STEP_BACKOFF_MAX_SECONDS = 30.0
 CLOSED_REMEMBERED = 2_000  # finished order IDs kept, for a close that overtakes its A-05 answer
 SPREAD = (0.05, 0.95)  # orders go out between 5% and 95% of the interval
+REQUOTE_WINDOW_SECONDS = 1.0  # a market maker's quick step after a fill spreads over this
 
 
 def spread(count: int, interval_seconds: float, rng: Random) -> list[float]:
@@ -55,6 +61,11 @@ class MarketState:
 
 
 OrderListener = Callable[[str, str, str], None]  # strategy, result, ticker
+# kind, strategy, seconds. "lateness": how much later than planned an order went out (a starved
+# event loop or slow answers to the orders before it). "quote_gap": how long a side had no resting
+# order of this bot after the exchange closed its last one (filled), until a new one was placed.
+TimingListener = Callable[[str, str, float], None]
+Requoter = Callable[["Bot", str], None]  # asks the fleet for a quick step of this bot on a ticker
 
 
 class Bot:
@@ -69,7 +80,8 @@ class Bot:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_order: OrderListener = lambda strategy, result, ticker: None,
-        listing_slots: asyncio.Semaphore | None = None,
+        on_timing: TimingListener = lambda kind, strategy, seconds: None,
+        requote: Requoter = lambda bot, ticker: None,
     ) -> None:
         self.plan_ = plan
         self.name = plan.name
@@ -80,6 +92,10 @@ class Bot:
         self._clock = clock
         self._sleep = sleep
         self._on_order = on_order
+        self._on_timing = on_timing
+        self._bare: dict[tuple[str, str], float] = {}  # (ticker, side): no resting order since
+        self._requote = requote
+        self._again: set[str] = set()  # tickers to re-quote once the current step on them ends
         self.session: Session | None = None
         self.ledger = Ledger()
         self.open_orders: dict[str, OpenOrder] = {}
@@ -89,7 +105,6 @@ class Bot:
         self._closed: dict[str, None] = {}  # recently finished order IDs, oldest first
         self.busy: set[str] = set()  # tickers this bot is still acting on
         self._signing_in = asyncio.Lock()
-        self._listing_slots = listing_slots or asyncio.Semaphore(1)
         self._backoff = 0.0  # seconds; 0 while steps work
         self._resume_at = 0.0  # no step before this time after a failure
 
@@ -133,8 +148,7 @@ class Bot:
                 await self._list_open_orders()
 
     async def _list_open_orders(self) -> None:
-        async with self._listing_slots:  # shared by the fleet: a few bots at a time
-            orders = await self._exchange.open_orders(self.signed_in())
+        orders = await self._exchange.open_orders(self.signed_in())
         self._reconcile = False
         known = self.open_orders
         self.open_orders = {
@@ -183,13 +197,23 @@ class Bot:
             self._forget(order_id)
 
     def _forget(self, order_id: str) -> None:
-        self.open_orders.pop(order_id, None)
+        """The exchange closed this order (filled, or finished elsewhere)."""
+        gone = self.open_orders.pop(order_id, None)
+        if gone is not None and gone.limit_price_paise is not None:
+            same_side = (gone.ticker, gone.side)
+            if not any((o.ticker, o.side) == same_side for o in self.open_orders.values()):
+                self._bare.setdefault(same_side, self._clock())
+                if isinstance(self.plan_.strategy, MarketMaker):
+                    self._requote(self, gone.ticker)  # a maker never waits a candle for a quote
         self._closed[order_id] = None
         if len(self._closed) > CLOSED_REMEMBERED:
             self._closed.pop(next(iter(self._closed)))
 
-    def decide(self, ticker: str, market: MarketState) -> list[tuple[float, Intent]]:
-        """What to do on this ticker during the next interval, as (offset seconds, intent)."""
+    def decide(
+        self, ticker: str, market: MarketState, window: float | None = None
+    ) -> list[tuple[float, Intent]]:
+        """What to do on this ticker during the next interval (or `window` seconds), as (offset
+        seconds, intent)."""
         view = TickerView(
             ticker=ticker,
             closes=deque(market.closes),
@@ -205,11 +229,15 @@ class Bot:
             activity=self._activity,
         )
         intents = self.plan_.strategy.decide(view, self.rng)
-        return list(zip(spread(len(intents), self._interval, self.rng), intents, strict=True))
+        span = window if window is not None else self._interval
+        return list(zip(spread(len(intents), span, self.rng), intents, strict=True))
 
-    async def act(self, ticker: str, market: MarketState) -> None:
-        """Refresh, decide, and send this ticker's orders through the next interval."""
+    async def act(self, ticker: str, market: MarketState, *, window: float | None = None) -> None:
+        """Refresh, decide, and send this ticker's orders through the next interval, or through
+        `window` seconds (a market maker's quick step after a fill)."""
         if ticker in self.busy:
+            if window is not None:
+                self._again.add(ticker)  # a fill during this step: re-quote when it ends
             return  # still busy with the previous candle: skip this one
         if self._clock() < self._resume_at:
             return  # backing off after a failure: give the exchange room to recover
@@ -218,9 +246,11 @@ class Bot:
             await self.ensure_session()
             await self.refresh()
             elapsed = 0.0
-            for offset, intent in self.decide(ticker, market):
+            began = self._clock()
+            for offset, intent in self.decide(ticker, market, window):
                 await self._sleep(offset - elapsed)
                 elapsed = offset
+                self._on_timing("lateness", self.strategy_name, self._clock() - began - offset)
                 await self.execute(intent, market)
             self._backoff = 0.0
         except SessionExpiredError:
@@ -234,6 +264,9 @@ class Bot:
             )
         finally:
             self.busy.discard(ticker)
+            if ticker in self._again:
+                self._again.discard(ticker)
+                self._requote(self, ticker)
 
     async def execute(self, intent: Intent, market: MarketState) -> None:
         if isinstance(intent, Requote):  # the new quote first: no moment without one
@@ -266,6 +299,9 @@ class Bot:
         self.ledger.hold(order, last, answered_at=self._clock())
         # A MARKET order never rests; a LIMIT one may already have finished (its order_closed
         # can overtake this answer).
+        bare_since = self._bare.pop((order.ticker, order.side), None)
+        if order.limit_price_paise is not None and bare_since is not None:
+            self._on_timing("quote_gap", self.strategy_name, self._clock() - bare_since)
         if order.limit_price_paise is not None and placed["order_id"] not in self._closed:
             self.open_orders[placed["order_id"]] = OpenOrder(
                 placed["order_id"],

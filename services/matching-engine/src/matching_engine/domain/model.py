@@ -5,12 +5,31 @@ Pure data: no I/O, no framework. Field names follow the event catalog
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
 TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
 TICK_SIZE_PAISE = 5
 MAX_QUANTITY = 10_000
+# How long a book remembers a finished or expired order, in event time (ADR-0017 note "A memory of
+# one hour"). Part of the state: changing it changes every state_hash, so it is a constant here and
+# in market-data-service's replay, never configuration.
+CLOSED_MEMORY_MS = 3_600_000
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_MS = timedelta(milliseconds=1)
+
+
+def ms_of(timestamp: str) -> int:
+    """Milliseconds since the epoch of an ISO-8601 UTC timestamp such as an event's occurred_at."""
+    return (datetime.fromisoformat(timestamp) - _EPOCH) // _MS
+
+
+def timestamp_of(ms: int) -> str:
+    """The event catalog's timestamp form, millisecond precision: 2026-11-20T10:42:01.263Z."""
+    moment = _EPOCH + ms * _MS
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ms % 1000:03d}Z"
 
 
 class Side(StrEnum):
@@ -188,8 +207,9 @@ Level = tuple[int, tuple[tuple[str, str, int, int], ...]]
 class BookSnapshot:
     """The whole state of one ticker's book after `sequence` (local event BookSnapshotTaken).
 
-    `closed` holds every finished or expired order ID, so cancel rejections and the tombstone rule
-    give the same answers after a restart as before it.
+    `closed` holds the orders finished or expired at or after `forget_before` (one hour before the
+    latest event), so cancel rejections and the tombstone rule give the same answers after a
+    restart as before it. A placement from before `forget_before` is refused (ADR-0017 note).
     """
 
     ticker: str
@@ -197,7 +217,9 @@ class BookSnapshot:
     as_of: str | None
     bids: tuple[Level, ...]  # high to low
     asks: tuple[Level, ...]  # low to high
-    closed: tuple[tuple[str, str, str], ...]  # (order_id, state, trader_id), sorted by order_id
+    # (order_id, state, trader_id, closed_at), sorted by order_id
+    closed: tuple[tuple[str, str, str, str], ...]
+    forget_before: str | None = None  # None until the first event
 
     def to_dict(self) -> dict[str, Any]:
         def levels(side: tuple[Level, ...]) -> list[Any]:
@@ -210,6 +232,7 @@ class BookSnapshot:
             "bids": levels(self.bids),
             "asks": levels(self.asks),
             "closed": [list(c) for c in self.closed],
+            "forget_before": self.forget_before,
         }
 
     @classmethod
@@ -220,11 +243,19 @@ class BookSnapshot:
                 for price, orders in side
             )
 
+        # Snapshots stored before 2026-11-14 have no closing times: their closed orders count as
+        # closed at the snapshot's moment, so they are remembered for one more hour.
+        as_of = raw["as_of"]
+        closed = tuple(
+            (str(c[0]), str(c[1]), str(c[2]), str(c[3] if len(c) > 3 else as_of))
+            for c in raw["closed"]
+        )
         return cls(
             ticker=str(raw["ticker"]),
             sequence=int(raw["sequence"]),
-            as_of=raw["as_of"],
+            as_of=as_of,
             bids=levels(raw["bids"]),
             asks=levels(raw["asks"]),
-            closed=tuple((str(o), str(s), str(t)) for o, s, t in raw["closed"]),
+            closed=closed,
+            forget_before=raw.get("forget_before"),
         )

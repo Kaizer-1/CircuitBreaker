@@ -174,7 +174,7 @@ its memory limit it is killed (`OOMKilled`), above its CPU limit it is slowed do
 |---|---:|---|---|---:|
 | api-gateway | 2 | 100m / 96 MiB | **2000m** / 256 MiB | 48–49 MiB each |
 | order-service | 2 | 100m / 96 MiB | **500m** / 256 MiB | 58–60 MiB each |
-| matching-engine | 1 | 100m / 96 MiB | 1000m / 256 MiB | 59 MiB |
+| matching-engine | 1 | 100m / 96 MiB | 1000m / **384 MiB** | 124–138 MiB (an hour of finished orders) |
 | market-data-service | 1 | 100m / 96 MiB | 1000m / **512 MiB** | 61 MiB |
 | portfolio-service | 2 | 100m / 96 MiB | 1000m / 256 MiB | 56–59 MiB each |
 | bot-traders | 1 | 100m / 96 MiB | 1000m / 256 MiB | 57 MiB |
@@ -186,7 +186,7 @@ its memory limit it is killed (`OOMKilled`), above its CPU limit it is slowed do
 | Prometheus / Grafana / Loki / Alloy | 1 each | see `infra/platform/` | 768 / **512** / 384 / 256 MiB | 103 / 403 / 118 / 82 MiB |
 | Traefik, kube-state-metrics, operator | 1 each | | 192 / 96 / 128 MiB | 25 / 16 / 26 MiB |
 
-Three limits are deliberate, and are not "small for a laptop":
+Four limits are deliberate, and are not "small for a laptop":
 
 - **order-service: half a core.** order-service is deliberately the **bottleneck**, so that scaling it is the
   correct fix in the traffic-spike scenario. One replica saturates at a load the laptop can produce, and adding
@@ -198,6 +198,11 @@ Three limits are deliberate, and are not "small for a laptop":
 - **market-data-service: 512 MiB** (the others 256 MiB). The memory-leak scenario's timing (40 MB a minute toward
   the limit) depends on it. **Grafana: 512 MiB**: Grafana 13 was OOM-killed at 256 MiB during its first-start
   migrations.
+- **matching-engine: 384 MiB.** The engine remembers every order it finished in the last hour (ADR-0017 note "A
+  memory of one hour"), about 250 bytes each, and about 280 more each while a snapshot is written. Measured: 124–138
+  MiB over 60 minutes at 40 orders a second plus the bots (about 100,000 orders remembered). A 5-minute traffic
+  spike at 400 requests/s adds about 120,000 orders to that hour; 384 MiB holds both. Before the one-hour memory,
+  the engine kept every order ever seen and was OOM-killed at 256 MiB after about 600,000.
 
 ### The RAM budget (measured)
 

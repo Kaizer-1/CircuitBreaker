@@ -71,6 +71,7 @@ async def run_bots(app: FastAPI, settings: Settings, metrics: Metrics) -> None:
             on_order=lambda strategy, result, ticker: business.bot_orders_total.labels(
                 strategy, result
             ).inc(),
+            on_timing=business.timing,
         )
         app.state.fleet = fleet
         while True:

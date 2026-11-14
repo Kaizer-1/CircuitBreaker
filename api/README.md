@@ -195,6 +195,9 @@ against the live engine book (market-data spec 1.1.0); Q-13 gained the `speed` m
 frame (`trades`).
 CI feedback (2026-11-14): Q-12 at "now" is answered at the live book's sequence even when the engine traded after
 market-data read its clock, instead of leaving `verification` null (market-data spec 1.1.1).
+Pre-chaos hardening (2026-11-14): the engine remembers finished orders for one hour of event time (ADR-0017 note "A
+memory of one hour"), so Q-15/Q-16 gain `forget_before`, each `closed` order gains `closed_at`, and the `state_hash`
+rule covers both (matching-engine spec 1.3.0; market-data spec 1.1.2 describes its hash accordingly).
 
 ## Error code catalog
 
@@ -253,6 +256,9 @@ messages. We document each channel's message types and schemas here instead, reu
 A: Browsers can't set an `Authorization` header on WebSocket connections. The trade-off is managed by short-lived
 tokens, HTTPS in a real deployment, and redacting the parameter from gateway logs.
 
-**Q: Why 202 for placing and cancelling orders?**
-A: Both are decided asynchronously by the matching engine. 202 honestly says "accepted for processing"; the result
-arrives over the portfolio WebSocket or by polling the order.
+**Q: Why do idempotent retries matter?**
+A: A phone on a hotspot, or a test runner on 2 CPUs, sometimes gets no answer or a `503` although the order may have
+been stored. Retrying blindly could buy twice. With an `Idempotency-Key` the retry is safe: the same key within 24 hours
+returns the first order instead of placing a second, and a half-finished first attempt is completed rather than
+repeated (the reservation is idempotent per order too). So clients retry a transient failure with the same key; the
+e2e test proves it by making the 503 happen and checking that exactly one order exists.

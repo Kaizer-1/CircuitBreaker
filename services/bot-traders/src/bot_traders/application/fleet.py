@@ -20,7 +20,13 @@ from datetime import UTC, datetime
 from random import Random
 from typing import Any
 
-from bot_traders.application.bot import Bot, MarketState, OrderListener
+from bot_traders.application.bot import (
+    REQUOTE_WINDOW_SECONDS,
+    Bot,
+    MarketState,
+    OrderListener,
+    TimingListener,
+)
 from bot_traders.domain.market import REFERENCE_PRICES, TICKERS
 from bot_traders.domain.strategies import BotPlan, MarketMaker, roster
 from bot_traders.ports.exchange import Exchange, SessionExpiredError
@@ -30,7 +36,6 @@ logger = logging.getLogger("fleet")
 
 HISTORY = 120  # 5s closes kept per ticker (10 minutes)
 SEEN_EVENTS = 5_000
-LISTINGS_AT_ONCE = 2  # bots listing their open orders (Q-07) at the same moment
 
 
 def bot_rng(seed: int | None, name: str) -> Random:
@@ -52,13 +57,11 @@ class Fleet:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_order: OrderListener = lambda strategy, result, ticker: None,
+        on_timing: TimingListener = lambda kind, strategy, seconds: None,
     ) -> None:
         self._exchange = exchange
         self._interval = interval_seconds
         self._wall_clock = wall_clock
-        # Listing open orders (Q-07) reads a bot's whole order history; after a gateway restart all
-        # 20 bots list at once. A few at a time keeps order-service answering everyone else.
-        listing_slots = asyncio.Semaphore(LISTINGS_AT_ONCE)
         self.bots = [
             Bot(
                 plan,
@@ -69,7 +72,8 @@ class Fleet:
                 clock=clock,
                 sleep=sleep,
                 on_order=on_order,
-                listing_slots=listing_slots,
+                on_timing=on_timing,
+                requote=self._requote_soon,
             )
             for plan in (plans if plans is not None else roster())
         ]
@@ -121,6 +125,11 @@ class Fleet:
                 self._spawn(bot.act(ticker, state))
         return True
 
+    def _requote_soon(self, bot: Bot, ticker: str) -> None:
+        """A market maker's side was filled: a quick step on that ticker, not the next candle."""
+        if self.started:
+            self._spawn(bot.act(ticker, self.market[ticker], window=REQUOTE_WINDOW_SECONDS))
+
     async def _read_depth(self, ticker: str) -> None:
         reader = self.bots[0]
         try:
@@ -139,6 +148,11 @@ class Fleet:
         task = asyncio.create_task(work)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    @property
+    def idle(self) -> bool:
+        """No bot step is running (for tests driving a virtual clock)."""
+        return not self._tasks
 
     async def wait_idle(self) -> None:
         """For tests: until every bot has sent this interval's orders."""

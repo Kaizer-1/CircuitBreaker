@@ -8,9 +8,12 @@ and `OrderCancelRejected` changes nothing. There is no matching code here, so th
 exactly as it was recorded, whatever the engine's rules are today.
 
 Unlike the live depth (domain/depth.py) this keeps every resting order with its trader, time
-priority and every finished order, because it must reproduce the engine's `state_hash` (Q-16) by
-the rule in api/matching-engine.yaml. It is this service's own code: nothing is imported from
-matching-engine, and a contract test checks the hash against the example the spec states.
+priority and the finished orders the engine still remembers, because it must reproduce the
+engine's `state_hash` (Q-16) by the rule in api/matching-engine.yaml. That rule includes the
+engine's memory of one hour (ADR-0017 note "A memory of one hour"): `forget_before` trails the
+latest event by an hour and never moves back, and an order that closed before it is forgotten.
+It is this service's own code: nothing is imported from matching-engine, and a contract test
+checks the hash against the examples the spec states.
 
 Each instance is a private copy built for one request: nothing here is shared with the live
 projection, so time travel can never change live state.
@@ -18,11 +21,28 @@ projection, so time travel can never change live state.
 
 import hashlib
 import json
+from collections import deque
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from market_data_service.domain.depth import Level
+
+# The engine's memory of finished orders, in event time. Part of the hash rule: it must equal
+# matching-engine's CLOSED_MEMORY_MS (the contract test checks the spec's examples).
+CLOSED_MEMORY_MS = 3_600_000
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_MS = timedelta(milliseconds=1)
+
+
+def _ms(timestamp: str) -> int:
+    return (datetime.fromisoformat(timestamp) - _EPOCH) // _MS
+
+
+def _timestamp(ms: int) -> str:
+    return (_EPOCH + ms * _MS).strftime("%Y-%m-%dT%H:%M:%S.") + f"{ms % 1000:03d}Z"
 
 
 class CorruptHistoryError(Exception):
@@ -46,7 +66,10 @@ class ReplayBook:
         self.as_of: str | None = None  # occurred_at of the last applied event
         self._orders: dict[str, _Order] = {}
         self._levels: dict[str, dict[int, list[_Order]]] = {"BUY": {}, "SELL": {}}
-        self._closed: dict[str, tuple[str, str]] = {}  # order_id -> (state, trader_id)
+        # order_id -> (state, trader_id, closed_at, closed_at in ms); by closing time, oldest first
+        self._closed: dict[str, tuple[str, str, str, int]] = {}
+        self._closing: deque[tuple[int, str]] = deque()
+        self._forget_before: int | None = None  # ms; None until the first event
 
     @classmethod
     def from_snapshot(
@@ -58,6 +81,7 @@ class ReplayBook:
         bids: Iterable[Mapping[str, Any]],
         asks: Iterable[Mapping[str, Any]],
         closed: Iterable[Mapping[str, Any]],
+        forget_before: str | None = None,
     ) -> "ReplayBook":
         """From a Q-15 BookState. Sequence 0 is the empty book before any event (as_of null)."""
         book = cls(ticker)
@@ -76,7 +100,10 @@ class ReplayBook:
                         int(o["accepted_sequence"]),
                     )
                     book._rest(order, price)
-        book._closed = {c["order_id"]: (c["state"], c["trader_id"]) for c in closed}
+        for c in sorted(closed, key=lambda c: (_ms(c["closed_at"]), c["order_id"])):
+            book._close(c["order_id"], c["state"], c["trader_id"], c["closed_at"])
+        if forget_before is not None:
+            book._forget(_ms(forget_before))
         return book
 
     # ------------------------------------------------------------------ apply
@@ -106,23 +133,47 @@ class ReplayBook:
                 if order.remaining != int(data[f"{key}_order_remaining_quantity"]):
                     raise CorruptHistoryError(f"trade {data['trade_id']}: quantities do not add up")
                 if order.remaining == 0:
-                    self._finish(order, "FILLED")
+                    self._finish(order, "FILLED", occurred_at)
         elif event_type == "OrderCancelled":
             order = self._live(data["order_id"])
             if int(data["cancelled_quantity"]) != order.remaining:
                 raise CorruptHistoryError(f"cancel of {order.order_id}: quantity does not match")
-            self._finish(order, "CANCELLED")
+            self._finish(order, "CANCELLED", occurred_at)
         elif event_type == "OrderExpired":
             self._known_new(data["order_id"])
-            self._closed[data["order_id"]] = ("EXPIRED", data["trader_id"])
+            self._close(data["order_id"], "EXPIRED", data["trader_id"], occurred_at)
         elif event_type != "OrderCancelRejected":  # a rejection changes nothing
             raise CorruptHistoryError(f"unknown event type {event_type}")
         self.sequence = sequence
         self.as_of = occurred_at
+        self._forget(_ms(occurred_at) - CLOSED_MEMORY_MS)
+
+    def _remembered(self, order_id: str) -> bool:
+        entry = self._closed.get(order_id)
+        return entry is not None and self._kept(entry[3])
+
+    def _kept(self, closed_ms: int) -> bool:
+        return self._forget_before is None or closed_ms >= self._forget_before
 
     def _known_new(self, order_id: str) -> None:
-        if order_id in self._orders or order_id in self._closed:
+        if order_id in self._orders or self._remembered(order_id):
             raise CorruptHistoryError(f"order {order_id} is already known")
+
+    def _close(self, order_id: str, state: str, trader_id: str, at: str) -> None:
+        at_ms = _ms(at)
+        self._closed[order_id] = (state, trader_id, at, at_ms)
+        self._closing.append((at_ms, order_id))
+
+    def _forget(self, before: int) -> None:
+        """Move forget_before up to `before` (never back) and drop what closed before it."""
+        if self._forget_before is not None and before <= self._forget_before:
+            return
+        self._forget_before = before
+        while self._closing and self._closing[0][0] < before:
+            at_ms, order_id = self._closing.popleft()
+            entry = self._closed.get(order_id)
+            if entry is not None and entry[3] == at_ms:  # not closed again since (a tombstone)
+                del self._closed[order_id]
 
     def _live(self, order_id: str) -> _Order:
         try:
@@ -134,9 +185,9 @@ class ReplayBook:
         self._orders[order.order_id] = order
         self._levels[order.side].setdefault(price, []).append(order)
 
-    def _finish(self, order: _Order, state: str) -> None:
+    def _finish(self, order: _Order, state: str, at: str) -> None:
         del self._orders[order.order_id]
-        self._closed[order.order_id] = (state, order.trader_id)
+        self._close(order.order_id, state, order.trader_id, at)
         if order.price is None:
             return
         level = self._levels[order.side][order.price]
@@ -188,7 +239,14 @@ class ReplayBook:
             "as_of": self.as_of,
             "bids": side("BUY"),
             "asks": side("SELL"),
-            "closed": [[o, state, trader] for o, (state, trader) in sorted(self._closed.items())],
+            "closed": [
+                [o, state, trader, at]
+                for o, (state, trader, at, at_ms) in sorted(self._closed.items())
+                if self._kept(at_ms)
+            ],
+            "forget_before": (
+                None if self._forget_before is None else _timestamp(self._forget_before)
+            ),
         }
 
     def state_hash(self) -> str:

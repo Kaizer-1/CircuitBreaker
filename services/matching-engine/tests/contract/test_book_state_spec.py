@@ -83,7 +83,8 @@ def as_snapshot(book: dict[str, Any], closed: list[dict[str, str]]) -> BookSnaps
             "as_of": book["as_of"],
             "bids": levels(book["bids"]),
             "asks": levels(book["asks"]),
-            "closed": [[c["order_id"], c["state"], c["trader_id"]] for c in closed],
+            "closed": [[c["order_id"], c["state"], c["trader_id"], c["closed_at"]] for c in closed],
+            "forget_before": book["forget_before"],
         }
     )
 
@@ -106,6 +107,7 @@ def test_the_q16_example_hash_is_real() -> None:
             "order_id": "9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b",
             "state": "FILLED",
             "trader_id": "b0b0b0b0-0003-4000-8000-000000000003",
+            "closed_at": "2026-11-20T10:42:01.263Z",
         }
     ]
     assert OrderBook.from_snapshot(as_snapshot(q16, filled)).state_hash() == q16["state_hash"]
@@ -128,5 +130,8 @@ def test_q15_and_q16_answers_match_book_state_and_the_hash_rule(
     check_book_state(q16)
     # The engine's own hash and the one computed from the API's answer by the spec's rule agree.
     live = engine.book("CALVERA").snapshot().to_dict()
-    closed = [{"order_id": o, "state": s, "trader_id": t} for o, s, t in live["closed"]]
+    closed = [
+        {"order_id": o, "state": s, "trader_id": t, "closed_at": at}
+        for o, s, t, at in live["closed"]
+    ]
     assert OrderBook.from_snapshot(as_snapshot(q16, closed)).state_hash() == q16["state_hash"]

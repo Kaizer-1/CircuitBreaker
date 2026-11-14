@@ -7,7 +7,7 @@ SERVICES := api-gateway order-service matching-engine market-data-service portfo
 SEL      := $(if $(s),$(s),$(SERVICES))
 # Services with integration tests (real Cassandra/Postgres/Redpanda via testcontainers) and property tests.
 INTEGRATION := matching-engine portfolio-service order-service market-data-service
-PROPERTY    := matching-engine portfolio-service market-data-service
+PROPERTY    := matching-engine portfolio-service market-data-service order-service
 COMPOSE  := docker compose
 ALL      := --profile infra --profile app
 REDOCLY  := npx --yes @redocly/cli@1.34.3

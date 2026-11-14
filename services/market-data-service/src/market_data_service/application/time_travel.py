@@ -109,6 +109,7 @@ class TimeTravel:
             bids=snapshot.bids,
             asks=snapshot.asks,
             closed=snapshot.closed,
+            forget_before=snapshot.forget_before,
         )
         async for event in self._events.events_after(ticker, book.sequence, until_ms=at_ms):
             if until_sequence is not None and int(event.data["sequence"]) > until_sequence:

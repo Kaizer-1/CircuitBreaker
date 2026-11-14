@@ -51,11 +51,12 @@ def test_events_build_the_book_in_price_time_priority_with_every_finished_order(
     assert (canonical["sequence"], canonical["as_of"]) == (9, T)
     assert canonical["asks"] == [[24550, [["s2", "trader-s2", 5, 2]]]]
     assert canonical["closed"] == [
-        ["b1", "CANCELLED", "trader-b1"],
-        ["m1", "FILLED", "trader-m1"],
-        ["s1", "FILLED", "trader-s1"],
-        ["x1", "EXPIRED", "trader-x1"],
+        ["b1", "CANCELLED", "trader-b1", T],
+        ["m1", "FILLED", "trader-m1", T],
+        ["s1", "FILLED", "trader-s1", T],
+        ["x1", "EXPIRED", "trader-x1", T],
     ]
+    assert canonical["forget_before"] == "2026-11-20T09:42:01.250Z"  # an hour before T
 
 
 def test_depth_shows_the_best_levels_first_and_aggregates_each_price() -> None:
@@ -81,6 +82,7 @@ def test_a_rebuild_from_a_snapshot_continues_exactly_like_the_original() -> None
         bids=snap.bids,
         asks=snap.asks,
         closed=snap.closed,
+        forget_before=snap.forget_before,
     )
     assert book.state_hash() == exchange.state_hash()
     for event in exchange.place("c", "BUY", 6, 505) + exchange.expire_unseen("a"):
@@ -140,3 +142,22 @@ def test_there_is_no_hash_while_a_market_order_is_half_matched() -> None:
     book.apply("OrderAccepted", accepted(1, "m1", "BUY", 5, None), T)
     with pytest.raises(CorruptHistoryError, match="market order"):
         book.state_hash()
+
+
+def test_finished_orders_are_forgotten_an_hour_later_even_when_closed_out_of_time_order() -> None:
+    """Like the engine (ADR-0017 note "A memory of one hour"), and whatever order they closed in."""
+    book = ReplayBook("CALVERA")
+
+    def plus(seconds: int) -> str:
+        return f"2026-11-20T10:42:{seconds:02d}.000Z"
+
+    book.apply("OrderCancelRejected", {"sequence": 1, "order_id": "zz"}, plus(0))
+    book.apply("OrderExpired", {"sequence": 2, "order_id": "x5", "trader_id": "t"}, plus(5))
+    book.apply("OrderExpired", {"sequence": 3, "order_id": "x2", "trader_id": "t"}, plus(2))  # back
+    book.apply("OrderCancelRejected", {"sequence": 4, "order_id": "zz"}, "2026-11-20T11:42:03.000Z")
+    canonical = book.canonical()
+    assert canonical["forget_before"] == plus(3)
+    assert canonical["closed"] == [["x5", "EXPIRED", "t", plus(5)]]  # x2 closed before the edge
+    # The clock runs back again: the edge does not.
+    book.apply("OrderCancelRejected", {"sequence": 5, "order_id": "zz"}, "2026-11-20T11:42:01.000Z")
+    assert book.canonical()["forget_before"] == plus(3)

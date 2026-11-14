@@ -42,16 +42,20 @@ rounded up to the tick) plus 2%. An order the ledger holds back counts as `skipp
 
 **Knowing which orders still rest.** Each bot follows its own portfolio stream (Q-10): `fill` and `order_closed`
 say at once when an order traded or finished. It lists its open orders (Q-07) only at start-up and after the stream
-reconnects. That query reads one row per order in the trader's history, and polling it from 20 bots slowed order
-placement for everyone (p95 above 1 s; now about 30 ms).
+reconnects. Until 2026-11-14 that query read one row per order in the trader's history, and polling it from 20 bots
+slowed order placement for everyone (p95 above 1 s; about 30 ms after the change). Since order-service's open-orders
+table it reads only what is open, but following the stream is still the right design: the stream says at once.
 
 **Backing off after a failure.** A step that fails (a timeout, a 5xx) pauses that bot for 1 s, then 2, 4 … up to
 30 s; a step that works resets the pause. Found in Phase 4 after two hours of trading: a gateway restart made every bot
 list its open orders at once, each listing read up to 1,000 rows, the bots timed out and retried every candle, and the
 abandoned listings piled up in order-service until it ran out of memory (192 MiB) and restarted, again and again. With
-the back-off, the same restart costs about 45 seconds of failed steps and order-service's memory stays flat. On top of
-it, the fleet lets at most two bots list their open orders at once, and that one heavy call gets a 30-second timeout
-instead of the 5 seconds every other call gets, so the listings after a restart finish instead of timing out.
+the back-off, the same restart costs about 45 seconds of failed steps and order-service's memory stays flat. Until
+2026-11-14 the fleet also let at most two bots list at once, with a 30-second timeout for that one heavy call. The
+open-orders table made the listing cheap (it reads only what is open), so both were removed. Measured on kind
+(2026-11-15), both gateway pods deleted at once while the bots traded: the gateway was back in 4 s, all 20 portfolio
+streams reconnected and all 20 bots listed their open orders together (p95 0.46 s), 14 steps failed, all within 7
+seconds, order-service's memory stayed at 115 MiB and the bots' order rate never dropped.
 
 **Sessions run out.** A bot session lasts 12 hours (A-03). When a call is refused (401) or the portfolio stream closes
 with `4401`, the bot drops its session and signs in again on its next step, then lists its open orders (it cannot know
@@ -70,6 +74,15 @@ sent its orders the moment a candle closed, trades would come in a burst every 5
 orders over the following interval at random offsets (5% to 95% of it). The offsets come from the bot's own random
 generator, seeded by `BOT_RANDOM_SEED`, so a seeded rehearsal places the same orders. A test checks that order times are
 spread evenly through the interval and not bunched at the candle boundary.
+
+**A market maker re-quotes a filled side at once** (2026-11-14). Until then it waited for the next candle after a fill,
+and its side stayed without a quote for **3.3 s on average, up to about 8 s** (measured on the CI runner with
+`bot_quote_gap_seconds`). Missing quotes are fills × gap, so the busiest ticker had the fewest: one CI run averaged 3.4 of
+4 maker bids on a ticker trading 44.5 times a minute and failed the bots check (floor 3.5). It was not the runner's CPU:
+on 2 CPUs with a load average of 3 to 6 the bots sent their orders 0.02 to 0.05 s late on average
+(`bot_order_lateness_seconds`). Now a fill that empties a maker's side asks the fleet for a quick step on that ticker,
+its orders spread over 1 second instead of 5; a fill during a step on that ticker re-quotes when the step ends. The
+other strategies keep their candle rhythm.
 
 **The strategy interface is the extension point.** A strategy is any object with a `name` and
 `decide(view, rng) -> list[Intent]`. The Phase 7 traffic-spike scenario's bot burst is to be a **panic sell** (bots dump
@@ -121,6 +134,10 @@ No business API — only `/healthz`, `/readyz`, `/metrics`. Uses public A-03, A-
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
 **Business metrics:** `bot_orders_total{strategy,result}` (`placed`, `cancelled`, `skipped`, `refused`), `bots_active`.
+**The bots' own timing** (`scripts/bots_check.py` prints both): `bot_quote_gap_seconds{strategy}`, how long a side
+had no resting order of a bot after the exchange filled its last one, until it placed a new one (for a market
+maker: time without a quote); `bot_order_lateness_seconds{strategy}`, how much later than planned an order went out
+(a starved event loop, or slow answers to the orders sent before it in the same interval).
 
 ## Synchronous dependencies
 
