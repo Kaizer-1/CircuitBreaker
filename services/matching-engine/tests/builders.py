@@ -49,6 +49,7 @@ def limit(
     price: int,
     *,
     ticker: str = TICKER,
+    placed_at: str = T0,
 ) -> PlaceOrder:
     return PlaceOrder(
         command_id=_cid(),
@@ -61,7 +62,7 @@ def limit(
         quantity=quantity,
         limit_price_paise=price,
         protection_price_paise=None,
-        placed_at=T0,
+        placed_at=placed_at,
     )
 
 
@@ -73,6 +74,7 @@ def market(
     protection: int,
     *,
     ticker: str = TICKER,
+    placed_at: str = T0,
 ) -> PlaceOrder:
     return PlaceOrder(
         command_id=_cid(),
@@ -85,7 +87,7 @@ def market(
         quantity=quantity,
         limit_price_paise=None,
         protection_price_paise=protection,
-        placed_at=T0,
+        placed_at=placed_at,
     )
 
 

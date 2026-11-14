@@ -137,7 +137,8 @@ Sequence diagram: [01-seeds/03-sequence-diagrams.md §5](../01-seeds/03-sequence
 `GET /v1/time-travel/{ticker}?at=T` is answered by market-data-service in five steps:
 
 1. **The nearest snapshot at or before T** (matching-engine Q-15). The engine stores one every 500 events per ticker
-   (policy P-03): the whole book, plus `closed`, every order it had finished or expired by then.
+   (policy P-03): the whole book, plus `closed`, every order it had finished or expired in the hour before (the
+   engine remembers finished orders for one hour of event time, from `forget_before` on; see below).
 2. **The events after that snapshot, up to T** (Q-14, `after_sequence` = the snapshot's sequence, `until` = T).
 3. **Apply them to a fresh book, never decide.** `OrderAccepted` adds an order, `TradeExecuted` reduces both orders,
    `OrderCancelled` removes what is left, `OrderExpired` records a tombstone. There is no matching code in
@@ -147,7 +148,8 @@ Sequence diagram: [01-seeds/03-sequence-diagrams.md §5](../01-seeds/03-sequence
    is recomputed from the trades before T, so it is not "from the future"), the latest 50 trades at or before T, and the
    last price (the newest trade at or before T, or the reference price before the first trade).
 5. **The state hash** of the rebuilt book, in the canonical form of `api/matching-engine.yaml` (`BookState.state_hash`):
-   the JSON object `{as_of, asks, bids, closed, sequence, ticker}` with sorted keys and no spaces, hashed with SHA-256.
+   the JSON object `{as_of, asks, bids, closed, forget_before, sequence, ticker}` with sorted keys and no spaces,
+   hashed with SHA-256.
    The live engine computes the same hash for its own book (Q-16).
 
 ### A worked example
@@ -166,11 +168,11 @@ CALVERA, rebuilt at T = 10:42:15. Shortened order and trader IDs, to keep it rea
 The rebuilt book in canonical form (what is hashed):
 
 ```json
-{"as_of":"2026-11-20T10:42:09.870Z","asks":[[24600,[["o-2","meera",20,3996]]]],"bids":[[24550,[["o-3","asha",30,4001]]]],"closed":[["o-1","CANCELLED","raju"],["o-4","FILLED","bot-01"]],"sequence":4004,"ticker":"CALVERA"}
+{"as_of":"2026-11-20T10:42:09.870Z","asks":[[24600,[["o-2","meera",20,3996]]]],"bids":[[24550,[["o-3","asha",30,4001]]]],"closed":[["o-1","CANCELLED","raju","2026-11-20T10:42:09.870Z"],["o-4","FILLED","bot-01","2026-11-20T10:42:01.263Z"]],"forget_before":"2026-11-20T09:42:09.870Z","sequence":4004,"ticker":"CALVERA"}
 ```
 
-Its SHA-256 is `1d78a3a2f50b59f8d384e6b8d9518e354d6f8d1a3285d1f41250ada51bd6e9f2` (computed by market-data's own
-`ReplayBook` from exactly these inputs; the snapshot alone hashes to `7b2d9d92…`). If the live engine's book at sequence
+Its SHA-256 is `6972eb25572940985d0a48d704f8ef3789be40100130b3da1dedd0ffac426697` (computed by market-data's own
+`ReplayBook` from exactly these inputs, `o-1` accepted at sequence 3990; the snapshot alone hashes to `eb3e4afd…`). If the live engine's book at sequence
 4004 had any difference, even one share or the order of two orders at a price, its hash would not match.
 
 ### Proving it is exact

@@ -17,6 +17,7 @@ class BookSnapshot:
     asks: list[dict[str, Any]]
     as_of: str | None = None
     closed: list[dict[str, Any]] = field(default_factory=list)  # finished and expired orders
+    forget_before: str | None = None  # the engine forgot the orders that closed before this
 
 
 @dataclass(frozen=True)

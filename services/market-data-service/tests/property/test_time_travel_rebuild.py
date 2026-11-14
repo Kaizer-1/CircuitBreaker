@@ -2,7 +2,8 @@
 
 A reference exchange (tests/fakes.py) runs a random workload: orders, market orders, cancels,
 expiry tombstones and cancel rejections, with time moving on by random steps (sometimes not at
-all, so several commands share one millisecond). Like the engine, it takes a snapshot every few
+all, so several commands share one millisecond; sometimes an hour, so the engine forgets finished
+orders). Like the engine, it takes a snapshot every few
 events. After every command the test records the live hash and the time. Then, for random T
 (exact event times, times in between, before the first event, after the last), time travel
 rebuilds the book from the nearest snapshot at or before T plus the events up to T, and its hash
@@ -26,7 +27,8 @@ command = st.tuples(
     st.sampled_from(["BUY", "SELL"]),
     st.integers(min_value=1, max_value=40),
     st.one_of(st.none(), st.integers(min_value=96, max_value=104).map(lambda p: p * 5)),
-    st.sampled_from([0, 0, 1, 7, 250, 1_000, 61_000]),
+    # ...and across the engine's one-hour memory of finished orders, to its edge and just past it
+    st.sampled_from([0, 0, 1, 7, 250, 1_000, 61_000, 1_800_000, 3_599_000, 3_600_000, 3_601_000]),
 )
 
 

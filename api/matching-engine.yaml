@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: matching-engine internal API
-  version: 1.2.0
+  version: 1.3.0
   summary: Read-only access to the market event store and order books.
   description: |
     Owned by the **Trading Team** (Kaizer Dewaswala); treated as a complicated subsystem.
@@ -129,8 +129,8 @@ paths:
       description: |
         **Q-15** — Return the latest snapshot of the ticker's book taken at or before `at`. If none exists yet, returns
         an empty book at sequence 0 (replay then starts from the first event). Includes `closed`, every order the book
-        had finished or expired by then, so a rebuild from this snapshot plus later events (time travel, Q-12) has the
-        whole state and reproduces Q-16's `state_hash` exactly.
+        had finished or expired in the hour before (from `forget_before` on), so a rebuild from this snapshot plus later
+        events (time travel, Q-12) has the whole state and reproduces Q-16's `state_hash` exactly.
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/TickerPath'
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
@@ -168,12 +168,16 @@ paths:
                   - order_id: 2c4e6a80-1b3d-4f5a-8c7e-9d0f1a2b3c4d
                     state: FILLED
                     trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                    closed_at: '2026-11-20T10:41:12.004Z'
                   - order_id: 6f5e4d3c-2b1a-4f0e-9d8c-7b6a5f4e3d2c
                     state: EXPIRED
                     trader_id: 3d2a1b0c-9e8f-4a7b-8c6d-5e4f3a2b1c0d
+                    closed_at: '2026-11-20T10:39:58.310Z'
                   - order_id: a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
                     state: CANCELLED
                     trader_id: b0b0b0b0-0002-4000-8000-000000000002
+                    closed_at: '2026-11-20T10:40:31.775Z'
+                forget_before: '2026-11-20T09:41:50.120Z'
         '422':
           $ref: './shared/common.yaml#/components/responses/ValidationFailed'
         '503':
@@ -213,8 +217,10 @@ paths:
                         remaining_quantity: 30
                         accepted_sequence: 1041
                 asks: []
-                # The real hash of this book, whose one finished order is 9e8d7c6b-… (filled by the Q-14 example's trade).
-                state_hash: ef89092177567ad824082ceaea02bdf75aefa10bcfd67f87153266b194f2f62f
+                forget_before: '2026-11-20T09:42:01.263Z'
+                # The real hash of this book, whose one finished order is 9e8d7c6b-… (filled by the Q-14 example's trade,
+                # so closed at its occurred_at).
+                state_hash: 4a651209e0e8be2c4f65151011dad13ff469e9ea582442b08b69c50030ed54cc
         '404':
           $ref: './shared/common.yaml#/components/responses/NotFound'
 components:
@@ -299,7 +305,7 @@ components:
     BookState:
       type: object
       description: A full order book (snapshot or live). Bids sorted high to low, asks low to high.
-      required: [ticker, sequence, as_of, bids, asks]
+      required: [ticker, sequence, as_of, bids, asks, forget_before]
       properties:
         ticker:
           $ref: './shared/common.yaml#/components/schemas/Ticker'
@@ -320,27 +326,36 @@ components:
         closed:
           type: array
           description: |
-            Q-15 only. Every order the book has finished (`FILLED`, `CANCELLED`) or expired (`EXPIRED`, a tombstone),
-            sorted by `order_id`. Part of the state: it decides cancel rejections and the tombstone rule, and
-            `state_hash` covers it.
+            Q-15 only. Every order the book has finished (`FILLED`, `CANCELLED`) or expired (`EXPIRED`, a tombstone)
+            at or after `forget_before`, sorted by `order_id`. Part of the state: it decides cancel rejections and the
+            tombstone rule, and `state_hash` covers it.
           items:
             $ref: '#/components/schemas/ClosedOrder'
+        forget_before:
+          type: [string, 'null']
+          format: date-time
+          description: |
+            The book's memory of finished orders begins here: one hour (event time) before the latest event it applied,
+            and it never moves back (`null` before any event). An order that closed earlier is forgotten, and an
+            `OrderPlaced` whose `placed_at` is earlier is refused (no events), so a late copy of a forgotten order can
+            never trade. Keeps the engine's memory to about one hour of orders (ADR-0017 note "A memory of one hour").
         state_hash:
           type: string
           pattern: '^[0-9a-f]{64}$'
           description: |
             Q-16 only. SHA-256 (lowercase hex) of the canonical book: the JSON object
-            `{"as_of", "asks", "bids", "closed", "sequence", "ticker"}` with keys sorted and no whitespace (separators
-            `,` and `:`). `bids` and `asks` are `[price_paise, [[order_id, trader_id, remaining_quantity,
+            `{"as_of", "asks", "bids", "closed", "forget_before", "sequence", "ticker"}` with keys sorted and no whitespace
+            (separators `,` and `:`). `bids` and `asks` are `[price_paise, [[order_id, trader_id, remaining_quantity,
             accepted_sequence], …]]` levels in priority order (bids high to low, asks low to high; orders first in,
-            first matched); `closed` is `[order_id, state, trader_id]` sorted by `order_id`; `as_of` is the
-            `occurred_at` of the last applied event (`null` before any event). Equal hashes mean identical books: used
+            first matched); `closed` is `[order_id, state, trader_id, closed_at]` sorted by `order_id`; `as_of` is the
+            `occurred_at` of the last applied event (`null` before any event); `forget_before` and `closed_at` are
+            timestamps with milliseconds (`2026-11-20T09:41:50.120Z`). Equal hashes mean identical books: used
             to check that a restarted engine rebuilt exactly the same state, and that a time-travel rebuild (Q-12)
             equals the live book. Example: the Q-15 example above, as a book, hashes to
-            `9d73640257a1660048a6d6b782d67c5b75da9e706eecaca5812b8af3b5470f9b`.
+            `48692b40c5151dec83b65e9b01197d4bad0b7aec5de508cfd2e46a61e5abbaee`.
     ClosedOrder:
       type: object
-      required: [order_id, state, trader_id]
+      required: [order_id, state, trader_id, closed_at]
       properties:
         order_id:
           $ref: './shared/common.yaml#/components/schemas/Uuid'
@@ -349,3 +364,6 @@ components:
           enum: [FILLED, CANCELLED, EXPIRED]
         trader_id:
           $ref: './shared/common.yaml#/components/schemas/Uuid'
+        closed_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+          description: The `occurred_at` of the event that finished or expired the order.

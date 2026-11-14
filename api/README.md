@@ -195,6 +195,9 @@ against the live engine book (market-data spec 1.1.0); Q-13 gained the `speed` m
 frame (`trades`).
 CI feedback (2026-11-14): Q-12 at "now" is answered at the live book's sequence even when the engine traded after
 market-data read its clock, instead of leaving `verification` null (market-data spec 1.1.1).
+Pre-chaos hardening (2026-11-14): the engine remembers finished orders for one hour of event time (ADR-0017 note "A
+memory of one hour"), so Q-15/Q-16 gain `forget_before`, each `closed` order gains `closed_at`, and the `state_hash`
+rule covers both (matching-engine spec 1.3.0; market-data spec 1.1.2 describes its hash accordingly).
 
 ## Error code catalog
 

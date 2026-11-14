@@ -39,6 +39,7 @@ class HttpEventStore:
             body["asks"],
             as_of=body.get("as_of"),
             closed=body.get("closed", []),
+            forget_before=body.get("forget_before"),
         )
 
     async def live_book(self, ticker: str) -> LiveBook | None:

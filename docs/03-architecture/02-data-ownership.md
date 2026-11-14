@@ -73,8 +73,10 @@ clusters without changing any code.
 
 `market_events` columns: `sequence`, `event_id`, `event_type`, `occurred_at`, `payload` (the full JSON envelope).
 `day` bucketing keeps partitions from growing forever. A command's events, its `ticker_days` row (on a new day) and its
-`processed_commands` row are written in **one logged batch**. A snapshot's `state` is the whole book, including every
-finished or expired order ID (so cancel rejections and tombstones give the same answer after a restart).
+`processed_commands` row are written in **one logged batch**. A snapshot's `state` is the whole book, including the
+orders finished or expired in the last hour of event time, with when each closed, and `forget_before`, where that hour
+begins (so cancel rejections and tombstones give the same answer after a restart; ADR-0017 note "A memory of one
+hour"). `processed_commands` keeps every command ID for ever, on disk: an exact redelivery is always a duplicate.
 
 ### Keyspace `order_service` (owner: order-service)
 

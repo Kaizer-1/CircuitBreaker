@@ -192,7 +192,9 @@ class Exchange:
     bids: list[_Resting] = field(default_factory=list)  # best first, then time
     asks: list[_Resting] = field(default_factory=list)
     log: list[EventEnvelope] = field(default_factory=list)
-    closed: dict[str, tuple[str, str]] = field(default_factory=dict)  # order_id -> state, trader
+    # order_id -> (state, trader, closed_at). Everything is kept here; what the engine has forgotten
+    # is filtered out when the book is read (a different way from ReplayBook's, on purpose).
+    closed: dict[str, tuple[str, str, str]] = field(default_factory=dict)
     _seq: Any = field(default_factory=lambda: count(1))
     _ids: Any = field(default_factory=lambda: count(1))
 
@@ -216,6 +218,25 @@ class Exchange:
         )
         self.log.append(event)
         return event
+
+    def _close(self, order_id: str, state: str, trader: str) -> None:
+        self.closed[order_id] = (state, trader, format_timestamp(self.clock()))
+
+    @property
+    def forget_before(self) -> str | None:
+        """One hour before the newest event (the clock here never runs back)."""
+        if not self.log:
+            return None
+        newest = max(parse_timestamp(e.occurred_at) for e in self.log)
+        return format_timestamp(newest - timedelta(hours=1))
+
+    def remembered(self) -> list[tuple[str, str, str, str]]:
+        edge = self.forget_before
+        return [
+            (o, state, t, at)
+            for o, (state, t, at) in sorted(self.closed.items())
+            if edge is None or parse_timestamp(at) >= parse_timestamp(edge)
+        ]
 
     def _id(self) -> str:
         return f"0dde0000-0000-4000-8000-{next(self._ids):012d}"
@@ -247,7 +268,7 @@ class Exchange:
             if price is not None and (best.price > price if side == "BUY" else best.price < price):
                 break
             if best.trader == trader:
-                self.closed[order_id] = ("CANCELLED", trader)
+                self._close(order_id, "CANCELLED", trader)
                 self._event(
                     "OrderCancelled",
                     {
@@ -282,12 +303,12 @@ class Exchange:
                 command,
             )
             if best.remaining == 0:
-                self.closed[best.order_id] = ("FILLED", best.trader)
+                self._close(best.order_id, "FILLED", best.trader)
                 book.pop(0)
         if remaining == 0:
-            self.closed[order_id] = ("FILLED", trader)
+            self._close(order_id, "FILLED", trader)
         elif price is None:
-            self.closed[order_id] = ("CANCELLED", trader)
+            self._close(order_id, "CANCELLED", trader)
             self._event(
                 "OrderCancelled",
                 {
@@ -310,7 +331,7 @@ class Exchange:
         if not book:
             return []
         order = book.pop(0)
-        self.closed[order.order_id] = ("CANCELLED", order.trader)
+        self._close(order.order_id, "CANCELLED", order.trader)
         start = len(self.log)
         self._event(
             "OrderCancelled",
@@ -328,7 +349,7 @@ class Exchange:
     def expire_unseen(self, trader: str) -> list[EventEnvelope]:
         """An expiry for an order the engine never saw: an OrderExpired tombstone (ADR-0017)."""
         order_id = self._id()
-        self.closed[order_id] = ("EXPIRED", trader)
+        self._close(order_id, "EXPIRED", trader)
         start = len(self.log)
         self._event("OrderExpired", {"order_id": order_id, "trader_id": trader}, self._id())
         return self.log[start:]
@@ -378,9 +399,10 @@ class Exchange:
             levels(self.asks),
             as_of=self.as_of,
             closed=[
-                {"order_id": o, "state": state, "trader_id": t}
-                for o, (state, t) in sorted(self.closed.items())
+                {"order_id": o, "state": state, "trader_id": t, "closed_at": at}
+                for o, state, t, at in self.remembered()
             ],
+            forget_before=self.forget_before,
         )
 
     @property
@@ -406,7 +428,8 @@ class Exchange:
             "as_of": self.as_of,
             "asks": levels(self.asks),
             "bids": levels(self.bids),
-            "closed": [[o, state, t] for o, (state, t) in sorted(self.closed.items())],
+            "closed": [list(c) for c in self.remembered()],
+            "forget_before": self.forget_before,
             "sequence": self.sequence,
             "ticker": self.ticker,
         }

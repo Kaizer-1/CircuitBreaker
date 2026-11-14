@@ -178,6 +178,39 @@ unset when a publish attempt times out although Kafka delivered; the engine acce
 and the cancel was never sent. A cancel now waits only while its order is `PENDING` (once the engine has answered, its
 `OrderPlaced` went out).
 
+**Note: a memory of one hour (pre-chaos hardening, 2026-11-14).** The consequence below, "the engine must remember
+every order ID it has seen", was estimated at about 100 bytes per order. Measured, it is about 250 bytes in memory and
+about 280 more while a snapshot is written (the set is sorted and turned into JSON). After about 600,000 orders of load
+tests on kind, the engine passed its 256 MiB limit and was killed at every start-up, so it could not trade at all. A
+Phase 7 traffic spike adds about 100,000 orders in five minutes. The engine now remembers finished orders for **one
+hour of event time**:
+
+1. **`forget_before`** is one hour before the latest event the book applied, and never moves back (a wall clock can be
+   corrected backwards). Event time, not the wall clock, so a rebuild elsewhere (time travel) forgets exactly what the
+   live engine forgot, and the state hash still matches. It is part of the snapshot and of the hash.
+2. **An order that closed before `forget_before` is forgotten.** Each finished or expired order now carries
+   `closed_at`, the time of the event that closed it.
+3. **An `OrderPlaced` whose `placed_at` is before `forget_before` is refused**, with no events, like a tombstoned ID.
+   This is what keeps the guarantee: a copy of a forgotten order was placed before that order closed (order-service
+   stamps `placed_at` before it reserves; the engine accepts, fills or expires it later), so its `placed_at` is before
+   `forget_before` too. Inside the hour, the order is still remembered and refused as known. The one assumption is that
+   order-service's clock is not ahead of the engine's (an order filled at once closes milliseconds after `placed_at`);
+   here every pod reads the same node's clock. A legitimate order is never refused this way: the relay never publishes
+   an `OrderPlaced` older than 60 s.
+4. **What forgetting changes, and why it is harmless.** A cancel for a forgotten order is rejected as `UNKNOWN_ORDER`
+   instead of `ALREADY_FILLED`; order-service answers a finished order's cancel itself. An expiry request for a
+   forgotten finished order produces an `OrderExpired`, which changes nothing: portfolio-service releases only an
+   `ACTIVE` reservation and order-service rejects only a `PENDING` order. An exact redelivery of any command is still a
+   duplicate, because `processed_commands` keeps every command ID on disk.
+
+Tests: a property test plays placements that arrive late or twice, expiries that come before their placement, clock
+steps across the hour's edge and backwards, and restarts from snapshots, and checks that a placement is accepted
+exactly when the order is new and placed after `forget_before`, and that every restarted book makes the same decisions
+and has the same hash; a four-hour simulated run keeps the memory flat after the first hour (7,200 finished orders);
+a snapshot stored before this change (200,000 orders, none with `closed_at`) counts them as closed at its own moment,
+so they are forgotten together an hour later. Snapshots stored before 2026-11-14 are read that way. Specs: matching-engine
+1.3.0 (`closed_at`, `forget_before`, and the hash rule), market-data 1.1.2.
+
 ## Alternatives considered
 
 | Alternative | Why rejected |
@@ -200,9 +233,9 @@ and the cancel was never sent. A cancel now waits only while its order is `PENDI
   cycle, but A-19 is one more internal contract between the two teams.
 - ❌ Two more event types (`OrderExpiryRequested`, `OrderExpired`), one more cancel reason (`ORDER_EXPIRED`), one more
   internal endpoint and action ID (A-19, from J-36).
-- ❌ The engine must remember every order ID it has seen per ticker (also in snapshots), to tell "never seen" from
-  "finished". That is about 100 bytes per order (≈ 10 MB for 100,000 orders): fine for a demo; a real exchange would
-  start fresh each trading day.
+- ❌ The engine must remember the order IDs it has seen per ticker (also in snapshots), to tell "never seen" from
+  "finished". Measured 2026-11-14: about 250 bytes per order, plus about 280 while a snapshot is written; since then it
+  remembers one hour of them (note "A memory of one hour" above), with placements older than that refused.
 - ❌ An order that was accepted but whose `OrderAccepted` took more than 120 s to reach portfolio-service is cancelled
   (`ORDER_EXPIRED`). The sweeper scope above makes this rare.
 - ❌ Cancels and expiry requests have no time limit, so after a long outage the relay re-reads every minute partition
