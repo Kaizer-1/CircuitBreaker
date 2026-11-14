@@ -178,6 +178,24 @@ unset when a publish attempt times out although Kafka delivered; the engine acce
 and the cancel was never sent. A cancel now waits only while its order is `PENDING` (once the engine has answered, its
 `OrderPlaced` went out).
 
+Measured on kind over 60 minutes each (40 requests/s of 1-share placements and cancels from the load accounts, plus
+the 20 bots; Cassandra's own counters, `nodetool tablestats`; both runs on mains power, because a laptop on battery
+slows its CPU and one such run was thrown away):
+
+| | Before (old outbox, history scan) | After |
+|---|---|---|
+| Tombstones per outbox read, average | 2,143 at minute 5, 2,750 at minute 41 (max 3,973) | 1.0 throughout (max 1) |
+| Live cells per outbox read | 1–3 | 71–75: the rows written since the previous pass, the relay's real work |
+| `POST /v1/orders` p95, order-service, whole run | 324 ms | 281 ms |
+| order-service CPU per request (all its work, relay included) | 12.7 ms | 12.0 ms |
+| Q-07 `status=open` for `load-01` (p50 / p95) | 1,695 / 2,757 ms, 2 errors | 38 / 436 ms, 0 errors |
+| Q-07 `status=open` for `bot-01` (p50 / p95) | 1,694 / 2,828 ms, 2 errors | 25 / 224 ms, 0 errors |
+
+Placement latency changed little: the tombstones cost Cassandra CPU on every relay pass, but a placement was never
+waiting for that read. The open-orders table's own tombstones (a closed order's row is deleted) stay bounded at about
+the last 10 minutes of a trader's closed orders (about 1,000 per listing for a load account closing 2 orders a second,
+a handful for a person), because the table is flushed every minute and its tombstones may be purged after 10.
+
 **Note: a memory of one hour (pre-chaos hardening, 2026-11-14).** The consequence below, "the engine must remember
 every order ID it has seen", was estimated at about 100 bytes per order. Measured, it is about 250 bytes in memory and
 about 280 more while a snapshot is written (the set is sorted and turned into JSON). After about 600,000 orders of load
