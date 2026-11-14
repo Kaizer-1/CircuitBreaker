@@ -5,7 +5,8 @@ settlements touching the same account wait for each other instead of overwriting
 """
 
 import logging
-from collections.abc import AsyncIterator, Sequence
+import time
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib import resources
@@ -292,12 +293,25 @@ class PgTx:
 
 
 class PostgresPortfolioStore:
-    def __init__(self, pool: AsyncConnectionPool[AsyncConnection[dict[str, Any]]]) -> None:
+    def __init__(
+        self,
+        pool: AsyncConnectionPool[AsyncConnection[dict[str, Any]]],
+        *,
+        on_transaction: Callable[[float, float], None] = lambda waited, ran: None,
+    ) -> None:
         self._pool = pool
+        # Each transaction reports (seconds waiting for a pooled connection, seconds inside the
+        # transaction, row-lock waits included), so a queue for connections shows on its own.
+        self._on_transaction = on_transaction
 
     @classmethod
     async def open(
-        cls, conninfo: str, *, min_size: int = 1, max_size: int = 10
+        cls,
+        conninfo: str,
+        *,
+        min_size: int = 1,
+        max_size: int = 10,
+        on_transaction: Callable[[float, float], None] = lambda waited, ran: None,
     ) -> "PostgresPortfolioStore":
         pool: AsyncConnectionPool[AsyncConnection[dict[str, Any]]] = AsyncConnectionPool(
             conninfo,
@@ -307,15 +321,21 @@ class PostgresPortfolioStore:
             open=False,
         )
         await pool.open(wait=True, timeout=10)
-        return cls(pool)
+        return cls(pool, on_transaction=on_transaction)
 
     async def close(self) -> None:
         await self._pool.close()
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[PgTx]:
-        async with self._pool.connection() as conn, conn.transaction():
-            yield PgTx(conn)
+        asked = time.perf_counter()
+        async with self._pool.connection() as conn:
+            got = time.perf_counter()
+            try:
+                async with conn.transaction():
+                    yield PgTx(conn)
+            finally:
+                self._on_transaction(got - asked, time.perf_counter() - got)
 
     async def migrate(self) -> None:
         """Apply every migrations/NNN_*.sql not applied yet, each in its own transaction."""

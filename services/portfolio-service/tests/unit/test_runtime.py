@@ -30,7 +30,7 @@ from portfolio_service.runtime.kafka import (
     EventPublisher,
     consumer_check,
 )
-from portfolio_service.runtime.metrics import Metrics, metrics_router
+from portfolio_service.runtime.metrics import Metrics, metrics_router, watch_event_loop
 from portfolio_service.runtime.middleware import ObservabilityMiddleware
 from portfolio_service.runtime.problem import install_exception_handlers
 
@@ -400,3 +400,20 @@ async def test_the_consumer_readiness_check_waits_until_it_has_caught_up(
             await consumer_check(lambda current=current: current).probe()  # type: ignore[misc]
     consumer.caught_up_once = True
     await consumer_check(lambda: consumer).probe()
+
+
+async def test_the_event_loop_watcher_records_how_late_the_loop_woke() -> None:
+    import asyncio
+    import time
+
+    metrics = Metrics("svc")
+    watcher = asyncio.create_task(watch_event_loop(metrics, interval=0.01))
+    await asyncio.sleep(0.02)
+    time.sleep(0.15)  # noqa: ASYNC251 (blocks the loop on purpose: the watcher wakes late)
+    await asyncio.sleep(0.03)
+    watcher.cancel()
+    late = metrics.registry.get_sample_value(
+        "event_loop_lag_seconds_bucket", {"service": "svc", "le": "0.1"}
+    )
+    total = metrics.registry.get_sample_value("event_loop_lag_seconds_count", {"service": "svc"})
+    assert total is not None and late is not None and total - late >= 1  # one wake over 0.1 s

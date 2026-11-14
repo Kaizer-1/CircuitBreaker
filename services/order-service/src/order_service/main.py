@@ -35,7 +35,7 @@ from order_service.runtime.kafka import (
     EventPublisher,
     consumer_check,
 )
-from order_service.runtime.metrics import Metrics, metrics_router
+from order_service.runtime.metrics import Metrics, metrics_router, watch_event_loop
 from order_service.runtime.middleware import ObservabilityMiddleware
 from order_service.runtime.problem import install_exception_handlers
 
@@ -89,7 +89,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
                 settings.cassandra_username,
                 settings.cassandra_password.get_secret_value(),
             )
-            store = CassandraOrderStore(session)
+            store = CassandraOrderStore(session, on_call=business.cassandra_call)
             await store.migrate()
             await publisher.start()
             break
@@ -108,6 +108,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
         environment=settings.environment,
         on_placed=lambda o: business.orders_placed_total.labels(o.order_type, o.side).inc(),
         on_rejected=rejected,
+        on_stage=lambda stage, s: business.order_place_stage_seconds.labels(stage).observe(s),
     )
     relay = OutboxRelay(
         store,
@@ -177,11 +178,13 @@ def create_app(
             )
             start = orders is None and settings.start_consumers
             task = asyncio.create_task(run_service(app, settings, metrics)) if start else None
+            watcher = asyncio.create_task(watch_event_loop(metrics)) if start else None
             yield
-            if task is not None:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+            for running in (task, watcher):
+                if running is not None:
+                    running.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await running
 
     app = FastAPI(
         title=settings.service_name,

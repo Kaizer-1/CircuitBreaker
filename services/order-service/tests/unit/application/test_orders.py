@@ -45,6 +45,8 @@ class World:
         self.portfolio = FakePortfolio()
         self.publisher = RecordingPublisher()
         ids = count(1)
+        ticks = count()
+        self.stages: list[tuple[str, float]] = []
         self.orders = Orders(
             self.store,
             self.portfolio,
@@ -52,6 +54,8 @@ class World:
             environment="dev",
             clock=self.clock,
             new_id=lambda: f"0dde0000-0000-4000-8000-{next(ids):012d}",
+            on_stage=lambda stage, seconds: self.stages.append((stage, seconds)),
+            timer=lambda: float(next(ticks)),  # every reading one "second" after the last
         )
         self.relay = OutboxRelay(self.store, self.publisher, clock=self.clock)
         self._seq = count(1000)
@@ -105,6 +109,18 @@ async def test_placing_an_order_reserves_stores_and_publishes_order_placed(w: Wo
     assert event.data["limit_price_paise"] == 24600 and event.data["protection_price_paise"] is None
     assert w.store.outbox == []  # published at once, so nothing is left for the relay
     assert w.store.orders[order.order_id].published
+
+
+async def test_each_stage_of_a_placement_is_timed_even_when_it_fails(w: World) -> None:
+    """The stage timings show where a slow placement waited (order_place_stage_seconds)."""
+    request = OrderRequest("CALVERA", Side.BUY, OrderType.LIMIT, 50, 24600)
+    await w.orders.place(RAJU, request, correlation_id="req-1", idempotency_key="k-1")
+    assert w.stages == [("claim", 1.0), ("reserve", 1.0), ("store", 1.0), ("publish", 1.0)]
+    w.stages.clear()
+    w.portfolio.down = True
+    with pytest.raises(DependencyUnavailableError):
+        await w.place()
+    assert w.stages == [("reserve", 1.0)]  # no key to claim; nothing stored or published
 
 
 async def test_a_market_order_carries_the_protection_price_from_its_reservation(w: World) -> None:

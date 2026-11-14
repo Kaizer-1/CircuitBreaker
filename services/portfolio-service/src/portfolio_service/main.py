@@ -37,7 +37,7 @@ from portfolio_service.runtime.kafka import (
     EventPublisher,
     consumer_check,
 )
-from portfolio_service.runtime.metrics import Metrics, metrics_router
+from portfolio_service.runtime.metrics import Metrics, metrics_router, watch_event_loop
 from portfolio_service.runtime.middleware import ObservabilityMiddleware
 from portfolio_service.runtime.problem import install_exception_handlers
 
@@ -103,7 +103,9 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
     while True:
         try:
             store = await PostgresPortfolioStore.open(
-                conninfo, max_size=settings.postgres_pool_size
+                conninfo,
+                max_size=settings.postgres_pool_size,
+                on_transaction=app.state.business_metrics.transaction,
             )
             await store.migrate()
             service = PortfolioService(store)
@@ -184,11 +186,13 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         start = service is None and settings.start_consumers
         task = asyncio.create_task(run_service(app, settings, metrics)) if start else None
+        watcher = asyncio.create_task(watch_event_loop(metrics)) if start else None
         yield
-        if task is not None:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        for running in (task, watcher):
+            if running is not None:
+                running.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await running
 
     app = FastAPI(
         title=settings.service_name,

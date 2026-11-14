@@ -3,6 +3,8 @@
 Run with: uvicorn api_gateway.main:create_app --factory.
 """
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 
@@ -19,7 +21,7 @@ from api_gateway.domain.rate_limit import RateLimiter
 from api_gateway.domain.sessions import Sessions
 from api_gateway.runtime.health import ReadinessCheck, health_router
 from api_gateway.runtime.jsonlog import configure_logging
-from api_gateway.runtime.metrics import Metrics, metrics_router
+from api_gateway.runtime.metrics import Metrics, metrics_router, watch_event_loop
 from api_gateway.runtime.middleware import ObservabilityMiddleware
 from api_gateway.runtime.problem import install_exception_handlers
 
@@ -48,7 +50,11 @@ def create_app(
             limits=KEEP_ALIVE,
         ) as client:
             app.state.http_client = client
+            watcher = asyncio.create_task(watch_event_loop(metrics))
             yield
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
 
     app = FastAPI(
         title=settings.service_name,
