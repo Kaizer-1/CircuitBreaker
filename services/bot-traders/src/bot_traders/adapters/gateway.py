@@ -13,7 +13,6 @@ from bot_traders.domain.market import Place
 from bot_traders.ports.exchange import OrderRefusedError, Session, SessionExpiredError
 
 RETRIES_ON_429 = 3
-LISTING_TIMEOUT_SECONDS = 30.0  # Q-07 reads the order history: slower than the 5 s other calls get
 
 
 class GatewayExchange:
@@ -31,7 +30,6 @@ class GatewayExchange:
         json: Any = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
-        read_timeout: float | None = None,
     ) -> httpx.Response:
         all_headers = dict(headers or {})
         if session is not None:
@@ -43,7 +41,6 @@ class GatewayExchange:
                 json=json,
                 params=params,
                 headers=all_headers,
-                timeout=read_timeout if read_timeout is not None else httpx.USE_CLIENT_DEFAULT,
             )
             if response.status_code != 429:
                 break
@@ -102,7 +99,6 @@ class GatewayExchange:
             "/v1/orders",
             session,
             params={"status": "open", "limit": 100},
-            read_timeout=LISTING_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         items: list[dict[str, Any]] = response.json()["items"]

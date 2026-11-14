@@ -42,16 +42,20 @@ rounded up to the tick) plus 2%. An order the ledger holds back counts as `skipp
 
 **Knowing which orders still rest.** Each bot follows its own portfolio stream (Q-10): `fill` and `order_closed`
 say at once when an order traded or finished. It lists its open orders (Q-07) only at start-up and after the stream
-reconnects. That query reads one row per order in the trader's history, and polling it from 20 bots slowed order
-placement for everyone (p95 above 1 s; now about 30 ms).
+reconnects. Until 2026-11-14 that query read one row per order in the trader's history, and polling it from 20 bots
+slowed order placement for everyone (p95 above 1 s; about 30 ms after the change). Since order-service's open-orders
+table it reads only what is open, but following the stream is still the right design: the stream says at once.
 
 **Backing off after a failure.** A step that fails (a timeout, a 5xx) pauses that bot for 1 s, then 2, 4 … up to
 30 s; a step that works resets the pause. Found in Phase 4 after two hours of trading: a gateway restart made every bot
 list its open orders at once, each listing read up to 1,000 rows, the bots timed out and retried every candle, and the
 abandoned listings piled up in order-service until it ran out of memory (192 MiB) and restarted, again and again. With
-the back-off, the same restart costs about 45 seconds of failed steps and order-service's memory stays flat. On top of
-it, the fleet lets at most two bots list their open orders at once, and that one heavy call gets a 30-second timeout
-instead of the 5 seconds every other call gets, so the listings after a restart finish instead of timing out.
+the back-off, the same restart costs about 45 seconds of failed steps and order-service's memory stays flat. Until
+2026-11-14 the fleet also let at most two bots list at once, with a 30-second timeout for that one heavy call. The
+open-orders table made the listing cheap (it reads only what is open), so both were removed. Measured on kind
+(2026-11-15), both gateway pods deleted at once while the bots traded: the gateway was back in 4 s, all 20 portfolio
+streams reconnected and all 20 bots listed their open orders together (p95 0.46 s), 14 steps failed, all within 7
+seconds, order-service's memory stayed at 115 MiB and the bots' order rate never dropped.
 
 **Sessions run out.** A bot session lasts 12 hours (A-03). When a call is refused (401) or the portfolio stream closes
 with `4401`, the bot drops its session and signs in again on its next step, then lists its open orders (it cannot know

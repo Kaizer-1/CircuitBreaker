@@ -82,7 +82,6 @@ class Bot:
         on_order: OrderListener = lambda strategy, result, ticker: None,
         on_timing: TimingListener = lambda kind, strategy, seconds: None,
         requote: Requoter = lambda bot, ticker: None,
-        listing_slots: asyncio.Semaphore | None = None,
     ) -> None:
         self.plan_ = plan
         self.name = plan.name
@@ -106,7 +105,6 @@ class Bot:
         self._closed: dict[str, None] = {}  # recently finished order IDs, oldest first
         self.busy: set[str] = set()  # tickers this bot is still acting on
         self._signing_in = asyncio.Lock()
-        self._listing_slots = listing_slots or asyncio.Semaphore(1)
         self._backoff = 0.0  # seconds; 0 while steps work
         self._resume_at = 0.0  # no step before this time after a failure
 
@@ -150,8 +148,7 @@ class Bot:
                 await self._list_open_orders()
 
     async def _list_open_orders(self) -> None:
-        async with self._listing_slots:  # shared by the fleet: a few bots at a time
-            orders = await self._exchange.open_orders(self.signed_in())
+        orders = await self._exchange.open_orders(self.signed_in())
         self._reconcile = False
         known = self.open_orders
         self.open_orders = {
