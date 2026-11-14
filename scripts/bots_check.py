@@ -281,8 +281,8 @@ def main() -> int:
     print(f"  market: {market_rate:.1f} trades/min per ticker on average")
     timing_after = bot_histograms()
     gaps, gap_mean, gap_p95 = timing(
-        timing_before.get("bot_quote_gap{market_maker}", {}),
-        timing_after.get("bot_quote_gap{market_maker}", {}),
+        timing_before.get("bot_quote_gap_seconds{market_maker}", {}),
+        timing_after.get("bot_quote_gap_seconds{market_maker}", {}),
     )
     late = [
         timing(timing_before.get(k, {}), v)

@@ -558,7 +558,7 @@ async def test_a_bot_times_its_own_quote_gaps_and_late_orders() -> None:
     async def slow_sleep(seconds: float) -> None:
         now[0] += seconds + 0.3  # the event loop wakes 0.3 s late
 
-    bot._sleep = slow_sleep  # type: ignore[method-assign]
+    bot._sleep = slow_sleep
     bot.busy.clear()
     await bot.act("CALVERA", MarketState([24550], best_bid=24500, best_ask=24600, candle=1))
     lateness = [round(s, 6) for kind, _, s in timings if kind == "lateness"]
