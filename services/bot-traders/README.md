@@ -71,6 +71,15 @@ orders over the following interval at random offsets (5% to 95% of it). The offs
 generator, seeded by `BOT_RANDOM_SEED`, so a seeded rehearsal places the same orders. A test checks that order times are
 spread evenly through the interval and not bunched at the candle boundary.
 
+**A market maker re-quotes a filled side at once** (2026-11-14). Until then it waited for the next candle after a fill,
+and its side stayed without a quote for **3.3 s on average, up to about 8 s** (measured on the CI runner with
+`bot_quote_gap_seconds`). Missing quotes are fills × gap, so the busiest ticker had the fewest: one CI run averaged 3.4 of
+4 maker bids on a ticker trading 44.5 times a minute and failed the bots check (floor 3.5). It was not the runner's CPU:
+on 2 CPUs with a load average of 3 to 6 the bots sent their orders 0.02 to 0.05 s late on average
+(`bot_order_lateness_seconds`). Now a fill that empties a maker's side asks the fleet for a quick step on that ticker,
+its orders spread over 1 second instead of 5; a fill during a step on that ticker re-quotes when the step ends. The
+other strategies keep their candle rhythm.
+
 **The strategy interface is the extension point.** A strategy is any object with a `name` and
 `decide(view, rng) -> list[Intent]`. The Phase 7 traffic-spike scenario's bot burst is to be a **panic sell** (bots dump
 shares at market). That is one more strategy class and a different assignment in `roster()`

@@ -20,7 +20,13 @@ from datetime import UTC, datetime
 from random import Random
 from typing import Any
 
-from bot_traders.application.bot import Bot, MarketState, OrderListener, TimingListener
+from bot_traders.application.bot import (
+    REQUOTE_WINDOW_SECONDS,
+    Bot,
+    MarketState,
+    OrderListener,
+    TimingListener,
+)
 from bot_traders.domain.market import REFERENCE_PRICES, TICKERS
 from bot_traders.domain.strategies import BotPlan, MarketMaker, roster
 from bot_traders.ports.exchange import Exchange, SessionExpiredError
@@ -71,6 +77,7 @@ class Fleet:
                 sleep=sleep,
                 on_order=on_order,
                 on_timing=on_timing,
+                requote=self._requote_soon,
                 listing_slots=listing_slots,
             )
             for plan in (plans if plans is not None else roster())
@@ -123,6 +130,11 @@ class Fleet:
                 self._spawn(bot.act(ticker, state))
         return True
 
+    def _requote_soon(self, bot: Bot, ticker: str) -> None:
+        """A market maker's side was filled: a quick step on that ticker, not the next candle."""
+        if self.started:
+            self._spawn(bot.act(ticker, self.market[ticker], window=REQUOTE_WINDOW_SECONDS))
+
     async def _read_depth(self, ticker: str) -> None:
         reader = self.bots[0]
         try:
@@ -141,6 +153,11 @@ class Fleet:
         task = asyncio.create_task(work)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    @property
+    def idle(self) -> bool:
+        """No bot step is running (for tests driving a virtual clock)."""
+        return not self._tasks
 
     async def wait_idle(self) -> None:
         """For tests: until every bot has sent this interval's orders."""

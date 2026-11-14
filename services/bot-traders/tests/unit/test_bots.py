@@ -563,3 +563,58 @@ async def test_a_bot_times_its_own_quote_gaps_and_late_orders() -> None:
     await bot.act("CALVERA", MarketState([24550], best_bid=24500, best_ask=24600, candle=1))
     lateness = [round(s, 6) for kind, _, s in timings if kind == "lateness"]
     assert lateness and lateness[0] == 0.3 and lateness == sorted(lateness)
+
+
+async def test_a_market_maker_requotes_a_filled_side_at_once_not_at_the_next_candle() -> None:
+    """CI root cause (2026-11-14): after a fill a maker waited for the next candle (3.3 s on
+    average, up to 8 s), so busy tickers averaged fewer than 3.5 maker quotes a side. Now a fill
+    that empties a maker's side asks for a quick step, its orders inside REQUOTE_WINDOW_SECONDS."""
+    from bot_traders.application.bot import REQUOTE_WINDOW_SECONDS, Bot, MarketState
+
+    asked: list[str] = []
+    maker = roster()[0]
+    assert isinstance(maker.strategy, MarketMaker)
+    bot = Bot(maker, SimExchange(VirtualTime()), seeded(), requote=lambda b, t: asked.append(t))
+    await bot.login()
+    await bot.refresh()
+    market = MarketState([24550], best_bid=24500, best_ask=24600)
+    await bot.execute(Place("CALVERA", "BUY", 5, 24500), market)
+    await bot.execute(Place("CALVERA", "SELL", 5, 24600), market)
+    bid = next(o for o in bot.open_orders.values() if o.side == "BUY").order_id
+    bot.on_stream({"type": "fill", "data": {"order_id": bid, "order_remaining_quantity": 2}})
+    assert asked == []  # a partial fill leaves a quote on the side
+    bot.on_stream({"type": "fill", "data": {"order_id": bid, "order_remaining_quantity": 0}})
+    assert asked == ["CALVERA"]
+
+    offsets: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        offsets.append(seconds)
+
+    bot._sleep = sleep
+    await bot.act("CALVERA", market, window=REQUOTE_WINDOW_SECONDS)
+    assert offsets and sum(offsets) <= REQUOTE_WINDOW_SECONDS  # inside one second, not 5
+    assert any(o.side == "BUY" for o in bot.open_orders.values())  # the bid is back
+
+    # A fill while the bot is still acting on the ticker: the quick step comes when it ends.
+    asked.clear()
+    bot.busy.add("CALVERA")
+    await bot.act("CALVERA", market, window=REQUOTE_WINDOW_SECONDS)
+    assert asked == []
+    bot.busy.discard("CALVERA")
+    await bot.act("CALVERA", market)
+    assert asked == ["CALVERA"]
+
+
+async def test_other_strategies_keep_their_candle_rhythm_after_a_fill() -> None:
+    from bot_traders.application.bot import Bot, MarketState
+
+    asked: list[str] = []
+    plan = next(p for p in roster() if not isinstance(p.strategy, MarketMaker))
+    bot = Bot(plan, SimExchange(VirtualTime()), seeded(), requote=lambda b, t: asked.append(t))
+    await bot.login()
+    await bot.refresh()
+    await bot.execute(Place("CALVERA", "BUY", 5, 24500), MarketState([24550]))
+    [order_id] = list(bot.open_orders)
+    bot.on_stream({"type": "fill", "data": {"order_id": order_id, "order_remaining_quantity": 0}})
+    assert asked == []
