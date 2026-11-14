@@ -50,7 +50,8 @@ a published or dropped row is marked `done` instead of deleted, and every row ex
 relay pass reads the rows written since the newest one it has seen, the slice that just became settled (a row written
 late is found there, once), and the rows still waiting. A request still waiting after 20 minutes is written again
 (same event) so the TTL never catches it, and on start-up the relay sends again the stored cancel of every open order
-that asked for one (a service stopped for longer than the TTL).
+that asked for one (a service stopped for longer than the TTL). Both replicas run the relay, so copies of one request
+collapse to the newest row. A cancel or expiry waits for its order's `OrderPlaced` only while the order is `PENDING`.
 
 **The Kafka producer has a 10 s delivery timeout and is not idempotent** (Phase 3,
 [ADR-0017 note](../../docs/adr/0017-fail-closed-orphan-release.md#note-making-the-60-s-rule-true-phase-3)): an idempotent

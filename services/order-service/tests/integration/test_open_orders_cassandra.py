@@ -23,12 +23,16 @@ pytestmark = pytest.mark.integration
 
 
 def test_the_open_orders_table_equals_the_orders_not_finished(session: Any) -> None:
-    store = CassandraOrderStore(session)  # one keyspace; each workload has its own traders
-    asyncio.run(store.migrate())
+    migrated = CassandraOrderStore(session)  # one keyspace; each workload has its own traders
+    asyncio.run(migrated.migrate())
 
     @settings(max_examples=40, suppress_health_check=[HealthCheck.too_slow])
     @given(workloads)
     def check(workload: list[tuple[Any, ...]]) -> None:
+        # A store per workload (each runs in its own event loop, and a store's semaphore belongs
+        # to one loop), sharing the statements prepared once.
+        store = CassandraOrderStore(session)
+        store._q = migrated._q
         asyncio.run(run(store, workload))
 
     check()

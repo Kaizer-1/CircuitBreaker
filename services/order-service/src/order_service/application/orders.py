@@ -66,13 +66,15 @@ class ExpiryAccepted:
 
 def must_wait(entry: OutboxEntry, order: Order | None) -> bool:
     """A cancel or expiry is never published before its order's OrderPlaced (same partition, so
-    the engine would see it first and answer "unknown order"). A rejected order's OrderPlaced will
-    never be published, so an expiry for it need not wait."""
+    the engine would see it first and answer "unknown order"). Only a PENDING order may still be
+    unseen: once the engine has answered (OPEN, a fill, a cancel) its OrderPlaced went out, even
+    if `published` was never set (a publish attempt that timed out although Kafka delivered). A
+    rejected order's OrderPlaced will never be published, so an expiry for it need not wait."""
     return (
         entry.event_type != "OrderPlaced"
         and order is not None
         and not order.published
-        and order.status is not OrderStatus.REJECTED
+        and order.status is OrderStatus.PENDING
     )
 
 

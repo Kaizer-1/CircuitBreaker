@@ -88,7 +88,9 @@ class OutboxRelay:
         so a hung Redpanda cannot delay a PUBLISH_TIMEOUT; then one bounded attempt per row.
         """
         now = self._clock()
-        entries = await self._store.pending_outbox(format_timestamp(now - CLOCK_MARGIN))
+        entries = await self._one_row_per_event(
+            await self._store.pending_outbox(format_timestamp(now - CLOCK_MARGIN))
+        )
         if not self._resumed:
             await self._resend_open_cancels(now, waiting={e.event.event_id for e in entries})
             self._resumed = True
@@ -141,6 +143,16 @@ class OutboxRelay:
             await self._store.mark_published(entry)
             published += 1
         return published
+
+    async def _one_row_per_event(self, entries: list[OutboxEntry]) -> list[OutboxEntry]:
+        """Copies of one event (both replicas carried it forward, or A-07 asked again) collapse
+        to the newest row; the older ones are marked done. Without it the copies doubled every 20
+        minutes (found by the 60-minute soak). `entries` are oldest first."""
+        newest = {entry.event.event_id: entry for entry in entries}
+        for entry in entries:
+            if newest[entry.event.event_id] is not entry:
+                await self._store.drop_outbox(entry)
+        return [entry for entry in entries if newest[entry.event.event_id] is entry]
 
     async def _resend_open_cancels(self, now: datetime, *, waiting: set[str]) -> None:
         """Start-up: the stored cancel of every open order that asked for one goes back in the

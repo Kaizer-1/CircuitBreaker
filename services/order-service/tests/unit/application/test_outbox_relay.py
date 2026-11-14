@@ -1,6 +1,7 @@
 """The outbox relay: retry after 5 s, never publish an OrderPlaced older than 60 s (ADR-0011), and
 never give up on a cancel or an expiry request (ADR-0017 note)."""
 
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -212,3 +213,36 @@ async def test_a_failing_pass_is_logged_and_the_loop_goes_on(
     with pytest.raises(KeyboardInterrupt):
         await w.relay.run(every_seconds=0)
     assert calls == 2
+
+
+async def test_a_cancel_waits_for_its_order_only_while_the_engine_has_not_seen_it(w: World) -> None:
+    # Found by the 60-minute soak: the request path's publish attempt timed out although Kafka
+    # delivered, so `published` stayed false; the engine accepted the order, the relay dropped its
+    # OrderPlaced row ("no longer PENDING") and the cancel waited for a flag that never came.
+    order = await w.place()
+    w.store.orders[order.order_id].published = False  # delivered, but never marked
+    await w.orders.apply_matching_event(w.engine("OrderAccepted", order_id=order.order_id))
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+    assert w.publisher.types() == ["OrderPlaced", "OrderCancelRequested"]  # not held back
+
+
+async def test_two_waiting_rows_of_one_request_become_one(w: World) -> None:
+    # Both order-service replicas run a relay: both may carry the same waiting request forward,
+    # and every 20 minutes the copies doubled. Copies of one event collapse to the newest row.
+    order = await w.place()
+    w.publisher.down = True
+    await w.orders.cancel(RAJU, order.order_id, correlation_id="c")
+    [first] = w.store.outbox
+    w.clock.now += timedelta(minutes=21)
+    await w.relay.run_once()  # this replica carries it forward ...
+    [carried] = w.store.outbox
+    late = (w.clock.now + timedelta(milliseconds=128)).isoformat().replace("+00:00", "Z")
+    await w.store.requeue(replace(carried, written_at=late))  # ... and so did the other one
+    assert len(w.store.outbox) == 2
+    w.clock.now += timedelta(seconds=1)
+    await w.relay.run_once()
+    [kept] = w.store.outbox
+    assert kept.event == first.event
+    w.publisher.down = False
+    w.clock.now += timedelta(seconds=10)
+    assert await w.relay.run_once() == 1

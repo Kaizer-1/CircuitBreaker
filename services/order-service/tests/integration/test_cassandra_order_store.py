@@ -217,12 +217,14 @@ async def test_outbox_and_open_orders_tables_expire_and_compact_as_designed(
     store: CassandraOrderStore, session: Any
 ) -> None:
     rows = session.execute(
-        "SELECT table_name, default_time_to_live, gc_grace_seconds, compaction"
+        "SELECT table_name, default_time_to_live, gc_grace_seconds, compaction,"
+        " memtable_flush_period_in_ms"
         " FROM system_schema.tables WHERE keyspace_name = 'order_service_it'"
     )
     tables = {r.table_name: r for r in rows}
     outbox, open_orders = tables["outbox"], tables["open_orders_by_trader"]
     assert (outbox.default_time_to_live, outbox.gc_grace_seconds) == (3600, 3600)
-    assert (open_orders.default_time_to_live, open_orders.gc_grace_seconds) == (0, 3600)
+    assert (open_orders.default_time_to_live, open_orders.gc_grace_seconds) == (0, 600)
+    assert open_orders.memtable_flush_period_in_ms == 60000
     for table in (outbox, open_orders):
         assert table.compaction["class"].endswith("LeveledCompactionStrategy")

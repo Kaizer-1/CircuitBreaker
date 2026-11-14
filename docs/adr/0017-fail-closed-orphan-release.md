@@ -171,6 +171,13 @@ The tests of change 1 still pass unchanged (25 minutes of failed passes; a real 
 the cursor across a restart), with two more: a request waiting 20 minutes is written again before its row expires, and
 after a restart an open order's lost cancel is sent again.
 
+The 60-minute soak that measured this found two more faults, both fixed with a test. (a) Both order-service replicas
+run a relay, so both carried a waiting request forward and its copies doubled every 20 minutes; copies of one event now
+collapse to the newest row. (b) Older than this note: a cancel waited for its order's `published` flag, which stays
+unset when a publish attempt times out although Kafka delivered; the engine accepted the order, so the flag never came
+and the cancel was never sent. A cancel now waits only while its order is `PENDING` (once the engine has answered, its
+`OrderPlaced` went out).
+
 ## Alternatives considered
 
 | Alternative | Why rejected |
