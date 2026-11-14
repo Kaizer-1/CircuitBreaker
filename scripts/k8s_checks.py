@@ -433,43 +433,59 @@ def check_kill(args: argparse.Namespace) -> bool:
 
 
 def check_scale(args: argparse.Namespace) -> bool:
-    """The same load at 2 and at 4 order-service replicas: latency high, then back down.
+    """The same load at 2 and at --to order-service replicas: latency high, then back down.
 
     Kubernetes has no autoscaler here (ADR-0007): a person scales now, the SRE agent from Phase 7.
-    Each phase is measured in steady state, after the replicas are ready and settled.
+    Each phase is measured in steady state, after the replicas are ready and settled. The default
+    load is the traffic spike as a panic sell (chaos scenarios section 3.3: 90% MARKET sells from
+    the bots' accounts), so the bot fleet is stopped while it runs and started again after.
     """
-    heading(f"Capacity: {args.rate:.0f} req/s of orders, 2 then 4 order-service replicas")
+    low, high = 2, args.to
+    heading(
+        f"Capacity: {args.rate:.0f} req/s ({args.mix}), {low} then {high} order-service replicas"
+    )
     post_p95 = (
         "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket"
         f'{{namespace="{args.env}",service="order-service",route="/v1/orders",method="POST"}}[{{w}}s])))'
     )
+    bots_were_on = args.mix == "panic" and bots_enabled(args.env)
+    if bots_were_on:
+        k8s_script(args.env, "bots", "--stop")
     results = {}
-    for replicas in (2, 4):
-        scale(args.env, "deployment/order-service", replicas)
-        time.sleep(args.settle)
-        started = time.time()
-        summary = load(args.env, args.rate, args.seconds)
-        ended = time.time()
-        window = int(ended - started - 10)  # skip the first seconds of the run
-        server = scalar(post_p95.replace("{w}", str(window)), ended)
-        results[replicas] = (
-            summary["post_p95_ms_median"],
-            (server or 0) * 1000,
-            summary["rate_median"],
-        )
-        client, srv, rate = results[replicas]
-        print(
-            f"  {replicas} replicas: POST p95 {client:7.0f} ms client, {srv:7.0f} ms order-service"
-            f"  {rate:.0f} req/s"
-        )
-    scale(args.env, "deployment/order-service", 2)  # back to the documented default
-    s2, s4 = results[2][1], results[4][1]
-    ok = verdict(s2 > 500, f"at 2 replicas the load raises order p95 above 500 ms ({s2:.0f} ms)")
-    ok &= verdict(s4 < 500 and s4 < s2 / 2, f"at 4 replicas it is back down ({s4:.0f} ms)")
+    try:
+        for replicas in (low, high):
+            scale(args.env, "deployment/order-service", replicas)
+            time.sleep(args.settle)
+            started = time.time()
+            summary = load(args.env, args.rate, args.seconds, args.mix)
+            ended = time.time()
+            window = int(ended - started - 10)  # skip the first seconds of the run
+            server = scalar(post_p95.replace("{w}", str(window)), ended)
+            results[replicas] = (
+                summary["post_p95_ms_median"],
+                (server or 0) * 1000,
+                summary["rate_median"],
+            )
+            client, srv, rate = results[replicas]
+            print(
+                f"  {replicas} replicas: POST p95 {client:7.0f} ms client, {srv:7.0f} ms"
+                f" order-service  {rate:.0f} req/s"
+            )
+    finally:
+        scale(args.env, "deployment/order-service", 2)  # back to the documented default
+        if bots_were_on:
+            k8s_script(args.env, "bots")
+    slow, fast = results[low][1], results[high][1]
+    ok = verdict(
+        slow > 500, f"at {low} replicas the load raises order p95 above 500 ms ({slow:.0f} ms)"
+    )
+    ok &= verdict(
+        fast < 500 and fast < slow / 2, f"at {high} replicas it is back down ({fast:.0f} ms)"
+    )
     return ok
 
 
-def load(env: str, rate: float, seconds: float) -> dict[str, Any]:
+def load(env: str, rate: float, seconds: float, mix: str = "orders") -> dict[str, Any]:
     out = subprocess.run(  # noqa: S603 (fixed command)
         [
             sys.executable,
@@ -478,6 +494,8 @@ def load(env: str, rate: float, seconds: float) -> dict[str, Any]:
             str(rate),
             "--seconds",
             str(seconds),
+            "--mix",
+            mix,
             "--json",
         ],
         capture_output=True,
@@ -849,6 +867,8 @@ def main() -> int:
     scale_.add_argument("--rate", type=float, default=200)
     scale_.add_argument("--seconds", type=float, default=60)
     scale_.add_argument("--settle", type=float, default=30, help="seconds after the rollout")
+    scale_.add_argument("--mix", choices=["panic", "orders", "spike"], default="panic")
+    scale_.add_argument("--to", type=int, default=5, help="replicas after scaling up (max 5)")
     scale_.set_defaults(func=check_scale)
     alerts = sub.add_parser("alerts")
     alerts.add_argument(

@@ -100,9 +100,16 @@ make k8s-reset` (Kubernetes) first; data-wiping commands are never run by a scri
 
 ## 5. The Later list
 
-Found while building, outside the frozen design, to reconsider in Phase 8 or after the course. Nothing is waiting on
-it now: its only item, an index of each trader's open orders (Q-07 `status=open` read the whole order history), was
-built in the pre-chaos hardening PR of 2026-11-14 (the `open_orders_by_trader` table).
+Found while building, outside the frozen design, to reconsider in Phase 8 or after the course. Its first item, an
+index of each trader's open orders (Q-07 `status=open` read the whole order history), was built in the pre-chaos
+hardening PR of 2026-11-14 (the `open_orders_by_trader` table).
+
+- **The engine's snapshots are never pruned.** `book_snapshots` keeps one Cassandra partition per ticker and a new row
+  every 500 events (policy P-03); time travel seeks from any of them, so none is deleted. Each holds the whole book
+  plus the last hour's finished orders (about 3.3 MB under the bots), so the partitions grow without limit: about
+  2 GB each after 19 hours on kind, far above the size Cassandra handles well. Measured: writing them costs Cassandra
+  almost no CPU with only the bots trading. A demo-day reset starts them empty. Options to weigh: a partition per
+  ticker and day, thinning old snapshots, or a time limit as well as an event count.
 
 ## Viva Notes
 

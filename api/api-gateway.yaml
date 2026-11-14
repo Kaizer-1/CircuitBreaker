@@ -17,7 +17,7 @@ info:
     Request/response schemas are referenced from the owning service's spec, so there is one definition of each
     shape. WebSocket channels (`/v1/ws/...`) are proxied too and documented in api/README.md.
 
-    Roles: `trader` (joined via QR), `bot` (bot-traders and chaos load accounts), `admin` (presenter).
+    Roles: `trader` (joined via QR), `bot` (bot-traders and load-test accounts), `admin` (presenter).
 servers:
   - url: http://localhost:8080
     description: Local Docker Compose
@@ -106,7 +106,8 @@ paths:
       summary: Start a bot session
       x-seeds-id: A-03
       description: |
-        **A-03** — Used by bot-traders (`bot-01`…`bot-20`) and by chaos-service's load generator (`load-01`…`load-10`).
+        **A-03** — Used by bot-traders (`bot-01`…`bot-20`), by the traffic-spike panic sell (the bots' accounts), and
+        by load scripts and tests (`load-01`…).
         Requires the shared bot secret. Returns a token with role `bot`.
       security: []
       parameters:

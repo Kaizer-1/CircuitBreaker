@@ -21,7 +21,7 @@
 |---|---|---|---|
 | **Scenario ID** | `BAD_DEPLOY` | `MEMORY_LEAK` | `TRAFFIC_SPIKE` |
 | **Target** | `order-service` | `market-data-service` | `order-service` (through `api-gateway`) |
-| **How injected** | New rollout revision with `FAULT_PROFILE=bad-release` | `POST /internal/v1/faults` (A-12) | Load generator: 10 load accounts, ~400 requests/s |
+| **How injected** | New rollout revision with `FAULT_PROFILE=bad-release` | `POST /internal/v1/faults` (A-12) | Panic sell: ~400 requests/s, 90% MARKET sells from the bots' accounts |
 | **Symptom users see** | ~40% of orders fail with "something went wrong" | Charts get slow, then freeze when the pod is killed | Orders take seconds; some get `503` |
 | **Primary metric signal** | 5xx ratio ≫ baseline, starting right after a new revision | Memory rising linearly toward the limit; no deploy | Request rate 5–10× baseline; p95 latency high; CPU saturated |
 | **Alert** | `OrderServiceHighErrorRate` | `MarketDataMemoryGrowth` | `OrderServiceHighLatency` |
@@ -111,21 +111,48 @@ working while market data struggles, because they own their own data and do not 
 **Hypothesis:** if order traffic jumps 5–10×, the agent scales order-service up (max 5) and latency recovers while
 the load continues.
 
-**Injection:** chaos-service's built-in load generator logs in as 10 dedicated **load accounts** (`load-01` …
-`load-10`, kind `LOAD`, seeded by portfolio-service like bots) through `POST /v1/bot-sessions`, then sends ~400
-requests/s in total for 5 minutes through `api-gateway`: 70% `GET /v1/orders`, 30% `POST /v1/orders` for 1-share
-`LIMIT` orders priced 20% away from the market (so they rest instead of moving prices). Using 10 accounts keeps each
-under the gateway's per-token rate limit — just like a real flash crowd of many users. At the end, chaos-service
-cancels the resting load orders.
+**Injection: a panic sell** (owner's direction, 2026-11-04; mix fixed 2026-11-14). For 5 minutes, ~400 requests/s
+in total reach `api-gateway`: **90% `POST /v1/orders` MARKET SELL** of 1 share, spread over the five tickers, and
+**10% `GET /v1/orders`** (traders checking what happened). The sellers are the bots' accounts (`bot-01` … `bot-20`):
+only accounts that hold shares can sell, and the bots hold 1,000 of each ticker. The audience sees prices fall on the
+dashboard while order-service is flooded and the agent scales it. A sell that finds no bid is cancelled by its
+protection price (last price −10%), which releases its shares, so the burst never runs out of shares; MARKET orders
+never rest, so there is nothing to clean up afterwards. Using 20 accounts keeps each under the gateway's per-bot rate
+limit (50/s), just like a real crowd of many sellers.
+
+Why this mix and not Phase 5's (70% `GET /v1/orders`, 30% resting 1-share buys): a crowd that panics *sells*, and
+the scenario must be one that more order-service pods actually fix. Phase 5 found `GET /v1/orders` limited by a
+history scan, which scaling did not help; since the open-orders table (2026-11-14) that read costs only what is open,
+and every request of this mix is work an order-service pod does in parallel. Measured on kind with 2 → 5 replicas
+(`make k8s-check c=scale`, `scripts/load_orders.py --mix panic`; 2026-11-14, a cluster with about 19 hours of trading
+history, laptop on mains power):
+
+| Offered load | Replicas | Requests/s that got through | `POST /v1/orders` p95, order-service | p95 at the client |
+|---|---:|---:|---:|---:|
+| 200 req/s, panic sell | 2 | 70 | ≥ 10 s (the histogram's top bucket) | 5.0 s (the gateway gives up at 5 s) |
+| 200 req/s, panic sell | 5 | 103 | 2.3 s | 8.8 s |
+| 100 req/s, panic sell | 2 | 74 | ≥ 10 s | 5.0 s |
+| 100 req/s, panic sell | 5 | 100 | 1.35 s | 0.79 s |
+| 200 req/s, Phase 5's place + cancel mix | 2 → 4 | 77 → 117 | ≥ 10 s → 1.6 s | 5.1 s → 7.1 s |
+
+**Known gap, not yet closed.** Scaling from 2 to 5 replicas cuts order latency from over 10 seconds to 1–2
+seconds, but not below the 500 ms alert line, so this scenario's incident would not yet resolve itself. Phase 5
+measured the place + cancel mix at **96 ms** with 4 replicas on a freshly created cluster; on this cluster the same
+mix stays at 1.6 s. The pre-chaos hardening did not cause it: at the same steady load (40 requests/s), order-service
+used 12.7 ms of CPU per request before and 12.0 ms after. Part of the remaining delay is waiting, not CPU (at 100
+requests/s the 5 pods used about 60% of their CPU and p95 stayed above 1 s). A profiling step before Phase 6 measures
+where requests wait (order-service itself, the synchronous reservation in portfolio-service and Postgres, Cassandra,
+the engine), on both a fresh cluster and one with a long history. If the bottleneck is downstream of order-service,
+that changes what the agent should scale. The spike's rate is calibrated only after that.
 
 Each order-service pod handles at most 50 requests at once (a concurrency limit) and returns `503 OVERLOADED`
 beyond that — so more pods really do mean more capacity, even on one laptop.
 
-> **Planned for Phase 7 (owner's direction, recorded 2026-11-04): a panic sell.** The burst should also *look* like a
-> crash: bots dump shares at market (a panic-sell bot behaviour), so the audience sees prices fall on the dashboard
-> while order-service is flooded and the agent scales it. The bot strategy interface already allows it: a panic
-> behaviour is one more strategy ([bot-traders](../../services/bot-traders/README.md)). How chaos-service triggers it is
-> decided in Phase 7: bot-traders has no business API today, so a new trigger is an interface change and needs an ADR.
+> **Phase 7 (owner's direction, recorded 2026-11-04): how the panic sell is triggered.** The bot strategy interface
+> already allows a panic behaviour as one more strategy ([bot-traders](../../services/bot-traders/README.md)). How
+> chaos-service triggers it is decided in Phase 7: bot-traders has no business API today, so a new trigger is an
+> interface change and needs an ADR. Until then the same mix is sent by `scripts/load_orders.py --mix panic` (with
+> the bot fleet stopped, so the two do not trade the same accounts).
 
 **Signals:**
 ```promql
