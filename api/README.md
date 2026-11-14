@@ -253,6 +253,9 @@ messages. We document each channel's message types and schemas here instead, reu
 A: Browsers can't set an `Authorization` header on WebSocket connections. The trade-off is managed by short-lived
 tokens, HTTPS in a real deployment, and redacting the parameter from gateway logs.
 
-**Q: Why 202 for placing and cancelling orders?**
-A: Both are decided asynchronously by the matching engine. 202 honestly says "accepted for processing"; the result
-arrives over the portfolio WebSocket or by polling the order.
+**Q: Why do idempotent retries matter?**
+A: A phone on a hotspot, or a test runner on 2 CPUs, sometimes gets no answer or a `503` although the order may have
+been stored. Retrying blindly could buy twice. With an `Idempotency-Key` the retry is safe: the same key within 24 hours
+returns the first order instead of placing a second, and a half-finished first attempt is completed rather than
+repeated (the reservation is idempotent per order too). So clients retry a transient failure with the same key; the
+e2e test proves it by making the 503 happen and checking that exactly one order exists.
