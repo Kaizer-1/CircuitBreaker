@@ -4,3 +4,5 @@
 web:
   image:
     tag: "6e58e94ff899"
+  podAnnotations:
+    circuitbreaker.io/gitops-check: "2026-11-23T17:29:48Z"
