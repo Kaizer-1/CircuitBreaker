@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Fail unless every file in deploy/envs/<env>/sealed/ is one SealedSecret holding ciphertext only.
 
-Those folders are allowlisted for gitleaks (.gitleaks.toml): a SealedSecret's encryptedData is ciphertext and looks
-like a key, which is safe (ADR-0019). The allowlist would also let a PLAIN Secret through, so this check is the other
-half of it: a file there must be exactly one `kind: SealedSecret` for its own environment, named like the file, with
-values under `spec.encryptedData` and nothing under `data` or `stringData` anywhere.
+Those folders are allowlisted for gitleaks (.gitleaks.toml): a SealedSecret's encryptedData is
+ciphertext and looks like a key, which is safe (ADR-0019). The allowlist would also let a PLAIN
+Secret through, so this check is its other half: a file there must be exactly one `kind:
+SealedSecret` for its own environment, named like the file, with values under
+`spec.encryptedData` and nothing under `data` or `stringData` anywhere.
 
     python3 tools/check_sealed_secrets.py           # check (make lint, CI)
     python3 tools/check_sealed_secrets.py PATH ...  # check these files instead
 
-Standard library only: a line-based reading of the YAML kubeseal writes (no YAML library in the system python).
+Standard library only: a line-based reading of the YAML kubeseal writes (the system python has
+no YAML library).
 """
 
 from __future__ import annotations
@@ -28,8 +30,8 @@ def problems_in(path: Path) -> list[str]:
         line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")
     ]
     found = []
-    if sum(line.strip() == "---" for line in lines) > 0:
-        found.append("more than one YAML document")
+    if any(line.strip() == "---" for line in lines):
+        found.append("a YAML document separator: one SealedSecret per file")
     if "kind: SealedSecret" not in lines:
         found.append("not a SealedSecret")
     if "  encryptedData:" not in lines:
@@ -41,12 +43,11 @@ def problems_in(path: Path) -> list[str]:
     namespace = next(
         (line.split(": ", 1)[1] for line in lines if line.startswith("  namespace: ")), None
     )
+    env = path.parent.parent.name
     if name != path.stem:
         found.append(f"metadata.name {name!r} is not the file name {path.stem!r}")
-    if namespace != path.parent.parent.name:
-        found.append(
-            f"metadata.namespace {namespace!r} is not the environment {path.parent.parent.name!r}"
-        )
+    if namespace != env:
+        found.append(f"metadata.namespace {namespace!r} is not the environment {env!r}")
     return found
 
 
