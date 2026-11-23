@@ -247,12 +247,15 @@ query scanned the old snapshot table): now it exits and Kubernetes restarts it.
 | Order POST p95 at 60 orders/s, median and worst 5-second window | 139 / 578 ms | 52 / 267 ms |
 | Mac load average (median, 12 cores) | 7.2 | 6.6 |
 
-**The bound, and its condition.** No GC pause above 200 ms (measured max 147) **on a quiet laptop**. The young
-collections take 60–150 ms with two GC threads; when the Mac itself is saturated they stretch: a third run (G1 left to
-size the young generation itself, otherwise the same) measured pauses of 203, 240 and 641 ms in the one minute the
-Mac's load average reached 12–16, and no gain otherwise, so Cassandra's own young-generation setting stays. Hence the
-runbook's rule: mains power, other apps closed, host load checked before the demo. The proposed p99 below 100 ms was
-not reached (p95 146 ms).
+**Longer runs, and the condition.** Over the 60-minute soak (40 orders/s plus the bots, Mac load median 6.3): 362
+pauses, p95 151 ms, p99 230 ms, max 306 ms, 0.73% of the time paused; process memory 975–1,016 MiB the whole hour,
+968–1,056 MiB over three hours. The 19-hour cluster before the fix paused 7–10.5% of the time, p95 up to 806 ms and
+once 3.9 s. The young collections take 60–150 ms with two GC threads; when the Mac itself is saturated they stretch:
+during the spike calibration (Mac load up to 15–20) the longest was 699 ms, and a third 16-minute run (G1 left to
+size the young generation itself, otherwise the same) measured 203, 240 and 641 ms in the one minute the Mac's load
+reached 12–16, with no gain otherwise, so Cassandra's own young-generation setting stays. So the bound we can state is
+**p95 about 150 ms and no pause above about 300 ms on a quiet laptop**; the proposed p99 below 100 ms and maximum of
+200 ms were not reached. Hence the runbook's first step: mains power, other apps closed, host load checked.
 
 ### The RAM budget (measured)
 
