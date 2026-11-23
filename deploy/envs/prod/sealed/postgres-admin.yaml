@@ -1,0 +1,17 @@
+# postgres-admin in prod: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as prod/postgres-admin. make seal env=prod
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: postgres-admin
+  namespace: prod
+spec:
+  encryptedData:
+    password: AgA+ww9E4ypM5NDcZU3j0sddbkZA3EyGIF6GR4HS26yXBL8qvUOXk0gi0Vo7lbQ1ODYnbmmMPh2P5axe1o9VzF+k2zASZp9U0/cevjm/3NOeyNq+ZcAVeuKx0gNd0+ezcFzFH3ClQFJPbK+q1ieH9h9ohREIxv21zm3cJpXBeELst0KG+8/yh6JPrITAWY82S3teyHmOV3MEINkOqQ6lrboGE4lhomi2f3fQb4cZD4Alj/uDQdXTlfA1Y6s+KINWeFffnD2m868Ze1cmNLYMXrPJUXMTqX607VoxtUi2pvBMmW4UNw3eKw/cK93qFHtLynzCiYQu3WJXtCMk03F4YCcFQUIdkxGHMPnmt+SLr0hlyQ1mp498Tu70udZ391RWRH7Ie4EmstLb8lKSiD8wvuaaC+iCtsYIydKnDS7Bwf+izEvA0kbOnURAnuMfKtXRniJXghCpBMU9tMrDeMzwD5SzhStc6NNuyzPhCsAXBCgFZ5gh1g2AO9GFxukmwg79e3VjYoXf7WdHy48Nx4vsUHQlcXr+ASnYolPxEbtOMW2YCpe7gPiBmahVwp+ZFtBH5DFjOt7EnCbhx6p8bq1GhybMif3AXomPo3XeSYS/hz6HIX0ND2MTCrfE/GtJlGmgGOTbcUuFtqUMwOiveL3lb/ZgWaJ6DPqxdi1kKudSmeo/ql4KWhPkFABY4Dtx85a8FM1HGqp9DPQKDpWyrUOoi9Vt2NwoyK9k3gxUwAhjHta1bc2SjBu63+Vped/T
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: postgres-admin
+      namespace: prod
+    type: Opaque

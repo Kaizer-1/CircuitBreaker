@@ -20,9 +20,16 @@ preStopSleepSeconds: 5
 
 # Plain settings, rendered into the service's ConfigMap and loaded as environment variables.
 env: {}
-# Secret settings: NAME -> {secret, key}. The Secrets are created outside the chart (make k8s-up now,
-# Terraform's environment module from Phase 6), never stored in Git.
+# Secret settings: NAME -> {secret, key}. The Secrets are created outside the chart: SealedSecrets in Git that the
+# controller decrypts (ADR-0019), or the local placeholders while developing with make k8s-up.
 secretEnv: {}
+# Settings an operator changes on the night, not releases: names read from the ConfigMap `operator-settings` when it
+# has them (make k8s-set-url writes PUBLIC_BASE_URL, make k8s-bots BOTS_ENABLED and friends). Git and Argo CD never
+# own that ConfigMap, so a sync does not reset tonight's hotspot address or turn the bots off.
+operatorEnv: []
+# Extra pod annotations; a change rolls the pods. make k8s-check c=gitops-push writes one to measure a commit's way
+# to the cluster.
+podAnnotations: {}
 
 resources:
   requests:

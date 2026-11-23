@@ -9,6 +9,15 @@
     alerts   trigger each Phase 7 alert's condition for real and time how fast it fires
     url      the join QR code's URL survives a restart and k8s-bots, changes only when asked
              (PUBLIC_BASE_URL with k8s-up, or k8s-set-url), and no data is lost
+    gitops   Argo CD never undoes the SRE agent: a scale and a restart by hand stay and the
+             Application stays Synced; other drift is reported (OutOfSync), not reverted
+    gitops-push  commit + push a change to deploy/envs/<env>/web.yaml, time it to Synced and
+             Healthy, then git revert it and time the way back (pushes to the branch Argo CD
+             follows: a pull request's branch, or main through its ruleset)
+    sealed   SealedSecrets: every one decrypted; a secret sealed with the right certificate
+             decrypts; one sealed with another key, for another namespace, or renamed does not
+    sealed-drill  restore drill: back up, lose the sealing key, see a SealedSecret fail, restore
+             the backup, see it decrypt (needs private/sealed-secrets/sealing-key.json)
     profile  where a placement's time goes under load, per replica count (a measurement, not a
              pass/fail check): every stage of A-05, Cassandra and Postgres waits, event-loop lag,
              CPU and throttling, Cassandra's GC pauses; saved to build/profile/<label>.json
@@ -39,6 +48,7 @@ PROMETHEUS = "http://localhost:9090"
 GRAFANA = "http://localhost:3000"
 GREEN, RED, BOLD, DIM, RESET = "\033[32m", "\033[31m", "\033[1m", "\033[2m", "\033[0m"
 PLATFORM_NAMESPACES = ("traefik", "observability")
+ARGOCD = "argocd"
 # Inside the market-data container (not on this machine): the allocator stops when this file exists.
 STOP_LEAK = "/tmp/stop-leak"  # noqa: S108
 
@@ -180,17 +190,10 @@ def check_url(args: argparse.Namespace) -> bool:
 
 
 def bots_enabled(env: str) -> bool:
-    """Whether the release was last deployed with the bots on (make k8s-bots)."""
-    values = json.loads(
-        subprocess.run(  # noqa: S603 (fixed command)
-            ["helm", "get", "values", "circuitbreaker", "--kube-context", "kind-circuitbreaker"]
-            + ["-n", env, "-o", "json"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-    )
-    return bool(values.get("bot-traders", {}).get("env", {}).get("BOTS_ENABLED") == "true")
+    """Whether the bots were last turned on (make k8s-bots writes operator-settings)."""
+    import k8s
+
+    return k8s.bots_enabled(env)
 
 
 def k8s_portfolio_session(env: str) -> str:
@@ -218,7 +221,8 @@ def check_smoke(args: argparse.Namespace) -> bool:
 
     stack.GATEWAY = gateway(args.env)
     heading(f"Smoke test of the Kubernetes deployment ({args.env})")
-    waiting = [p for ns in (*PLATFORM_NAMESPACES, args.env) for p in pods_ready(ns)]
+    argocd = (ARGOCD,) if kubectl("get", "namespace", ARGOCD, check=False) else ()
+    waiting = [p for ns in (*PLATFORM_NAMESPACES, *argocd, args.env) for p in pods_ready(ns)]
     ok = verdict(not waiting, f"every pod ready{': ' + ', '.join(waiting) if waiting else ''}")
 
     demo = k8s_script(args.env, "run", "demo_trade.py")
@@ -1001,6 +1005,402 @@ def check_alerts(args: argparse.Namespace) -> bool:
     return ok
 
 
+# --------------------------------------------------------------------------- gitops (ADR-0014)
+
+
+def app_status(name: str) -> tuple[str, str, str]:
+    """(sync status, health, synced revision) of one Argo CD Application."""
+    app = json.loads(kubectl("get", "applications.argoproj.io", "-n", ARGOCD, name, "-o", "json"))
+    st = app.get("status", {})
+    return (
+        st.get("sync", {}).get("status", "?"),
+        st.get("health", {}).get("status", "?"),
+        st.get("sync", {}).get("revision", ""),
+    )
+
+
+def refresh(name: str) -> None:
+    """Make Argo CD compare now (what its 30 s poll does anyway), then let it finish."""
+    kubectl(
+        "annotate",
+        "applications.argoproj.io",
+        "-n",
+        ARGOCD,
+        name,
+        "argocd.argoproj.io/refresh=normal",
+        "--overwrite",
+    )
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        app = json.loads(
+            kubectl("get", "applications.argoproj.io", "-n", ARGOCD, name, "-o", "json")
+        )
+        if "argocd.argoproj.io/refresh" not in app["metadata"].get("annotations", {}):
+            return
+        time.sleep(1)
+
+
+def deployment(env: str, name: str) -> dict[str, Any]:
+    result: dict[str, Any] = json.loads(kubectl("get", "deployment", name, "-n", env, "-o", "json"))
+    return result
+
+
+def check_gitops(args: argparse.Namespace) -> bool:
+    """The agent-safety rules of ADR-0014, on the running cluster: what the SRE agent's
+    scale_deployment and restart_deployment change, Argo CD neither reports nor resets; any other
+    live change it reports as OutOfSync and leaves alone (self-heal off)."""
+    env = args.env
+    app = f"order-service-{env}"
+    heading(f"Argo CD and the SRE agent's tools ({env})")
+    if not kubectl("get", "applications.argoproj.io", "-n", ARGOCD, app, check=False):
+        return verdict(False, f"Argo CD does not manage {env} (make platform)")
+    refresh(app)
+    ok = verdict(app_status(app)[:2] == ("Synced", "Healthy"), f"{app} starts Synced and Healthy")
+    before = deployment(env, "order-service")
+    replicas = before["spec"]["replicas"]
+    wait = args.wait
+
+    # scale_deployment: replicas belong to the agent, not to Git.
+    scale(env, "deployment/order-service", replicas + 1)
+    print(f"  {DIM}scaled order-service {replicas} -> {replicas + 1}; waiting {wait:g} s{RESET}")
+    time.sleep(wait)
+    refresh(app)
+    now = deployment(env, "order-service")
+    ok &= verdict(
+        now["spec"]["replicas"] == replicas + 1, "the scale stays (Argo CD does not reset it)"
+    )
+    ok &= verdict(
+        app_status(app)[0] == "Synced", "and the Application stays Synced (replicas ignored)"
+    )
+    scale(env, "deployment/order-service", replicas)
+
+    # restart_deployment: the restartedAt annotation is ignored too.
+    generation = deployment(env, "order-service")["metadata"]["generation"]
+    kubectl("rollout", "restart", "-n", env, "deployment/order-service")
+    kubectl("rollout", "status", "-n", env, "deployment/order-service", "--timeout=300s")
+    print(f"  {DIM}restarted order-service; waiting {wait:g} s{RESET}")
+    time.sleep(wait)
+    refresh(app)
+    now = deployment(env, "order-service")
+    annotations = now["spec"]["template"]["metadata"].get("annotations", {})
+    ok &= verdict(
+        "kubectl.kubernetes.io/restartedAt" in annotations
+        and now["metadata"]["generation"] == generation + 1,
+        "the restart stays, and Argo CD rolled nothing back (one new generation: the restart's)",
+    )
+    ok &= verdict(
+        app_status(app)[0] == "Synced", "the Application stays Synced (restartedAt ignored)"
+    )
+
+    # Any other live change (here: what chaos BAD_DEPLOY does to a pod template) is drift: reported,
+    # never undone by Argo CD, so the SRE agent's rollback is what fixes it.
+    kubectl(
+        "patch",
+        "deployment/order-service",
+        "-n",
+        env,
+        "--type=strategic",
+        "-p",
+        json.dumps(
+            {
+                "spec": {
+                    "template": {"metadata": {"annotations": {"circuitbreaker.io/drift": "yes"}}}
+                }
+            }
+        ),
+    )
+    kubectl("rollout", "status", "-n", env, "deployment/order-service", "--timeout=300s")
+    time.sleep(wait)
+    refresh(app)
+    drifted = deployment(env, "order-service")["spec"]["template"]["metadata"]["annotations"]
+    ok &= verdict(app_status(app)[0] == "OutOfSync", "a pod-template change by hand: OutOfSync")
+    ok &= verdict(
+        drifted.get("circuitbreaker.io/drift") == "yes", "and left in place (self-heal off)"
+    )
+    kubectl("rollout", "undo", "-n", env, "deployment/order-service")
+    kubectl("rollout", "status", "-n", env, "deployment/order-service", "--timeout=300s")
+    time.sleep(5)
+    refresh(app)
+    ok &= verdict(
+        app_status(app)[:2] == ("Synced", "Healthy"),
+        "kubectl rollout undo (what rollback_deployment does) brings it back to Synced",
+    )
+    return ok
+
+
+def git(*args: str) -> str:
+    out = subprocess.run(
+        ["git", "-C", str(ROOT), *args], capture_output=True, text=True, check=False
+    )  # noqa: S603, S607
+    if out.returncode != 0:
+        sys.exit(f"git {' '.join(args)} failed: {out.stderr.strip()}")
+    return out.stdout.strip()
+
+
+def wait_synced_to(app: str, sha: str, started: float, timeout: float = 600) -> tuple[float, float]:
+    """Seconds from `started` until Argo CD (a) had synced revision sha and (b) was also Healthy."""
+    seen = 0.0
+    while time.monotonic() - started < timeout:
+        sync, health, revision = app_status(app)
+        if revision == sha and sync == "Synced":
+            seen = seen or time.monotonic() - started
+            if health == "Healthy":
+                return seen, time.monotonic() - started
+        time.sleep(1)
+    sys.exit(f"{app} did not reach {sha[:8]} within {timeout:.0f} s: {app_status(app)}")
+
+
+def check_gitops_push(args: argparse.Namespace) -> bool:
+    """A commit's way to the cluster, measured: change web's pod annotation in Git, push, and time
+    Argo CD until the Application has synced that commit and web is Healthy again; then git revert
+    the commit, push, and time the way back. No make sync: this is the 30 s poll's real delay."""
+    env = args.env
+    app = f"web-{env}"
+    heading(f"Push to {env}: a Git commit reaches the cluster ({app})")
+    if git("status", "--porcelain"):
+        sys.exit("the working tree must be clean (the check commits and pushes)")
+    branch = git("rev-parse", "--abbrev-ref", "HEAD")
+    target = json.loads(kubectl("get", "applications.argoproj.io", "-n", ARGOCD, app, "-o", "json"))
+    if target["spec"]["source"]["targetRevision"] != branch:
+        sys.exit(f"Argo CD follows {target['spec']['source']['targetRevision']}, not {branch}")
+    values = ROOT / "deploy" / "envs" / env / "web.yaml"
+    original = values.read_text()
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if "podAnnotations" in original:
+        sys.exit(f"{values.name} already has podAnnotations")
+    # The file's last block is web's own mapping, so the annotation is appended inside it.
+    annotation = f'  podAnnotations:\n    circuitbreaker.io/gitops-check: "{stamp}"\n'
+    values.write_text(original.rstrip("\n") + "\n" + annotation)
+    git("add", str(values))
+    git("commit", "-q", "-m", f"chore({env}): GitOps check, a pod annotation on web ({stamp})")
+    sha = git("rev-parse", "HEAD")
+    started = time.monotonic()
+    git("push", "-q", "origin", branch)
+    pushed = time.monotonic() - started
+    synced, healthy = wait_synced_to(app, sha, started)
+    live = deployment(env, "web")["spec"]["template"]["metadata"]["annotations"]
+    ok = verdict(live.get("circuitbreaker.io/gitops-check") == stamp, "the change is live")
+    print(
+        f"  push {pushed:.1f} s; after it started: Synced {synced:.0f} s, Healthy {healthy:.0f} s"
+    )
+
+    git("revert", "--no-edit", sha)
+    back = git("rev-parse", "HEAD")
+    started = time.monotonic()
+    git("push", "-q", "origin", branch)
+    synced_back, healthy_back = wait_synced_to(app, back, started)
+    live = deployment(env, "web")["spec"]["template"]["metadata"].get("annotations", {})
+    ok &= verdict("circuitbreaker.io/gitops-check" not in live, "git revert: the change is gone")
+    print(f"  revert: Synced {synced_back:.0f} s, Healthy {healthy_back:.0f} s after the push")
+    result = {
+        "env": env,
+        "commit": sha,
+        "revert": back,
+        "push_s": round(pushed, 1),
+        "synced_s": round(synced),
+        "healthy_s": round(healthy),
+        "revert_synced_s": round(synced_back),
+        "revert_healthy_s": round(healthy_back),
+        "at": stamp,
+    }
+    out = ROOT / "build" / "gitops" / f"push-{stamp.replace(':', '')}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result, indent=2) + "\n")
+    print(f"  {DIM}saved {out.relative_to(ROOT)}{RESET}")
+    return ok
+
+
+# --------------------------------------------------------------------------- sealed (ADR-0019)
+
+
+def seal(secret: dict[str, Any], cert: Path) -> dict[str, Any]:
+    out = subprocess.run(  # noqa: S603 (fixed command)
+        ["kubeseal", "--cert", str(cert), "--format", "json", "--scope", "strict"],
+        input=json.dumps(secret),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    result: dict[str, Any] = json.loads(out.stdout)
+    return result
+
+
+def test_secret(env: str, name: str, value: str) -> dict[str, Any]:
+    return {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": name, "namespace": env},
+        "stringData": {"value": value},
+    }
+
+
+def unsealed(env: str, name: str, timeout: float = 30) -> tuple[str | None, str]:
+    """(the Secret's value or None, the SealedSecret's Synced message) once the controller acted."""
+    import base64
+
+    deadline = time.monotonic() + timeout
+    message = ""
+    while time.monotonic() < deadline:
+        raw = kubectl("get", "sealedsecret", name, "-n", env, "-o", "json", check=False)
+        conditions = json.loads(raw).get("status", {}).get("conditions", []) if raw else []
+        cond = next((c for c in conditions if c["type"] == "Synced"), None)
+        if cond:
+            message = cond.get("message", "")
+            if cond["status"] == "True":
+                data = json.loads(kubectl("get", "secret", name, "-n", env, "-o", "json"))["data"]
+                return base64.b64decode(data["value"]).decode(), message
+            return None, message
+        time.sleep(1)
+    return None, message or "no status"
+
+
+def cleanup_sealed(env: str, *names: str) -> None:
+    for name in names:
+        kubectl("delete", "sealedsecret", name, "-n", env, "--ignore-not-found", check=False)
+        kubectl("delete", "secret", name, "-n", env, "--ignore-not-found", check=False)
+
+
+def check_sealed(args: argparse.Namespace) -> bool:
+    import secrets as random
+    import tempfile
+
+    import sealed_secrets
+
+    env = args.env
+    heading(f"Sealed Secrets ({env})")
+    result = subprocess.run(  # noqa: S603 (fixed command)
+        [sys.executable, str(ROOT / "scripts" / "sealed_secrets.py"), "check", "--env", env],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    ok = verdict(
+        result.returncode == 0, f"every SealedSecret in Git decrypted: {result.stdout.strip()}"
+    )
+    cert = sealed_secrets.CERT
+    names = (
+        "sealed-check-right",
+        "sealed-check-wrong-key",
+        "sealed-check-other-ns",
+        "sealed-check-renamed",
+    )
+    try:
+        value = random.token_urlsafe(16)
+        kubectl(
+            "apply", "-f", "-", input_text=json.dumps(seal(test_secret(env, names[0], value), cert))
+        )
+        got, _ = unsealed(env, names[0])
+        ok &= verdict(
+            got == value, "sealed with the cluster's certificate: decrypts to the same value"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            other = Path(tmp) / "other.pem"
+            subprocess.run(  # noqa: S603 (fixed command)
+                [
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:4096",
+                    "-nodes",
+                    "-days",
+                    "1",
+                    "-subj",
+                    "/CN=not-the-sealing-key",
+                    "-keyout",
+                    str(Path(tmp) / "k.pem"),
+                    "-out",
+                    str(other),
+                ],
+                capture_output=True,
+                check=True,
+            )
+            wrong = seal(test_secret(env, names[1], value), other)
+        kubectl("apply", "-f", "-", input_text=json.dumps(wrong))
+        got, message = unsealed(env, names[1])
+        ok &= verdict(got is None, f"sealed with another key: refused ({message})")
+
+        elsewhere = "staging" if env == "prod" else "prod"
+        moved = seal(test_secret(elsewhere, names[2], value), cert)
+        moved["metadata"]["namespace"] = env
+        kubectl("apply", "-f", "-", input_text=json.dumps(moved))
+        got, message = unsealed(env, names[2])
+        ok &= verdict(got is None, f"sealed for {elsewhere}, applied in {env}: refused ({message})")
+
+        renamed = seal(test_secret(env, "some-other-name", value), cert)
+        renamed["metadata"]["name"] = names[3]
+        kubectl("apply", "-f", "-", input_text=json.dumps(renamed))
+        got, message = unsealed(env, names[3])
+        ok &= verdict(got is None, f"renamed after sealing: refused ({message})")
+    finally:
+        cleanup_sealed(env, *names)
+    return ok
+
+
+def check_sealed_drill(args: argparse.Namespace) -> bool:
+    """The restore drill (deployment doc, 'Backing up the sealing key'), for real: the controller
+    loses its key, a SealedSecret from before can no longer be decrypted, the backup goes back in,
+    and it can again. Running Secrets are untouched throughout (the controller only writes them)."""
+    import secrets as random
+
+    import sealed_secrets
+
+    env = args.env
+    heading("Sealing key: lose it, restore it from the backup")
+    backup = sealed_secrets.KEY_BACKUP
+    if not backup.exists():
+        return verdict(False, f"no backup at {backup.relative_to(ROOT)}: make sealing-key-backup")
+    saved = {item["data"]["tls.crt"] for item in json.loads(backup.read_text())["items"]}
+    live = {item["data"]["tls.crt"] for item in sealed_secrets.controller_keys()}
+    ok = verdict(live <= saved, f"the backup holds every live key ({len(live)} of {len(saved)})")
+    if not ok:
+        return ok
+    name = "sealed-drill"
+    value = random.token_urlsafe(16)
+    before = seal(test_secret(env, name, value), sealed_secrets.CERT)
+
+    def controller_restart() -> None:
+        kubectl("delete", "pod", "-n", "kube-system", "-l", "app.kubernetes.io/name=sealed-secrets")
+        kubectl(
+            "rollout",
+            "status",
+            "-n",
+            "kube-system",
+            "deployment/sealed-secrets-controller",
+            "--timeout=120s",
+        )
+
+    try:
+        label = f"{sealed_secrets.KEY_LABEL}"
+        kubectl("delete", "secret", "-n", "kube-system", "-l", label)
+        controller_restart()
+        fresh = sealed_secrets.controller_keys()
+        ok &= verdict(
+            bool(fresh) and not {k["data"]["tls.crt"] for k in fresh} & saved,
+            "key lost: the controller made a new one",
+        )
+        kubectl("apply", "-f", "-", input_text=json.dumps(before))
+        got, message = unsealed(env, name)
+        ok &= verdict(got is None, f"a SealedSecret from before cannot be decrypted ({message})")
+        cleanup_sealed(env, name)
+
+        kubectl("delete", "secret", "-n", "kube-system", "-l", label)
+        kubectl("apply", "-f", str(backup))
+        controller_restart()
+        kubectl("apply", "-f", "-", input_text=json.dumps(before))
+        got, _ = unsealed(env, name)
+        ok &= verdict(got == value, "backup restored: it decrypts again, to the same value")
+    finally:
+        cleanup_sealed(env, name)
+        if {k["data"]["tls.crt"] for k in sealed_secrets.controller_keys()} != saved:
+            print(
+                f"  {RED}the controller's keys differ from the backup: run "
+                f"`python3 scripts/sealed_secrets.py restore` after deleting the new key{RESET}"
+            )
+    return ok
+
+
 CASES = [
     "dead-letter",
     "crash",
@@ -1043,6 +1443,12 @@ def main() -> int:
     )
     alerts.set_defaults(func=check_alerts)
     sub.add_parser("url").set_defaults(func=check_url)
+    gitops = sub.add_parser("gitops")
+    gitops.add_argument("--wait", type=float, default=75, help="seconds (> two 30 s polls)")
+    gitops.set_defaults(func=check_gitops)
+    sub.add_parser("gitops-push").set_defaults(func=check_gitops_push)
+    sub.add_parser("sealed").set_defaults(func=check_sealed)
+    sub.add_parser("sealed-drill").set_defaults(func=check_sealed_drill)
     profile = sub.add_parser("profile")
     profile.add_argument("--label", required=True, help="name of the saved result")
     profile.add_argument("--rate", type=float, default=100)

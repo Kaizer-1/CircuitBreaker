@@ -1,5 +1,6 @@
-# bot-traders in prod. Empty tag = the one make k8s-up built. From Phase 6, CI writes the image tag here, one
-# commit per service per environment, and Argo CD deploys it (ADR-0014).
+# bot-traders in prod: what Argo CD deploys (ADR-0014). make promote copies the tag staging tested here, in a
+# pull request a person approves; reverting that commit rolls back.
+# make k8s-up (developing, without Argo CD) deploys its own build's tag instead.
 bot-traders:
   image:
-    tag: ""
+    tag: "6e58e94ff899"

@@ -43,8 +43,12 @@ data stores. Namespaces give separate names, resources, secrets, RBAC and networ
 demonstrate staging/prod separation and promotion. The trade-off (a cluster-level failure affects both) is
 documented in [ADR-0007](../adr/0007-kubernetes-kind-and-helm-umbrella.md). Namespaces do **not** separate CPU on
 one node: measured in Phase 5, starting staging and its bots raised prod's order p99 to about 5 s for two minutes
-and tripped its circuit breaker twice. Phase 6's ResourceQuotas bound each namespace; until then, run staging only
-when you need it (`make k8s-up env=staging`).
+and tripped its circuit breaker twice. Phase 6 gives each namespace a **ResourceQuota**, but measured against the
+chart it is a ceiling on what a namespace may *claim* (a runaway scale, a second copy of the system), not a share
+of the CPU: one environment's CPU limits add up to 17.7 cores on a 12-core laptop, so a quota both environments fit
+under cannot keep staging off prod's cores. Real separation would need lower limits in staging, which would make it
+behave unlike prod. So the rule stays: **run staging only when you need it** (the demo profile, section 3's RAM
+table).
 
 ## 2. Docker Compose (dev)
 
@@ -68,33 +72,44 @@ when you need it (`make k8s-up env=staging`).
 
 ```text
 infra/kind/cluster.yaml             # the kind cluster: one node, host ports 80 / 8090 / 3000 / 9090
-infra/platform/*.yaml               # values for Traefik, kube-prometheus-stack, Loki, Alloy (ADR-0018)
+infra/platform/*.yaml               # values for Traefik, kube-prometheus-stack, Loki, Alloy, Argo CD, Sealed Secrets
+infra/modules/, infra/envs/local/   # Terraform: the platform as code (section 5)
 charts/
 ├── circuitbreaker/                 # umbrella chart
 │   ├── Chart.yaml                  # dependencies: `service` 9 times (alias = service name) + the data stores
 │   ├── values.yaml                 # per-service defaults (env, replicas, resources, who may call it)
-│   ├── templates/                  # the Ingress, the namespace's default-deny NetworkPolicy
+│   ├── templates/                  # the Ingress (the default-deny policy is Terraform's, section 5)
 │   └── charts/
 │       ├── service/                # ONE generic sub-chart used by all 8 services and web
 │       └── redpanda/  cassandra/  postgres/   # minimal StatefulSets + init Jobs (files/ links to dev/)
 └── observability/                  # our dashboards and alert rules (files from observability/)
 deploy/
 └── envs/
-    ├── prod/global.yaml, prod/<service>.yaml        # per-environment settings and (Phase 6) image tags
-    └── staging/global.yaml, staging/<service>.yaml
+    ├── prod/global.yaml, prod/<service>.yaml        # per-environment settings and the image tags Argo CD deploys
+    ├── prod/sealed/<secret>.yaml                    # the environment's Secrets, encrypted (ADR-0019)
+    └── staging/...                                  # the same for staging
 ```
 
 - All services use **one shared sub-chart**, included once per service under an alias, so every object is named
   after its service (Service `order-service`, port 8000: the same addresses as in Docker Compose). It renders the
   Deployment, Service, ServiceAccount, ConfigMap (settings), Secret references, NetworkPolicy and, when the
   Prometheus Operator is installed, a ServiceMonitor.
-- **One service at a time (for Phase 6):** `--set global.only=order-service` renders only that service. Phase 6's
-  ApplicationSet gives each service its own Argo CD Application this way, with `deploy/envs/<env>/global.yaml` and
+- **One service at a time:** `--set global.only=order-service` renders only that service. The ApplicationSet gives
+  each service its own Argo CD Application this way, with `deploy/envs/<env>/global.yaml` and
   `deploy/envs/<env>/<service>.yaml` ([ADR-0014](../adr/0014-gitops-with-argo-cd.md)). CI checks that every
   service renders alone (`make k8s-lint`).
-- **Now (Phase 5):** `make k8s-up` creates the cluster, builds and pushes changed images to a local registry
-  (`localhost:5001`, tagged by git SHA), installs the platform charts, creates the namespace and its Secrets (the
-  local placeholders; Terraform in Phase 6) and installs the umbrella chart into `prod` (`env=staging` for staging).
+- **Deployed by Argo CD from Git (Phase 6):** `make platform` builds the platform with Terraform (section 5) and
+  Argo CD deploys `staging` and `prod` from `deploy/envs/` (section 4). Nobody runs `helm` or `kubectl apply` on
+  them.
+- **Developing (`make k8s-up`):** in a namespace Argo CD does **not** manage, it builds and pushes changed images
+  to the local registry (`localhost:5001`, tagged by git SHA), creates the Secrets from the local placeholders and
+  installs the umbrella chart, as in Phase 5. With no cluster at all it first applies the Terraform root without
+  Argo CD. In a namespace Argo CD manages, it deploys nothing: it starts a stopped cluster and waits until Argo CD
+  reports it `Synced` and `Healthy`.
+- **Operator settings, outside Git:** the join QR code's address (tonight's hotspot) and the bots on or off are not
+  releases. They live in the ConfigMap `operator-settings` of each namespace (`make k8s-set-url`, `make k8s-bots`),
+  which the chart reads with optional references and which Argo CD never owns, so a sync neither resets the
+  address nor stops the bots.
 - **Data stores** are minimal in-repo StatefulSets with persistent volumes, running the Compose images; their init
   Jobs (topics, keyspaces and roles) run the same `dev/` scripts as Compose. Redpanda starts with topic
   auto-creation **off**: only the init Job creates topics, with the event catalog's partitions (found in Phase 5:

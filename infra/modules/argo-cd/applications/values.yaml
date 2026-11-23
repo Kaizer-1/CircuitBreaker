@@ -1,0 +1,22 @@
+# Set by the argo-cd Terraform module.
+repoURL: ""
+targetRevision: main
+environments: [staging, prod]
+
+# One Application per component per environment. Each renders the umbrella chart (charts/circuitbreaker) with
+# global.only=<component> and deploy/envs/<env>/{global,<component>}.yaml, so a commit to one service's file
+# syncs that service only.
+components:
+  - api-gateway
+  - order-service
+  - matching-engine
+  - market-data-service
+  - portfolio-service
+  - bot-traders
+  - sre-agent
+  - chaos-service
+  - web
+  - redpanda
+  - cassandra
+  - postgres
+  - ingress

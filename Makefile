@@ -17,8 +17,9 @@ ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
 .PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
-        k8s-up k8s-down k8s-status k8s-set-url k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade \
-        test-alerts test-k8s k8s-check k8s-lint test-phone
+        k8s-up k8s-down k8s-status k8s-set-url k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade k8s-passcode \
+        test-alerts test-k8s k8s-check k8s-lint test-phone \
+        platform platform-plan sync argocd seal sealing-cert sealing-key-backup
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -82,13 +83,14 @@ logs: ## Follow logs: make logs s=<service> (default: all)
 build: ## Build the Docker images: make build [s=<service>]
 	$(COMPOSE) $(ALL) build $(s)
 
-lint: ## ruff, mypy, redocly, template-drift, event-contract and retired-name checks, web eslint/prettier
+lint: ## ruff, mypy, redocly, template-drift, event-contract, retired-name and sealed-secret checks, web eslint/prettier
 	@set -e; for s in $(SEL); do echo "== lint $$s"; \
 	  (cd services/$$s && uv run --frozen ruff check --no-cache . && uv run --frozen ruff format --check --no-cache . && uv run --frozen mypy); done
 	$(REDOCLY) lint
 	python3 tools/check_template_drift.py
 	uv run --quiet --locked tools/check_event_contracts.py
 	python3 tools/check_retired_names.py
+	python3 tools/check_sealed_secrets.py
 	@if [ -d web/node_modules ] && [ -z "$(s)" ]; then echo "== lint web"; (cd web && npm run lint && npm run format:check); fi
 
 fmt: ## Auto-format Python (ruff) and web (prettier): make fmt [s=<service>]
@@ -132,10 +134,44 @@ status: ## Ask the gateway for the combined system status (signs in as admin fir
 	  -d '{"nickname":"presenter","passcode":"$(ADMIN_PASSCODE)"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])') && \
 	  curl -sS --max-time 10 -H "Authorization: Bearer $$token" $(GATEWAY)/v1/system/status | python3 -m json.tool
 
-# --------------------------------------------------------------------------- Kubernetes (kind), Phase 5
-# The demo platform. Compose stays the fast developer loop. Phase 6 moves cluster creation to Terraform.
+# --------------------------------------------------------------------------- Platform as code, GitOps (Phase 6)
+# Terraform builds the platform (infra/envs/local, ADR-0015); Argo CD deploys staging and prod from Git (ADR-0014);
+# Secrets are SealedSecrets in Git (ADR-0019). envs= limits which environments Argo CD manages (default both).
 
-k8s-up: ## Kubernetes: cluster + registry + images + everything (env=prod|staging); PUBLIC_BASE_URL=http://<LAN IP> sets the QR code
+TF := terraform -chdir=infra/envs/local
+TF_VARS = $(if $(envs),-var 'gitops_environments=[$(foreach e,$(envs),"$(e)",)]',) $(if $(revision),-var 'target_revision=$(revision)',)
+
+platform-plan: ## Platform: show what make platform would change (Terraform plan) [envs="staging prod"] [revision=<branch>]
+	@python3 scripts/k8s.py charts
+	@$(TF) init -input=false >/dev/null
+	@$(TF) plan $(TF_VARS)
+
+platform: ## Platform: cluster, namespaces, Traefik, monitoring, Sealed Secrets, Argo CD from nothing (plan, ask, apply)
+	@python3 scripts/k8s.py charts
+	@$(TF) init -input=false >/dev/null
+	@$(TF) apply $(TF_VARS)
+
+sync: ## GitOps: ask Argo CD to look at Git now (it polls every 30 s): make sync [env=staging] [s=<service>]
+	@python3 scripts/k8s.py sync --env $(if $(env),$(env),staging) $(s)
+
+argocd: ## GitOps: Argo CD's web UI on http://localhost:8443 (prints the admin password)
+	@python3 scripts/k8s.py argocd
+
+seal: ## Secrets: seal an environment's secrets into deploy/envs/<env>/sealed/: make seal env=prod [rotate="jwt-secret ..."]
+	@test -n "$(env)" || { echo "usage: make seal env=staging|prod [rotate=\"<secret> ...\"]"; exit 2; }
+	@python3 scripts/sealed_secrets.py seal --env $(env) $(if $(rotate),--rotate $(rotate),)
+
+sealing-cert: ## Secrets: save the controller's PUBLIC certificate (infra/sealed-secrets/sealing-cert.pem, committed)
+	@python3 scripts/sealed_secrets.py cert
+
+sealing-key-backup: ## Secrets: save the controller's PRIVATE sealing key to private/ (a person runs it; copy it off the laptop)
+	@python3 scripts/sealed_secrets.py backup
+
+# --------------------------------------------------------------------------- Kubernetes (kind), Phase 5
+# The demo platform. Compose stays the fast developer loop. make k8s-up develops with local images in a namespace
+# Argo CD does not manage; in one it does, it only starts the cluster and waits for Argo CD.
+
+k8s-up: ## Kubernetes: images + the chart into an environment Argo CD does not manage (env=prod|staging); PUBLIC_BASE_URL=http://<LAN IP> sets the QR code
 	@python3 scripts/k8s.py up --env $(if $(env),$(env),prod)
 
 k8s-down: ## Kubernetes: stop the cluster (data kept, RAM freed; k8s-up starts it again)
@@ -159,6 +195,9 @@ k8s-bots: ## Kubernetes: start the 20 bots trading: make k8s-bots [env=] [seed=4
 
 k8s-bots-stop: ## Kubernetes: stop the bots trading
 	@python3 scripts/k8s.py bots --stop --env $(if $(env),$(env),prod)
+
+k8s-passcode: ## Kubernetes: the presenter's admin passcode (random, sealed in Git): make k8s-passcode [env=]
+	@python3 scripts/k8s.py passcode --env $(if $(env),$(env),prod)
 
 k8s-demo-trade: ## Kubernetes: make demo-trade against the cluster (env=prod|staging)
 	@python3 scripts/k8s.py run --env $(if $(env),$(env),prod) demo_trade.py

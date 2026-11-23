@@ -1,0 +1,17 @@
+# order-service-db in prod: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as prod/order-service-db. make seal env=prod
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: order-service-db
+  namespace: prod
+spec:
+  encryptedData:
+    password: AgBFZ0JGkYvE047w9nZbMD5qSSMg8X2iFU4WNHv4k44uWEw7FQvk0pquHXs+MHkZbd5/rSgwUJ2LZyF4TqThnWNHHH/WWF8s/to5LugpVkWNRuhE8x6+AU+Q4SiLLrKKpJ5lN//C3y7Wj0BwwFyLRwR670rbBtqzdRXI95NFOzXdhtrRYM7tP4vDIBRFngjwBYSnPP/I4TR9LDVGJn1UnoU8C+PpcMPpAH9qu0x0Ki010q3dHAEJwX/OzZUShO7WwQMMgiQSEls+E7RN5PPXNEy9kB5cwvtobsh3ON8RTvHW7WitKiSFrD0gMA9R/bFr/49A89xNmH8KeD+MEyvUE7hEM6bAUZy1Knv7kWFjkQLFM/vxrHGWPMB45ol5vXbUMph6eqH+ZPFhdIHWY5HFY6MZSg7qgyEuUx0hoip/VJszQdkiR3UIVkxsRO7CPEnftOt5wQa0h68QH7IlBrtgwTmIefxrLwBINHMxJnl9VkClJM1M9x1ui9ECL9/Xgn+pEIhMYtx6xHVH7s7PIQVOEZ0/vJYhTE8nj5PRvTm8mpEEMmZ877m9FWhEIKjOiurcw+qrOEMN1+pGvXVtmJrNRZ+yq7DvdwwgrhRFThjvX8YJiI+LA7RzhxD0XpM4Q9IgwMxWyGneeY2UNqHyDvtFpOTjXvj4L6CGkVoJpZZOZOZ7nmvmrvDO/gV6K/jZsVCRLDhtRVU0WmTqOkDDY0cw0czzRoFGiBvy9bmSiYPYYiHVh1PFRClJ3aYd1PmR
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: order-service-db
+      namespace: prod
+    type: Opaque

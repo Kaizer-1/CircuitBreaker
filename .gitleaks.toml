@@ -5,3 +5,9 @@ useDefault = true
 [[allowlists]]
 description = "Placeholder JWTs in the API spec's response examples: their signature segment is base64('signature')"
 regexes = ['''\.c2lnbmF0dXJl$''']
+
+[[allowlists]]
+description = """SealedSecrets (ADR-0019): their encryptedData is ciphertext that only the cluster's Sealed Secrets
+controller can decrypt, so high entropy is expected and safe. Only these folders; make k8s-lint (CI) fails if a file
+in them is anything but a SealedSecret holding encryptedData alone (no plaintext data or stringData)."""
+paths = ['''^deploy/envs/[a-z]+/sealed/[a-z0-9-]+\.yaml$''']

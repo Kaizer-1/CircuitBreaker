@@ -2,8 +2,9 @@
 # make k8s-lint (and CI's "kubernetes" job): check the charts, the platform values and the alert rules without a
 # cluster. Needs helm and Docker (kubeconform and promtool run from their pinned images).
 #   1. helm lint the umbrella chart (each environment) and the observability chart
-#   2. render the umbrella for prod and staging, and once per service with global.only (as Phase 6's per-service
-#      Argo CD Applications will), plus the observability chart and the third-party charts with our values
+#   2. render the umbrella for prod and staging, and once per service with global.only (as the per-service Argo CD
+#      Applications do), plus the observability chart, Argo CD's applications chart (infra/modules/argo-cd) and the
+#      third-party charts with our values
 #   3. validate every rendered object against the Kubernetes 1.37 schemas (kubeconform), including the
 #      ServiceMonitor and PrometheusRule custom resources
 #   4. promtool: check the alert rules and run their unit tests (make test-alerts)
@@ -52,13 +53,18 @@ for only in api-gateway order-service matching-engine market-data-service portfo
 done
 helm template circuitbreaker-observability charts/observability -n observability > "$OUT/observability.yaml" \
   2> >(quiet >&2)
+# What Argo CD deploys: the AppProject, the ApplicationSets, the observability Application.
+helm lint --quiet infra/modules/argo-cd/applications --set repoURL=git@github.com:example/repo.git
+helm template circuitbreaker-applications infra/modules/argo-cd/applications -n argocd \
+  --set repoURL=git@github.com:example/repo.git > "$OUT/applications.yaml"
 
 # The pinned third-party charts with our values (a typo in a values file fails here, not on the cluster).
 python3 - <<'EOF' > "$OUT/platform.list"
 import sys; sys.path.insert(0, "scripts")
 import k8s
-for release, chart, repo, version, namespace, values in k8s.PLATFORM:
-    print(release, k8s.cached_chart(chart, repo, version), namespace, values)
+NAMESPACES = {"traefik": "traefik", "argo-cd": "argocd", "sealed-secrets": "kube-system"}
+for chart, repo, version in k8s.CHARTS:  # values: infra/platform/<chart>.yaml (Terraform reads the same)
+    print(chart, k8s.cached_chart(chart, repo, version), NAMESPACES.get(chart, "observability"), f"{chart}.yaml")
 EOF
 while read -r release package namespace values_file; do
   helm template "$release" "$package" -n "$namespace" -f "infra/platform/$values_file" > "$OUT/platform-$release.yaml"
@@ -67,7 +73,8 @@ done < "$OUT/platform.list"
 echo "== kubeconform (Kubernetes $KUBERNETES_VERSION)"
 docker run --rm -v "$PWD/$OUT:/r:ro" "$KUBECONFORM_IMAGE" -strict -summary \
   -kubernetes-version "$KUBERNETES_VERSION" -schema-location default -schema-location "$CRD_SCHEMAS" \
-  /r/prod.yaml /r/staging.yaml /r/observability.yaml $(cd "$OUT" && ls only-*.yaml | sed 's|^|/r/|')
+  /r/prod.yaml /r/staging.yaml /r/observability.yaml /r/applications.yaml \
+  $(cd "$OUT" && ls only-*.yaml | sed 's|^|/r/|')
 # The third-party charts install CRDs whose own schemas are not in any catalogue: those are skipped, the rest
 # (Deployments, Services, ...) are validated.
 docker run --rm -v "$PWD/$OUT:/r:ro" "$KUBECONFORM_IMAGE" -summary -ignore-missing-schemas \

@@ -3,7 +3,9 @@
 - **Status:** Accepted — amends [ADR-0010](0010-terraform-localstack.md) (Terraform stays; its main target moves
   from LocalStack to the local Kubernetes platform). **Amended 2026-11-13 (owner's decision, Phase 5):** the cluster
   has **one node**, not a control plane and two workers, and the Terraform modules arrive in **Phase 6**; Phase 5
-  creates the same cluster from `infra/kind/cluster.yaml` with `make k8s-up` (details below)
+  creates the same cluster from `infra/kind/cluster.yaml` with `make k8s-up` (details below). **Secrets amended by [ADR-0019](0019-sealed-secrets-for-gitops.md) (2026-11-23):** the services' Secrets are
+  SealedSecrets in Git; Terraform keeps only the two bootstrap secrets (Argo CD's repository key, Grafana's admin
+  password). Phase 6 also adds two modules (below)
 - **Date:** 2026-11-03
 - **Deciders:** Mohammad Oweis (owner, Cloud Platform Team), Kaizer Dewaswala, MD Asif Ali
 
@@ -79,6 +81,32 @@ infra/
   `infra/kind/cluster.yaml`) and the Secrets from the local placeholders. Phase 6's `kind-cluster` and `environment`
   modules take over with the same settings, plus the namespaces' ResourceQuotas and the agent's RBAC, as
   `make platform`.
+
+### As built (Phase 6, 2026-11-23)
+
+```text
+infra/
+├── kind/cluster.yaml        # the cluster's settings, the only copy: the kind-cluster module reads it (yamldecode)
+├── platform/*.yaml          # values of the third-party charts (Traefik, monitoring, Argo CD, Sealed Secrets)
+├── modules/
+│   ├── kind-cluster/        # tehcyx/kind 0.13.0: the cluster; connects the local image registry
+│   ├── environment/         # kubernetes 3.5.0: namespace, ResourceQuota, default-deny policy, sre-agent Role
+│   ├── platform-charts/     # helm 3.3.0: Traefik, kube-prometheus-stack, Loki, Alloy (ADR-0018) + Grafana's secret
+│   ├── sealed-secrets/      # helm: the controller (ADR-0019), after the backed-up key is restored
+│   └── argo-cd/             # helm: Argo CD, its repository key, and the AppProject + ApplicationSets (a small chart)
+└── envs/local/              # main.tf calls them; terraform.tfstate here (git-ignored); .terraform.lock.hcl committed
+```
+
+- **Two modules more than the decision above.** `platform-charts` holds the Phase 5 charts that `make k8s-up`
+  installed by script (ADR-0018 chose them; Terraform now installs the same versions with the same values).
+  `sealed-secrets` is ADR-0019's controller. Neither adds a component beyond those two ADRs.
+- **The Secrets** are not in the `environment` module: they are SealedSecrets in Git (ADR-0019).
+- **`make platform`** = `terraform plan`, a question, `terraform apply`, from `infra/envs/local`. `make k8s-up` on a
+  laptop with no cluster applies the same root with `gitops_environments=[]` (no Argo CD) to develop with local images;
+  it never deploys into a namespace Argo CD manages.
+- **Charts come from the local cache** (`build/k8s/charts`, filled and sha256-checked by `scripts/k8s.py charts`),
+  as in Phase 5, so a rebuild on the demo hotspot needs no chart repository.
+- **LocalStack** is not built. It stays optional, on the runbook's Later list.
 
 ## Alternatives considered
 

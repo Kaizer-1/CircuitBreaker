@@ -1,0 +1,17 @@
+# admin-passcode in prod: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as prod/admin-passcode. make seal env=prod
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: admin-passcode
+  namespace: prod
+spec:
+  encryptedData:
+    value: AgCtYWTHc3/y7ikiTj9o4LgGtf2RWGm4fiw5sswijJEurgU4LM3qq3MnZXDfMxRqEFITeJA/FghWLmEavEQuhMZfB0hrfg1+aSksmGqv4QWxd04abk8hF4Kq2KKerUGI+9dd63yot8TKum21z81qHToyL6eHCFHkEMfI24HUPHMTVlb4SIPFKy8XIrz5qn07c3k1hdJ2dJH2ri8M6KPDrhwHsu/HK+1kwDDkT61DDBeV/Vb8sWocIYKmhHcKibDod2XG5teQ9jVXDKtzGPhuHLRYnwXFWb1VIGnahYBhwIvOsFhOEna1KLJoW1dlsCcD99lnnPqYjnc+ReA29+tclnmWs5elr/LhsNJ9SB1DO8xsnRVJjklorS5XOOxMuluzW6vd5E+nh0b4LVWO9v4lzkA3+aQBBHEj55DlDiywwhYBFmN9E+kLm8Qef/Z/kv32FdwFUCtkSXu9WvP7k+YfNeEFoon7t9zpin5frzsGJlmDvECMP+FM7mVTobzp62P/VlmsXIRsUzpUHUDGIwsS6kGNJ9dKBdA+k72QC2IRJ0UHdM7N/sgaRbMouI35qVA+wqtDd+Em6goAyvhQYdYj3d/xyd7kPHDKu7k/yRM4L6FVI00BJvQm1+xdbzsajuTU80C1oiAYRJuOejDGQ7aNXga272tHo+OkdkpQWPYc6PUSC7V59Qf2L77G3tawg4WvuNyltLRiOV8LuvuuydTSzijbmfmrEtB9nxn4N2I=
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: admin-passcode
+      namespace: prod
+    type: Opaque

@@ -1,0 +1,17 @@
+# The project every CircuitBreaker Application belongs to: what Argo CD may deploy, from where, to where. Only this
+# repository, only our namespaces, and no cluster-wide objects at all (our charts render none), so a mistake in Git
+# cannot create a ClusterRole or touch kube-system.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: circuitbreaker
+spec:
+  description: The CircuitBreaker exchange (ADR-0014)
+  sourceRepos:
+    - {{ .Values.repoURL | quote }}
+  destinations:
+    {{- range .Values.environments }}
+    - {server: https://kubernetes.default.svc, namespace: {{ . }}}
+    {{- end }}
+    - {server: https://kubernetes.default.svc, namespace: observability}
+  clusterResourceWhitelist: []

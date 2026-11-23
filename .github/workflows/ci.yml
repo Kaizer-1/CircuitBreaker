@@ -19,6 +19,7 @@ env:
   REDOCLY_VERSION: "1.34.3"
   GITLEAKS_VERSION: "8.30.1"
   HELM_VERSION: "4.3.0"
+  TERRAFORM_VERSION: "1.17.2"
 
 jobs:
   python:
@@ -145,6 +146,8 @@ jobs:
         run: python3 tools/check_template_drift.py
       - name: retired instrument names appear only in dated history notes
         run: python3 tools/check_retired_names.py
+      - name: Sealed secrets are sealed (the other half of the gitleaks allowlist)
+        run: python3 tools/check_sealed_secrets.py
       - name: docker-compose.yml is valid
         run: docker compose --profile infra --profile app config -q
 
@@ -160,6 +163,23 @@ jobs:
           helm version --short
       - name: make k8s-lint
         run: make k8s-lint
+
+  terraform:
+    name: Terraform (fmt, validate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive -diff infra
+      # validate needs the providers (from the committed lock file) but no cluster and no state.
+      - name: terraform validate
+        run: |
+          terraform -chdir=infra/envs/local init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/envs/local validate
 
   web:
     name: web (lint, types, tests, build)

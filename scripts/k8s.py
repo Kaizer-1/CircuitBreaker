@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
 """The local Kubernetes platform: make k8s-up / k8s-down / k8s-status / k8s-images / k8s-reset.
 
-    up [--env prod|staging]  cluster + registry + images + everything installed, then wait
+    up [--env prod|staging]  developing: images + the umbrella chart into a namespace Argo CD does
+                             not manage (no cluster yet: Terraform makes one, without Argo CD). In a
+                             namespace Argo CD manages it deploys nothing: it starts a stopped
+                             cluster, applies PUBLIC_BASE_URL and waits until Argo CD reports it
+                             Synced and Healthy (releases come from Git, ADR-0014)
     down                     stop the cluster's node container (data kept, RAM freed)
-    status                   pods per namespace, the cluster's memory, the URL phones are sent to
+    status                   pods per namespace, Argo CD's Applications, memory, the QR code's URL
     set-url URL [--env]      change only the URL in the join QR code (PUBLIC_BASE_URL), data kept
+    bots [--stop] [--env]    turn the 20 bots on or off
+    sync [--env] [svc]       ask Argo CD to look at Git now instead of within 30 s (make sync)
+    passcode [--env]         the presenter's admin passcode (make k8s-passcode)
+    argocd                   Argo CD's web UI on http://localhost:8443 and its admin password
     images [svc ...]         build changed images, push them to the local registry
+    charts                   download the pinned third-party charts once (make platform needs them)
+    registry                 start the local registry and connect it to the cluster (Terraform)
     reset                    DELETE the cluster and all its data (asks; run by a person)
 
-Standard library only, so it runs with the system python3. Phase 6 moves cluster creation into
-Terraform (`make platform`) and deploys through Argo CD; until then this is the platform's entry.
+The platform itself (cluster, namespaces, Traefik, monitoring, Sealed Secrets, Argo CD) is
+Terraform's: make platform (infra/envs/local). Standard library only, so it runs with the system
+python3.
 """
 
 from __future__ import annotations
@@ -169,11 +180,25 @@ def wait_api(timeout: float = 120) -> None:
     sys.exit("the Kubernetes API did not become ready")
 
 
+TERRAFORM_DIR = ROOT / "infra" / "envs" / "local"
+
+
+def terraform_apply(*variables: str) -> None:
+    """infra/envs/local: the whole platform (ADR-0015). make platform plans first and asks; make
+    k8s-up calls this only to create a missing cluster for development (no Argo CD)."""
+    if not shutil.which("terraform"):
+        sys.exit("terraform is not installed: run make doctor")
+    cache_charts()
+    run(["terraform", f"-chdir={TERRAFORM_DIR}", "init", "-input=false"], capture=True)
+    args = [arg for var in variables for arg in ("-var", var)]
+    run(["terraform", f"-chdir={TERRAFORM_DIR}", "apply", "-input=false", "-auto-approve", *args])
+
+
 def ensure_cluster() -> None:
     state = node_state()
     if state == "":
-        step(f"kind cluster '{CLUSTER}' (1 node, {KIND_CONFIG.relative_to(ROOT)})")
-        run(["kind", "create", "cluster", "--config", str(KIND_CONFIG), "--wait", "120s"])
+        step(f"no cluster: Terraform creates '{CLUSTER}' for development, without Argo CD")
+        terraform_apply("gitops_environments=[]")
     elif state != "running":
         step(f"starting the stopped cluster '{CLUSTER}' (data kept)")
         run(["docker", "start", NODE], capture=True)
@@ -261,44 +286,41 @@ DEV_SECRETS = {
 }
 
 
-# Third-party charts, pinned (ADR-0018): (release, chart, repo, version, namespace, values file).
-PLATFORM = [
-    ("traefik", "traefik", "oci://ghcr.io/traefik/helm", "42.3.1", "traefik", "traefik.yaml"),
+# Third-party charts, pinned (ADR-0018, ADR-0019): (chart, repo, version). Terraform installs them
+# (infra/modules/*) from the packages downloaded here.
+CHARTS = [
+    ("traefik", "oci://ghcr.io/traefik/helm", "42.3.1"),
+    ("kube-prometheus-stack", "oci://ghcr.io/prometheus-community/charts", "92.22.0"),
+    ("loki", "oci://ghcr.io/grafana-community/helm-charts", "20.4.1"),
+    # Not published as OCI artifacts (or, for Argo CD, as one we checked), and their repositories'
+    # indexes are large for a slow connection: the release packages themselves, checked against the
+    # indexes' sha256 (CHART_DIGESTS).
     (
-        "kube-prometheus-stack",
-        "kube-prometheus-stack",
-        "oci://ghcr.io/prometheus-community/charts",
-        "92.22.0",
-        "observability",
-        "kube-prometheus-stack.yaml",
-    ),
-    (
-        "loki",
-        "loki",
-        "oci://ghcr.io/grafana-community/helm-charts",
-        "20.4.1",
-        "observability",
-        "loki.yaml",
-    ),
-    # Alloy is not published as an OCI artifact, and its repository's index is too large for a slow
-    # connection: the release package itself, checked against the index's sha256 (CHART_DIGESTS).
-    (
-        "alloy",
         "alloy",
         "https://github.com/grafana/helm-charts/releases/download/alloy-1.15.0/alloy-1.15.0.tgz",
         "1.15.0",
-        "observability",
-        "alloy.yaml",
+    ),
+    (
+        "argo-cd",
+        "https://github.com/argoproj/argo-helm/releases/download/argo-cd-10.18.2/argo-cd-10.18.2.tgz",
+        "10.18.2",
+    ),
+    (
+        "sealed-secrets",
+        "https://github.com/bitnami/sealed-secrets/releases/download/helm-v2.22.0/sealed-secrets-2.22.0.tgz",
+        "2.22.0",
     ),
 ]
-# Grafana's admin login (anonymous visitors may only look). Phase 6: Terraform creates it.
-GRAFANA_PASSWORD = os.environ.get("GRAFANA_ADMIN_PASSWORD", "cb-dev-grafana")
+# Namespaces of the platform's pods (waited for, shown by status).
+PLATFORM_NAMESPACES = ["argocd", "observability", "traefik"]
 
 
 CHART_CACHE = ROOT / "build" / "k8s" / "charts"
 # sha256 of chart packages downloaded by URL (from the chart repository's index.yaml).
 CHART_DIGESTS = {
-    "alloy-1.15.0.tgz": "2ecc96c05004cc01a45ab23cb390194ad5259ec9d02b42bf148d4468d013aaa3",
+    "alloy-1.15.0.tgz": "2ecc96c05004cc01a45ab23cb390194ad5259ec9d02b42bf148d4468d013aaa3",  # gitleaks:allow  # noqa: E501
+    "argo-cd-10.18.2.tgz": "6900d104854a18c733616a56853012eb9a136f2256a9d35de73cda03689a59d1",  # gitleaks:allow  # noqa: E501
+    "sealed-secrets-2.22.0.tgz": "1ed23bb224652aa6c8477979d4bddccd207205b27b12b120f62f360890c80606",  # gitleaks:allow  # noqa: E501
 }
 
 
@@ -334,35 +356,15 @@ def cached_chart(chart: str, repo: str, version: str) -> str:
     return str(package)
 
 
-def install_platform() -> None:
-    ensure_namespace("observability")
-    secret = {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {"name": "grafana-admin", "namespace": "observability"},
-        "type": "Opaque",
-        "stringData": {"admin-user": "admin", "admin-password": GRAFANA_PASSWORD},
-    }
-    run(kubectl("apply", "-f", "-"), input_text=json.dumps(secret), capture=True)
-    for release, chart, repo, version, namespace, values in PLATFORM:
-        step(f"{release} (chart {chart} {version}, namespace {namespace})")
-        run(
-            [
-                "helm",
-                "upgrade",
-                "--install",
-                release,
-                cached_chart(chart, repo, version),
-                "--kube-context",
-                CONTEXT,
-                "--namespace",
-                namespace,
-                "--create-namespace",
-                "-f",
-                str(ROOT / "infra" / "platform" / values),
-            ],
-            capture=True,
-        )
+def cache_charts() -> None:
+    for chart, repo, version in CHARTS:
+        cached_chart(chart, repo, version)
+
+
+def install_observability() -> None:
+    """Our dashboards and alert rules while developing (on a GitOps cluster Argo CD does it)."""
+    if argo_manages("observability"):
+        return
     step("our dashboards and alert rules (charts/observability)")
     run(
         [
@@ -380,34 +382,123 @@ def install_platform() -> None:
     )
 
 
+# --------------------------------------------------------------------------- Argo CD (GitOps)
+
+
+def argo_applications(env: str | None = None) -> list[dict]:
+    """Argo CD's Applications (all, or one environment's); [] when Argo CD is not installed."""
+    selector = ["-l", f"circuitbreaker.io/env={env}"] if env else []
+    out = subprocess.run(  # noqa: S603 (fixed command)
+        kubectl("get", "applications.argoproj.io", "-n", "argocd", *selector, "-o", "json"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if out.returncode != 0:
+        return []
+    return list(json.loads(out.stdout)["items"])
+
+
+def argo_manages(namespace: str) -> bool:
+    if namespace == "observability":
+        return any(a["metadata"]["name"] == "observability" for a in argo_applications())
+    return bool(argo_applications(namespace))
+
+
+def argo_not_settled(env: str) -> list[str]:
+    """Applications of env that are not Synced and Healthy yet."""
+    waiting = []
+    for app in argo_applications(env):
+        status = app.get("status", {})
+        sync = status.get("sync", {}).get("status", "?")
+        health = status.get("health", {}).get("status", "?")
+        if sync != "Synced" or health != "Healthy":
+            waiting.append(f"{app['metadata']['name']} ({sync}/{health})")
+    return waiting
+
+
+def wait_argo(env: str, timeout: float = 900) -> float:
+    start = time.monotonic()
+    last = ""
+    while waiting := argo_not_settled(env):
+        if time.monotonic() - start > timeout:
+            sys.exit(f"Argo CD: not Synced and Healthy after {timeout:.0f} s: {', '.join(waiting)}")
+        line = f"   Argo CD: {len(waiting)} not settled: {', '.join(sorted(waiting))}"
+        if line != last:
+            print(line, flush=True)
+            last = line
+        time.sleep(5)
+    return time.monotonic() - start
+
+
 def local_url(env: str) -> str:
     """The environment's entry from this laptop (Traefik's host port)."""
     port = ENV_PORTS[env]
     return "http://localhost" if port == 80 else f"http://localhost:{port}"
 
 
-def release_url(env: str) -> str | None:
-    """The PUBLIC_BASE_URL the environment's release was deployed with; None before the first."""
-    out = run(
-        ["helm", "get", "values", RELEASE, "--kube-context", CONTEXT, "-n", env, "-o", "json"],
-        capture=True,
+OPERATOR_SETTINGS = "operator-settings"
+
+
+def operator_settings(env: str) -> dict[str, str]:
+    """The ConfigMap of tonight's settings (the QR code's URL, the bots on or off). Git and Argo CD
+    never own it, so no release and no sync resets it; the chart reads it with optional refs."""
+    out = subprocess.run(  # noqa: S603 (fixed command)
+        kubectl("get", "configmap", OPERATOR_SETTINGS, "-n", env, "-o", "json"),
+        capture_output=True,
+        text=True,
         check=False,
     )
-    try:
-        url = (json.loads(out) or {}).get("global", {}).get("publicBaseUrl")
-    except json.JSONDecodeError:
-        return None  # no release yet
-    return str(url) if url else None
+    return dict(json.loads(out.stdout).get("data") or {}) if out.returncode == 0 else {}
+
+
+def set_operator_settings(env: str, changes: dict[str, str]) -> bool:
+    """Merge changes into the ConfigMap; True when something changed."""
+    data = operator_settings(env)
+    if all(data.get(k) == v for k, v in changes.items()):
+        return False
+    data.update(changes)
+    manifest = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": OPERATOR_SETTINGS,
+            "namespace": env,
+            "labels": {"app.kubernetes.io/part-of": "circuitbreaker"},
+        },
+        "data": data,
+    }
+    run(kubectl("apply", "-f", "-"), input_text=json.dumps(manifest), capture=True)
+    return True
+
+
+def restart(env: str, deployment: str) -> None:
+    """A rolling restart: the pods read their settings again (Argo CD ignores the annotation)."""
+    run(kubectl("rollout", "restart", "-n", env, f"deployment/{deployment}"), capture=True)
+    run(kubectl("rollout", "status", "-n", env, f"deployment/{deployment}", "--timeout=300s"))
 
 
 def public_base_url(env: str) -> str:
-    """Where phones reach this environment (the join QR code). PUBLIC_BASE_URL when given, always;
-    otherwise the URL the environment already has, so a restart, an upgrade or k8s-bots never puts
-    the QR code back to localhost; localhost only on the first install (the QR box warns)."""
+    """Where phones reach this environment (the join QR code): PUBLIC_BASE_URL when given, always;
+    otherwise the URL the environment already has (kept in operator-settings), so a restart, an
+    upgrade or k8s-bots never puts the QR code back to localhost; localhost only at first."""
     given = os.environ.get("PUBLIC_BASE_URL", "").strip()
     if given:
         return checked_url(given)
-    return release_url(env) or local_url(env)
+    return operator_settings(env).get("PUBLIC_BASE_URL") or local_url(env)
+
+
+def apply_public_url(env: str) -> None:
+    """PUBLIC_BASE_URL (if given) into operator-settings; restarts web when it changed."""
+    if os.environ.get("PUBLIC_BASE_URL", "").strip():
+        url = public_base_url(env)
+        if set_operator_settings(env, {"PUBLIC_BASE_URL": url}) and deployment_exists(env, "web"):
+            step(f"{env}: the join QR code now points at {url}")
+            restart(env, "web")
+
+
+def deployment_exists(env: str, name: str) -> bool:
+    return ok(kubectl("get", "deployment", name, "-n", env))
 
 
 def checked_url(url: str) -> str:
@@ -499,14 +590,13 @@ def deploy(env: str, extra: dict[str, dict[str, object]] | None = None) -> None:
     tags = json.loads(TAGS_FILE.read_text()) if TAGS_FILE.exists() else {}
     if not tags:
         sys.exit("no images built yet: run make k8s-images")
-    url = public_base_url(env)
     overrides: dict[str, dict[str, object]] = {
-        "global": {"environment": env, "publicBaseUrl": url},
+        "global": {"environment": env},
         **{name: {"image": {"tag": tag}} for name, tag in tags.items()},
     }
     for key, value in (extra or {}).items():
         overrides.setdefault(key, {}).update(value)
-    step(f"namespace {env}: Secrets (local placeholders) and the umbrella chart (QR code: {url})")
+    step(f"namespace {env}: Secrets (local placeholders) and the umbrella chart")
     ensure_namespace(env)
     apply_secrets(env)
     run(
@@ -587,15 +677,36 @@ def cmd_up(args: argparse.Namespace) -> None:
             sys.exit(f"{tool} is not installed: run make doctor")
     ensure_registry()
     ensure_cluster()
-    if not args.skip_images:
-        step("images")
-        build_images(list(IMAGES))
-    install_platform()
-    deploy(args.env)
-    step(f"waiting until every pod in {args.env} and the platform is ready")
-    took = sum(wait_ready(ns) for ns in [*sorted({p[4] for p in PLATFORM}), args.env])
+    if argo_manages(args.env):
+        # GitOps (ADR-0014): what runs in this namespace comes from Git through Argo CD, never from
+        # here. Only tonight's settings (the QR code's URL) are the operator's.
+        step(f"{args.env} is deployed by Argo CD from Git: nothing is built or deployed from here")
+        print(
+            f"   to release: commit to deploy/envs/{args.env}/ (CI does it for staging; make"
+            " promote for prod), then make sync to look at once"
+        )
+        apply_public_url(args.env)
+        step(f"waiting until Argo CD reports {args.env} Synced and Healthy, and every pod is ready")
+        took = wait_argo(args.env)
+        took += sum(wait_ready(ns) for ns in [*PLATFORM_NAMESPACES, args.env])
+    else:
+        if not args.skip_images:
+            step("images")
+            build_images(list(IMAGES))
+        install_observability()
+        if os.environ.get("PUBLIC_BASE_URL", "").strip():
+            set_operator_settings(args.env, {"PUBLIC_BASE_URL": public_base_url(args.env)})
+        deploy(args.env)
+        step(f"waiting until every pod in {args.env} and the platform is ready")
+        took = sum(
+            wait_ready(ns) for ns in [*PLATFORM_NAMESPACES, args.env] if namespace_exists(ns)
+        )
     print(f"\nall pods in {args.env} ready ({took:.0f} s).  (kubectl context {CONTEXT})")
     print_public_url(args.env)
+
+
+def namespace_exists(name: str) -> bool:
+    return ok(kubectl("get", "namespace", name))
 
 
 def cmd_down(_: argparse.Namespace) -> None:
@@ -652,36 +763,31 @@ def cmd_status(_: argparse.Namespace) -> None:
         f"\nnode: processes (anon) {anon:.0f} MiB + kernel {kernel:.0f} MiB;"
         f" page cache {file_:.0f} MiB (the kernel can give it back)"
     )
+    apps = argo_applications()
+    if apps:
+        print("\nArgo CD (sync / health):")
+        for app in sorted(apps, key=lambda a: a["metadata"]["name"]):
+            st = app.get("status", {})
+            revision = (st.get("sync", {}).get("revision") or "")[:8]
+            print(
+                f"   {app['metadata']['name']:<28} {st.get('sync', {}).get('status', '?'):<10}"
+                f" {st.get('health', {}).get('status', '?'):<12} {revision}"
+            )
     for env in ENV_PORTS:
-        if release_url(env) is not None or env == "prod":
+        if deployment_exists(env, "web"):
             print_public_url(env)
 
 
 def cmd_set_url(args: argparse.Namespace) -> None:
-    """Point the join QR code at a new address (make k8s-set-url url=...). Only the URL changes:
-    the release's other values (image tags, the bots on or off) are reused, so only the web pod
-    restarts (its ConfigMap checksum changed); no data is touched."""
+    """Point the join QR code at a new address (make k8s-set-url url=...). Only the URL changes, in
+    operator-settings (outside Git, so Argo CD keeps it); only the web pod restarts; no data is
+    touched."""
     if node_state() != "running":
         sys.exit("the cluster is not running: PUBLIC_BASE_URL=http://<LAN IP> make k8s-up")
     url = checked_url(args.url)
     step(f"{args.env}: the join QR code now points at {url}")
-    run(
-        [
-            "helm",
-            "upgrade",
-            RELEASE,
-            str(CHART),
-            "--kube-context",
-            CONTEXT,
-            "--namespace",
-            args.env,
-            "--reuse-values",
-            "--set-string",
-            f"global.publicBaseUrl={url}",
-        ],
-        capture=True,
-    )
-    run(kubectl("rollout", "status", "-n", args.env, "deployment/web", "--timeout=180s"))
+    set_operator_settings(args.env, {"PUBLIC_BASE_URL": url})
+    restart(args.env, "web")
     deadline = time.monotonic() + 30
     while served_url(args.env) != url:
         if time.monotonic() > deadline:
@@ -709,6 +815,28 @@ FORWARDS = {
 }
 
 
+# What the check scripts (scripts/stack.py) log in with: the presenter's passcode, the bot secret.
+SCRIPT_SECRETS = {
+    "ADMIN_PASSCODE": ("admin-passcode", "value"),
+    "BOT_SECRET": ("bot-secret", "value"),
+}
+
+
+def secret_value(namespace: str, name: str, key: str) -> str | None:
+    import base64
+
+    out = subprocess.run(  # noqa: S603 (fixed command)
+        kubectl("get", "secret", name, "-n", namespace, "-o", "json"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if out.returncode != 0:
+        return None
+    encoded = (json.loads(out.stdout).get("data") or {}).get(key)
+    return base64.b64decode(encoded).decode() if encoded else None
+
+
 def port_open(port: int) -> bool:
     import socket
 
@@ -723,6 +851,11 @@ def cmd_run(args: argparse.Namespace) -> None:
     port = ENV_PORTS[args.env]
     env["GATEWAY"] = "http://localhost" if port == 80 else f"http://localhost:{port}"
     env["K8S_NAMESPACE"] = args.env
+    # The environment's own secrets (sealed, random since Phase 6), not the Compose placeholders.
+    for var, (secret, key) in SCRIPT_SECRETS.items():
+        value = secret_value(args.env, secret, key)
+        if value and var not in os.environ:
+            env[var] = value
     forwards = []
     try:
         for var, (service, local) in FORWARDS.items():
@@ -754,9 +887,77 @@ def cmd_bots(args: argparse.Namespace) -> None:
         "BOT_RANDOM_SEED": args.seed,
         "BOT_ACTIVITY": args.activity,
     }
-    deploy(args.env, {"bot-traders": {"env": settings}})
-    wait_ready(args.env)
+    # Tonight's choice, not a release: operator-settings (outside Git), then a restart to read it.
+    set_operator_settings(args.env, settings)
+    restart(args.env, "bot-traders")
     print("20 bots trading" if not args.stop else "bots stopped", f"in {args.env}")
+
+
+def bots_enabled(env: str) -> bool:
+    return operator_settings(env).get("BOTS_ENABLED") == "true"
+
+
+def cmd_sync(args: argparse.Namespace) -> None:
+    """Ask Argo CD to compare with Git now (it polls every 30 s anyway): make sync [env=] [s=]."""
+    apps = [
+        a
+        for a in argo_applications(args.env)
+        if not args.services
+        or a["metadata"]["labels"].get("circuitbreaker.io/component") in args.services
+    ]
+    if not apps:
+        which = f" for {', '.join(args.services)}" if args.services else ""
+        sys.exit(f"Argo CD manages nothing in {args.env}{which}")
+    for app in apps:
+        run(
+            kubectl(
+                "annotate",
+                "applications.argoproj.io",
+                "-n",
+                "argocd",
+                app["metadata"]["name"],
+                "argocd.argoproj.io/refresh=normal",
+                "--overwrite",
+            ),
+            capture=True,
+        )
+    print(f"asked Argo CD to refresh {len(apps)} Application(s) in {args.env}")
+
+
+def cmd_argocd(_: argparse.Namespace) -> None:
+    """Argo CD's web UI through a port-forward (no host port: a tool for operators, not phones)."""
+    secret = run(
+        kubectl("get", "secret", "argocd-initial-admin-secret", "-n", "argocd", "-o", "json"),
+        capture=True,
+        check=False,
+    )
+    if secret:
+        import base64
+
+        password = base64.b64decode(json.loads(secret)["data"]["password"]).decode()
+        print(f"Argo CD: http://localhost:8443  user admin, password {password}  (Ctrl-C to stop)")
+    subprocess.run(
+        kubectl("port-forward", "-n", "argocd", "svc/argo-cd-argocd-server", "8443:80"), check=False
+    )
+
+
+def cmd_passcode(args: argparse.Namespace) -> None:
+    """The presenter's admin passcode (random since Phase 6: a SealedSecret, ADR-0019)."""
+    value = secret_value(args.env, "admin-passcode", "value")
+    if not value:
+        sys.exit(f"no Secret admin-passcode in {args.env}")
+    print(value)
+
+
+def cmd_charts(_: argparse.Namespace) -> None:
+    cache_charts()
+    print(f"charts in {CHART_CACHE.relative_to(ROOT)}: {', '.join(c for c, _, _ in CHARTS)}")
+
+
+def cmd_registry(_: argparse.Namespace) -> None:
+    ensure_registry()
+    wait_api()
+    connect_registry()
 
 
 def cmd_reset(args: argparse.Namespace) -> None:
@@ -767,6 +968,10 @@ def cmd_reset(args: argparse.Namespace) -> None:
         if answer != "yes":
             sys.exit("Aborted.")
     run(["kind", "delete", "cluster", "--name", CLUSTER])
+    # Terraform's state described that cluster; it no longer exists, so the next make platform
+    # starts from nothing instead of trying to reach it.
+    for name in ("terraform.tfstate", "terraform.tfstate.backup"):
+        (TERRAFORM_DIR / name).unlink(missing_ok=True)
     print("cluster deleted; the image registry is kept (its images are rebuilt from git anyway)")
 
 
@@ -789,6 +994,16 @@ def main() -> None:
     images.add_argument("services", nargs="*")
     images.set_defaults(func=cmd_images)
     sub.add_parser("reset").set_defaults(func=cmd_reset)
+    sync = sub.add_parser("sync", help="ask Argo CD to look at Git now")
+    sync.add_argument("--env", choices=["prod", "staging"], default="staging")
+    sync.add_argument("services", nargs="*")
+    sync.set_defaults(func=cmd_sync)
+    sub.add_parser("argocd").set_defaults(func=cmd_argocd)
+    passcode = sub.add_parser("passcode", help="the presenter's admin passcode")
+    passcode.add_argument("--env", choices=["prod", "staging"], default="prod")
+    passcode.set_defaults(func=cmd_passcode)
+    sub.add_parser("charts").set_defaults(func=cmd_charts)
+    sub.add_parser("registry").set_defaults(func=cmd_registry)
     run_ = sub.add_parser("run", help="run a scripts/ check against the cluster")
     run_.add_argument("--env", choices=["prod", "staging"], default="prod")
     run_.add_argument("script")

@@ -66,10 +66,21 @@ else
   bad "node" "not installed" "brew install node@24 && brew link --overwrite --force node@24"
 fi
 
-# --- Kubernetes tools (only installed and checked in Phase 1) ---------------
+# --- Kubernetes tools ------------------------------------------------------
 have kind    && ok "kind"    "$(kind version 2>&1 | head -1)"        || bad "kind"    "not installed" "brew install kind"
 if have kubectl; then ok "kubectl" "$(kubectl version --client 2>&1 | head -1)"; else bad "kubectl" "not installed" "brew install kubectl"; fi
 have helm    && ok "helm"    "$(helm version --short 2>&1 | head -1)" || bad "helm"    "not installed" "brew install helm"
+# Phase 6: the platform as code (Terraform 1.17.x, infra/envs/local/versions.tf) and Sealed Secrets.
+if have terraform; then
+  tv="$(terraform version 2>/dev/null | head -1)"
+  case "$tv" in
+    "Terraform v1.17."*) ok "terraform" "$tv" ;;
+    *) bad "terraform" "$tv (need 1.17.x)" "brew install hashicorp/tap/terraform" ;;
+  esac
+else
+  bad "terraform" "not installed" "brew tap hashicorp/tap && brew install hashicorp/tap/terraform"
+fi
+have kubeseal && ok "kubeseal" "$(kubeseal --version 2>&1 | head -1)" || bad "kubeseal" "not installed" "brew install kubeseal"
 
 # --- Developer tooling ------------------------------------------------------
 have make       && ok "make"       "$(make --version 2>&1 | head -1)"       || bad "make"       "not installed" "xcode-select --install"

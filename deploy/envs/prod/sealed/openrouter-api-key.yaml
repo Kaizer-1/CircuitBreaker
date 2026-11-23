@@ -1,0 +1,17 @@
+# openrouter-api-key in prod: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as prod/openrouter-api-key. make seal env=prod
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: openrouter-api-key
+  namespace: prod
+spec:
+  encryptedData:
+    value: AgDB0hUY/BrMy4sESdzZbQ+uOGf+5Pl5+3K0I4sq87fNA9sdodThzum69VsJkuw/hThkgfcyObnfz1tVjxbCQdmSdNOOwcVNmzB9OPnSHfMooq74boXKyiTRUYXC7Wt+Wxkyyb40NAumI900IrMc3ox0jBAnTrQuzDCksH78tmolNsA8cKKS+OvMFdRc4ZQpWCP8H3y8nyApE9lRFH7QGw0DVn6DisvapW3Hs6FnoYgY+Y6LSyKG8SXhWV1p21Fpx5zKfLotc985x0MZ2WMQJJz7sZDDVwPBabmdS3Rt5oVdhuLWDQhP7zyuIJaB0uWFw5vyat7qEi6gqVHFRNcam6bHUUm7RHHl6MFllrHXZnkqZRfX+HNlXljUnRXGYl3UTE1y6SrRvluoXsWvc/aPGmoE7obPzaejjDb/mYOeDDCBvptjR/QM8ei/+lDSmyYaaq1EdNhd33HjbndO883PHn+3U4S1mu3NNvQvFQJNElfmMH5WhB1ZMmiqeiBDyDrMRl2bo15x8L392cXVmCjnr9tBsnIm6zRcVKpDGbvmr0VXKyYHbxP8xMLhpePcuHykhVvVufuTZiS9sfTmkh8yUcmWBrt4oBfDt2c5ekkym7UciE1oUvkCwD3utHTXlam5rfalkYSdk/CwJHN+JrzrZNaPMC9HkUz3mLCVNECimtmTjUn5/XwLgZTDZcJ9NyGhvpJtZw1iidB4xQqZHss7iE1WpHG2AwxuZ7/AdZmpuA==
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: openrouter-api-key
+      namespace: prod
+    type: Opaque
