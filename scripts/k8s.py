@@ -590,9 +590,10 @@ def deploy(env: str, extra: dict[str, dict[str, object]] | None = None) -> None:
     tags = json.loads(TAGS_FILE.read_text()) if TAGS_FILE.exists() else {}
     if not tags:
         sys.exit("no images built yet: run make k8s-images")
+    # This build's images, from the local registry (deploy/envs/ names GHCR for CI's images).
     overrides: dict[str, dict[str, object]] = {
-        "global": {"environment": env},
-        **{name: {"image": {"tag": tag}} for name, tag in tags.items()},
+        "global": {"environment": env, "image": {"pullSecrets": []}},
+        **{name: {"image": {"registry": REGISTRY, "tag": tag}} for name, tag in tags.items()},
     }
     for key, value in (extra or {}).items():
         overrides.setdefault(key, {}).update(value)
@@ -950,6 +951,123 @@ def cmd_secret(args: argparse.Namespace) -> None:
     print(value)
 
 
+# --------------------------------------------------------------------------- prepull (offline demo)
+
+SEALED_SECRETS_VALUES = ROOT / "infra" / "platform" / "sealed-secrets.yaml"
+
+
+def full_ref(image: str) -> str:
+    """The name containerd stores: docker.io/library/ added to short Docker Hub names."""
+    first = image.split("/", 1)[0]
+    if "/" not in image or "." not in first and ":" not in first and first != "localhost":
+        image = f"docker.io/{image}"
+    if image.startswith("docker.io/") and image.count("/") == 1:
+        image = image.replace("docker.io/", "docker.io/library/", 1)
+    return image
+
+
+def rendered_images(env: str) -> set[str]:
+    """Every image the umbrella chart names for an environment, from Git (what Argo CD deploys)."""
+    env_dir = ROOT / "deploy" / "envs" / env
+    files = [
+        env_dir / "global.yaml",
+        *sorted(f for f in env_dir.glob("*.yaml") if f.name != "global.yaml"),
+    ]
+    args = [arg for f in files for arg in ("-f", str(f))]
+    out = run(["helm", "template", RELEASE, str(CHART), "--namespace", env, *args], capture=True)
+    return {
+        m.group(1) for m in re.finditer(r"^\s+(?:- )?image: \"?([^\s\"]+)\"?$", out, re.MULTILINE)
+    }
+
+
+def wanted_images() -> tuple[set[str], list[str]]:
+    """Images to keep on the node: what runs now, what Git names for both environments, and the
+    Sealed Secrets controller (pinned by digest). Also the containers that pull on every start."""
+    pods = json.loads(run(kubectl("get", "pods", "-A", "-o", "json"), capture=True))["items"]
+    images: set[str] = set()
+    always: list[str] = []
+    for pod in pods:
+        spec = pod["spec"]
+        for c in spec.get("containers", []) + spec.get("initContainers", []):
+            images.add(c["image"])
+            if c.get("imagePullPolicy") == "Always":
+                always.append(
+                    f"{pod['metadata']['namespace']}/{pod['metadata']['name']}: {c['image']}"
+                )
+    for env in ("staging", "prod"):
+        images |= rendered_images(env)
+    sealed = re.search(
+        r"^  registry: (\S+)\n  repository: (\S+)\n.*?^  tag: (\S+)",
+        SEALED_SECRETS_VALUES.read_text(),
+        re.MULTILINE | re.DOTALL,
+    )
+    if sealed:
+        images.add("{}/{}:{}".format(*sealed.groups()))
+    return {full_ref(i) for i in images}, always
+
+
+def node_images() -> set[str]:
+    """Names and digests the node's containerd holds."""
+    out = json.loads(run(["docker", "exec", NODE, "crictl", "images", "-o", "json"], capture=True))
+    held: set[str] = set()
+    for img in out["images"]:
+        held.update(img.get("repoTags") or [])
+        held.update(img.get("repoDigests") or [])
+    return held
+
+
+def is_held(image: str, held: set[str]) -> bool:
+    if "@" in image:  # pinned by digest: the digest is what counts
+        name, digest = image.split("@", 1)
+        return f"{name.rsplit(':', 1)[0] if ':' in name.split('/')[-1] else name}@{digest}" in held
+    return image in held
+
+
+def ghcr_login() -> str | None:
+    """user:token from the cluster's sealed GHCR login (prod's, else staging's)."""
+    for env in ("prod", "staging"):
+        raw = secret_value(env, "ghcr-pull", ".dockerconfigjson")
+        if raw:
+            auth = json.loads(raw)["auths"]["ghcr.io"]["auth"]
+            import base64
+
+            return base64.b64decode(auth).decode()
+    return None
+
+
+def cmd_prepull(_: argparse.Namespace) -> None:
+    """Every image the demo needs, on the node before the demo: with imagePullPolicy IfNotPresent a
+    restarted or rescheduled pod then starts without the internet (the hotspot has none)."""
+    if node_state() != "running":
+        sys.exit("the cluster is not running: make k8s-up (or make platform) first")
+    wanted, always = wanted_images()
+    held = node_images()
+    missing = sorted(i for i in wanted if not is_held(i, held))
+    step(f"{len(wanted)} images: {len(wanted) - len(missing)} on the node, {len(missing)} to pull")
+    login = ghcr_login() if any(i.startswith("ghcr.io/") for i in missing) else None
+    failed = []
+    for image in missing:
+        cmd = ["docker", "exec", NODE, "crictl", "pull"]
+        if image.startswith("ghcr.io/"):
+            if not login:
+                failed.append(f"{image} (no ghcr-pull Secret: make ghcr-token, commit, sync)")
+                continue
+            cmd += ["--creds", login]
+        print(f"   pull {image}", flush=True)
+        if not ok([*cmd, image]):
+            failed.append(image)
+    held = node_images()
+    still = [i for i in wanted if not is_held(i, held)]
+    for image in sorted(wanted):
+        print(f"   {'ok  ' if image not in still else 'MISS'} {image}")
+    for line in always:
+        print(f"   WARN imagePullPolicy Always (pulls on every start, fails offline): {line}")
+    absent = sorted(set(failed) | set(still))
+    if absent:
+        sys.exit(f"{len(absent)} image(s) not on the node: {', '.join(absent)}")
+    print(f"\nall {len(wanted)} images are on the node; nothing needs the internet to start again")
+
+
 def cmd_charts(_: argparse.Namespace) -> None:
     cache_charts()
     print(f"charts in {CHART_CACHE.relative_to(ROOT)}: {', '.join(c for c, _, _ in CHARTS)}")
@@ -1006,6 +1124,9 @@ def main() -> None:
     secret.add_argument("--key", default="value")
     secret.set_defaults(func=cmd_secret)
     sub.add_parser("charts").set_defaults(func=cmd_charts)
+    sub.add_parser("prepull", help="put every image the demo needs on the node").set_defaults(
+        func=cmd_prepull
+    )
     sub.add_parser("registry").set_defaults(func=cmd_registry)
     run_ = sub.add_parser("run", help="run a scripts/ check against the cluster")
     run_.add_argument("--env", choices=["prod", "staging"], default="prod")

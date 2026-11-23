@@ -37,6 +37,8 @@ the cluster, not both (`make down` first): together they do not fit in Docker's 
 | 1 | `caffeinate -dims` as above; **join the hotspot first** and note the laptop's address (`ipconfig getifaddr en0`) | The QR code needs the address on the network the phones are on |
 | 2 | **A person** runs `CONFIRM=yes make k8s-reset`, then `make platform` (Terraform; answer `yes`), then `make k8s-set-url url=http://<laptop LAN IP>` | A clean cluster built from code; Argo CD deploys prod and staging from Git (all Applications `Synced` and `Healthy`: `make k8s-status`). Needs the sealing key's backup in `private/sealed-secrets/` (else the secrets in Git cannot be decrypted) and `secrets.auto.tfvars`. Data-wiping commands are run by a person. Allow about 10 minutes. The address is kept from then on (restarts, syncs, `k8s-bots`) |
 | 2a | `make k8s-passcode` | The presenter's passcode for the dashboard: random since Phase 6 (sealed in Git), not the Compose placeholder |
+| 2b | **The day before, at home (with internet):** `make k8s-prepull`, then `make k8s-check c=offline` (it must say all passed); `python3 scripts/sealed_secrets.py check --env prod` must not warn about the GHCR token | The hotspot has no internet: every image must already be on the node. The check proves pods restart offline and a trade settles. The token only matters for new pulls, but an expired one is a surprise to avoid |
+| 2c | **On the day, before leaving the internet:** `make k8s-prepull` once more (it should pull nothing) | Kubernetes deletes unused images when the disk fills (above 85%); this confirms nothing was removed overnight |
 | 3 | `make k8s-bots`, wait 5 minutes | The market moves; time travel has a history |
 | 3a | `make k8s-status`: the last lines show the QR code's address and warn if it is localhost or not this laptop's current address | Fix with `make k8s-set-url url=http://<LAN IP>` (only the web pod restarts; no data touched) |
 | 3b | `make k8s-test-phone` | A phone's view of prod with prod's own bot secret, as on the Compose path |
@@ -117,6 +119,9 @@ thinned, a 24-hour time-travel horizon; [event sourcing](03-architecture/04-even
   like every secret since Phase 6 but known. Changing it needs an `ALTER ROLE` step in the init Job on a running
   cluster (ADR-0019).
 - **LocalStack** (the optional `localstack` Terraform module, ADR-0015): not built; nothing depends on it.
+- **Scan the deployed images on a schedule.** CI scans an image when it is built; a CVE published later for an image
+  that has not changed shows only on the next pull request (which scans all nine). A weekly job scanning the tags in
+  `deploy/envs/` would catch it sooner.
 
 ## Viva Notes
 

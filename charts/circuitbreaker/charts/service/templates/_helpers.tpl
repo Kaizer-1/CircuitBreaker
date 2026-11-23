@@ -30,5 +30,6 @@ app.kubernetes.io/name: {{ include "service.name" . }}
 
 {{- define "service.image" -}}
 {{- $repo := .Values.image.repository | default (printf "circuitbreaker/%s" .Chart.Name) -}}
-{{- with .Values.global.image.registry -}}{{ . }}/{{- end -}}{{ $repo }}:{{ include "service.tag" . }}
+{{- with (.Values.image.registry | default .Values.global.image.registry) -}}{{ . }}/{{- end -}}
+{{- $repo }}:{{ include "service.tag" . }}
 {{- end -}}

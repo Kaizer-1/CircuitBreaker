@@ -3,3 +3,6 @@
 global:
   environment: prod
   ingressEntryPoint: web # http://<laptop>/ (port 80)
+  image:
+    # The read-only GHCR login (deploy/envs/prod/sealed/ghcr-pull.yaml). Unused for images in the local registry.
+    pullSecrets: [ghcr-pull]

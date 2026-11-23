@@ -11,8 +11,12 @@ global:
   # The release name in the change-cause annotation: "release 0.5.0 (<image tag>)".
   release: "0.5.0"
   image:
-    registry: localhost:5001 # the local registry (make k8s-images); Phase 6: GHCR
+    # The local registry (make k8s-images). Images CI built live in GHCR; deploy/envs/<env>/<service>.yaml names
+    # that registry next to the tag.
+    registry: localhost:5001
     tag: "" # set by make k8s-up from the images it built
+    # Secrets with the registry login, for the pods that pull our images (deploy/envs/<env>/global.yaml).
+    pullSecrets: []
   ingressNamespace: traefik
   # Traefik entry point (= host port) of this environment: web (80) for prod, staging (8090) for staging.
   ingressEntryPoint: web

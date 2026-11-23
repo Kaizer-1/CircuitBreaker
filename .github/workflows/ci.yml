@@ -1,10 +1,13 @@
-# Runs on every push and pull request. Written in Phase 1; it first runs once the repository is pushed to GitHub.
-# Nothing is pushed anywhere yet: Docker images are only built (publishing to GHCR arrives in Phase 6).
+# Runs on every push to main and every pull request. Images are built once, scanned (Trivy) and pushed to GHCR;
+# on main, once every job has passed, CI commits the new image tags to deploy/envs/staging/ and Argo CD deploys
+# them (ADR-0014; deployment doc section 4).
 name: CI
 
 on:
   push:
     branches: [main]
+    # CI's own tag bumps (and promotions) change only deploy/envs/: nothing to test or build again.
+    paths-ignore: ["deploy/envs/**"]
   pull_request:
 
 permissions:
@@ -12,7 +15,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A pull request's newer push replaces its older run. Runs on main queue instead: a cancelled run would leave
+  # its images untagged (the next run would still pick them up, but later).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   UV_VERSION: "0.10.7"
@@ -20,6 +25,10 @@ env:
   GITLEAKS_VERSION: "8.30.1"
   HELM_VERSION: "4.3.0"
   TERRAFORM_VERSION: "1.17.2"
+  # Trivy is pinned and its download checked against the release's SHA-256 (v0.69.4 was a malicious release,
+  # March 2026: a floating version would have run it).
+  TRIVY_VERSION: "0.76.2"
+  TRIVY_SHA256: "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"
 
 jobs:
   python:
@@ -201,9 +210,12 @@ jobs:
       - run: npm test
       - run: npm run build
 
-  docker:
-    name: docker build ${{ matrix.image }}
+  images:
+    name: image ${{ matrix.image }} (build once, Trivy, GHCR)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to this repository's GHCR packages (GITHUB_TOKEN)
     strategy:
       fail-fast: false
       matrix:
@@ -217,12 +229,92 @@ jobs:
           - sre-agent
           - chaos-service
           - web
+    env:
+      IMAGE: ${{ matrix.image }}
+      # Push from main and from this repository's own pull requests (their images are tested on staging before a
+      # merge); never from a fork.
+      PUSH: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
-      - name: Build (not pushed)
+        with:
+          # The commit itself, not GitHub's merge preview: the tag names a commit that exists.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0 # the plan compares this folder with the commit staging runs
+      - name: Plan (changed since the tag staging runs?)
+        id: plan
+        run: python3 scripts/gitops_images.py plan --service "$IMAGE" | tee -a "$GITHUB_OUTPUT"
+      # A pull request always builds and scans every image (a Dockerfile change or a new CVE shows before merging);
+      # main builds only what changed: an unchanged image keeps its tag and is not built again.
+      - name: Build
+        if: github.event_name == 'pull_request' || steps.plan.outputs.build == 'true'
         run: |
-          if [ "${{ matrix.image }}" = "web" ]; then ctx=web; else ctx=services/${{ matrix.image }}; fi
-          docker build --tag circuitbreaker/${{ matrix.image }}:ci "$ctx"
+          if [ "$IMAGE" = "web" ]; then ctx=web; else ctx="services/$IMAGE"; fi
+          ref="${{ steps.plan.outputs.image }}:${{ steps.plan.outputs.tag }}"
+          docker build --pull \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
+            --tag "$ref" "$ctx"
+          echo "REF=$ref" >> "$GITHUB_ENV"
+      - name: Install Trivy (pinned, checksum verified)
+        if: env.REF != ''
+        run: |
+          curl -sSLo trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  trivy.tgz" | sha256sum -c -
+          tar -xzf trivy.tgz trivy && sudo mv trivy /usr/local/bin/trivy && trivy --version
+      - name: Trivy (report HIGH and CRITICAL that have a fix)
+        if: env.REF != ''
+        run: trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$REF"
+      # The gate (deployment doc section 4): a CRITICAL vulnerability with a fixed version available fails the
+      # build; one without a fix is reported above and does not (nothing to upgrade to).
+      - name: Trivy (fail on a CRITICAL that has a fix)
+        if: env.REF != ''
+        run: trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --skip-db-update --no-progress "$REF"
+      - name: Push to GHCR
+        if: env.REF != '' && env.PUSH == 'true' && steps.plan.outputs.build == 'true'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$REF"
+          mkdir -p build/images
+          printf '{"service": "%s", "tag": "%s", "commit": "%s"}\n' \
+            "$IMAGE" "${{ steps.plan.outputs.tag }}" "$(git rev-parse HEAD)" > "build/images/$IMAGE.json"
+      - name: Record the pushed image for the tag bump
+        if: env.REF != '' && env.PUSH == 'true' && steps.plan.outputs.build == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.image }}
+          path: build/images/${{ matrix.image }}.json
+          retention-days: 7
+
+  deploy-staging:
+    name: staging tag bumps (GitOps, one commit per service)
+    # Only on main, only after every job passed: what reaches staging was tested and scanned.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [python, integration, e2e, contracts, kubernetes, terraform, web, images, gitleaks]
+    runs-on: ubuntu-latest
+    # The environment holds the deploy key (the one key on the ruleset's bypass list) and releases it only to
+    # workflow runs on main: a pull request's run, or a workflow on another branch, cannot read it.
+    environment: gitops
+    concurrency:
+      group: gitops-staging
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          ssh-key: ${{ secrets.GITOPS_DEPLOY_KEY }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: image-*
+          merge-multiple: true
+          path: build/images
+      - name: Commit each new tag to deploy/envs/staging/ and push to main
+        run: |
+          git config user.name "circuitbreaker-ci"
+          git config user.email "circuitbreaker-ci@users.noreply.github.com"
+          python3 scripts/gitops_images.py bump --env staging --from build/images --push
 
   gitleaks:
     name: secret scan (gitleaks)

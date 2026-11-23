@@ -14,12 +14,14 @@ REDOCLY  := npx --yes @redocly/cli@1.34.3
 GATEWAY  := http://localhost:8080
 # The dev admin passcode from docker-compose.yml (a local placeholder, never a real secret).
 ADMIN_PASSCODE ?= cb-dev-admin-passcode
+# CI's image scanner, the same version (.github/workflows/ci.yml), pinned by digest.
+TRIVY_IMAGE := aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
 
 .DEFAULT_GOAL := help
 .PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
         k8s-up k8s-down k8s-status k8s-set-url k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade k8s-passcode k8s-test-phone \
         test-alerts test-k8s k8s-check k8s-lint test-phone \
-        platform platform-plan sync argocd seal sealing-cert sealing-key-backup
+        platform platform-plan sync argocd seal sealing-cert sealing-key-backup ghcr-token k8s-prepull scan
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -167,6 +169,9 @@ sealing-cert: ## Secrets: save the controller's PUBLIC certificate (infra/sealed
 sealing-key-backup: ## Secrets: save the controller's PRIVATE sealing key to private/ (a person runs it; copy it off the laptop)
 	@python3 scripts/sealed_secrets.py backup
 
+ghcr-token: ## Secrets: seal the GHCR pull token for both environments (a person pastes a classic read:packages token)
+	@python3 scripts/sealed_secrets.py ghcr-token
+
 # --------------------------------------------------------------------------- Kubernetes (kind), Phase 5
 # The demo platform. Compose stays the fast developer loop. make k8s-up develops with local images in a namespace
 # Argo CD does not manage; in one it does, it only starts the cluster and waits for Argo CD.
@@ -186,6 +191,18 @@ k8s-set-url: ## Kubernetes: point the join QR code at a new address, data kept: 
 
 k8s-images: ## Kubernetes: build changed images and push them to the local registry: make k8s-images [s=<service>]
 	@python3 scripts/k8s.py images $(s)
+
+k8s-prepull: ## Kubernetes: put every image the demo needs on the node (the day before; the hotspot has no internet)
+	@python3 scripts/k8s.py prepull
+
+scan: ## CI's image gate on this laptop: build an image, Trivy fails on a CRITICAL with a fix: make scan s=<service|web>
+	@test -n "$(s)" || { echo "usage: make scan s=<service|web>"; exit 2; }
+	@docker build -q --pull -t circuitbreaker-scan/$(s):local $(if $(filter web,$(s)),web,services/$(s)) >/dev/null
+	@docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v circuitbreaker-trivy-cache:/root/.cache $(TRIVY_IMAGE) \
+	  image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed circuitbreaker-scan/$(s):local
+	@docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v circuitbreaker-trivy-cache:/root/.cache $(TRIVY_IMAGE) \
+	  image --quiet --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --skip-db-update circuitbreaker-scan/$(s):local \
+	  && echo "scan $(s): no CRITICAL vulnerability with a fix"
 
 k8s-reset: ## Kubernetes: DELETE the cluster and all its data (asks; run by a person, never a script)
 	@python3 scripts/k8s.py reset

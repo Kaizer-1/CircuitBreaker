@@ -333,7 +333,7 @@ flowchart LR
 | Principle | How the pipeline applies it |
 |---|---|
 | **Build once, deploy many** | The image built from a commit is tagged with its git SHA. The *same* tag is first written to staging's values and later copied to prod's. Prod never runs an image that staging didn't. |
-| **Only build what changed** | Path filters (`services/order-service/**`) run each service's job only when its folder changes, so CI also deploys services independently. |
+| **Only build what changed** | CI compares each image's folder at the commit staging runs with the new commit (git trees). Only a changed folder is built, tagged and bumped, so services also deploy independently. |
 | **Everything in Git** | Helm values, image tags, Argo CD config, Terraform, dashboards and alert rules are all versioned. A deploy *is* a commit. |
 | **Pull, don't push** | CI never touches the cluster. Argo CD, inside the cluster, pulls from GitHub. The cluster only needs outbound access, which is why this works for a laptop cluster ([ADR-0014](../adr/0014-gitops-with-argo-cd.md)). |
 | **Fast feedback** | Lint and unit tests in under 5 minutes on every pull request. |
@@ -361,6 +361,67 @@ runner).
   `order-service`. The paths (`manifest-generate-paths`) are what make that true: without them, any commit re-synced
   every drifted Application (measured; [ADR-0014](../adr/0014-gitops-with-argo-cd.md) amendment).
 - **Polls Git every 30 s** (a laptop gets no webhooks); `make sync` asks at once.
+
+### CI as built (Phase 6)
+
+```mermaid
+flowchart LR
+    E["push to main /<br/>pull request"] --> T["tests: 8 services, integration,<br/>end to end, contracts, charts,<br/>Terraform, web, gitleaks"]
+    E --> P["per image: plan<br/>(folder changed since the<br/>tag staging runs?)"]
+    P --> B["build once<br/>tag = 12-char commit SHA"]
+    B --> S["Trivy: fail on a<br/>CRITICAL with a fix"]
+    S --> G["push to GHCR<br/>(private)"]
+    T --> D["main only, all jobs green:<br/>one commit per new image<br/>to deploy/envs/staging/"]
+    G --> D
+    D --> A["Argo CD syncs staging<br/>(next 30 s poll)"]
+```
+
+| Step | What it does | Why |
+|---|---|---|
+| Plan (`scripts/gitops_images.py plan`) | Compares the image's folder (`services/<name>/`, `web/`) at the commit staging runs (its tag) with the new commit, as git trees | The folder *is* the build context: identical trees are identical inputs, so an unchanged image keeps its tag and is neither rebuilt nor redeployed |
+| Build | `docker build --pull`, tagged `ghcr.io/kaizer-1/circuitbreaker/<name>:<12-char SHA>`, labelled with the repository and commit | One image per change, named after the commit it came from |
+| Scan | Trivy (below) | A known, fixable critical hole never reaches a cluster |
+| Push | To GHCR with the job's own `GITHUB_TOKEN` (`packages: write` for this job only). Pull requests from this repository push too | A pull request's images can be tried on staging before merging. They run nowhere until a commit names their tag |
+| Tag bump (`deploy-staging` job) | Only on `main`, only after **every** job passed: `gitops_images.py bump` writes the registry and tag into `deploy/envs/staging/<name>.yaml`, one commit per image, and pushes | What reaches staging was tested and scanned; one commit per service keeps each `git revert` clean (ADR-0016) |
+| No loop | Pushes to `main` that change only `deploy/envs/**` do not start CI (`paths-ignore`) | The tag bumps and promotions change nothing to test or build |
+
+A pull request always builds and scans all nine images, so a Dockerfile change or a new vulnerability in a base image
+shows before merging. On `main` only the changed ones are built. Because our pull requests are merged with merge
+commits, a pull request's commits stay in `main`'s history: if staging was tested with a pull request's images, `main`
+finds those folders unchanged and keeps exactly the images that were tested (squash merges would lose the commit,
+and the plan would simply build again).
+
+> **Dated note (2026-11-24): Trivy is the owner's exception to the design freeze**, recorded as the owner's decision.
+> Reason: it also serves the owner's Kubernetes-security course (image scanning, the software supply chain). It is a
+> CI step, not a running component. **Trivy** scans an image's operating-system packages and language libraries for
+> known vulnerabilities (CVEs). The gate: a **CRITICAL** vulnerability **with a fixed version available** fails the
+> job; HIGH ones are listed in the log, and so are critical ones with no fix yet (nothing to upgrade to, so failing
+> would only block every change). Trivy itself is pinned to 0.76.2 and its download checked against the release's
+> SHA-256: in March 2026 a malicious Trivy release (v0.69.4) was published with stolen credentials (CVE-2026-33634),
+> which a floating version would have run. `make scan s=<image>` runs the same gate on the laptop.
+> **First result:** web's runtime image (nginx 1.30, Alpine) had 5 CRITICAL vulnerabilities with fixes: 4 in nginx,
+> fixed only in nginx's mainline branch, and 1 in brotli. Web now uses `nginx-unprivileged:1.31.7-alpine3.24` (nginx
+> recommends mainline) and runs `apk upgrade` while building: 0 HIGH or CRITICAL with a fix. The 8 Python images had
+> none. **Limit:** an image that does not change is not scanned again on `main`; the next pull request (which scans
+> all nine, freshly built) is where a newly published CVE shows.
+
+**GHCR and the pull secret.** The packages are private. The cluster pulls them with the SealedSecret `ghcr-pull`
+(section 5): a **classic** token of the owner with only `read:packages` and an expiry date. Each service's file in
+`deploy/envs/<env>/` names its registry next to its tag, so a service moves from the local registry to GHCR in the
+same commit that gives it a GHCR tag (and `make promote` copies both).
+
+**The `main` ruleset and the deploy key.** A **ruleset** is GitHub's set of rules for a branch. On `main`: no
+deletion, no force-push, and every change through a pull request (0 approvals while the team is one person; CODEOWNERS
+approval for `deploy/envs/prod/` once the teammates' GitHub handles are added). CI's tag bumps are the one exception:
+the `deploy-staging` job pushes with a **deploy key** (an SSH key for this one repository, write access), and deploy
+keys are on the ruleset's bypass list. Three consequences, all deliberate:
+
+- GitHub's bypass entry covers *every* deploy key of the repository; it cannot name one. Argo CD's deploy key is
+  read-only, so it cannot push anyway. Any future write deploy key would bypass too: add none.
+- The private key lives in the GitHub **environment** `gitops`, which hands it only to workflow runs on `main`. A
+  pull request's run, or a workflow edited on another branch, never sees it.
+- The SRE agent's GitHub App (Phase 7, [ADR-0016](../adr/0016-rollback-reconciles-through-git.md)) is **never** on
+  the bypass list: its revert pull requests always wait for a person to merge them.
 
 ### GitOps as built (Phase 6)
 
@@ -417,6 +478,23 @@ reported `OutOfSync`, left in place, and back to `Synced` after `kubectl rollout
   the tag-bump commit. When a human merges it, Argo CD syncs and the Application is `Synced` again. The pod template
   is identical, so there is no new rollout.
 - To keep each revert clean, **CI writes one tag-bump commit per service per environment**.
+
+### The demo without the internet: prepull
+
+The demo runs on a phone hotspot with no internet. Pods pull images with `imagePullPolicy: IfNotPresent`: a restarted
+or rescheduled pod starts from the node's copy and needs no registry. So the day before, `make k8s-prepull` puts every
+image the demo needs on the node: those of every running pod, every image both environments' charts name in Git, and
+the Sealed Secrets controller, pinned by digest. Our images come from GHCR with the sealed pull token; it also warns
+about any container that pulls on every start (`Always`). Kubernetes deletes unused images when the node's disk
+passes 85%, so the runbook runs it again on the day.
+
+`make k8s-check c=offline` proves it. It runs the prepull, then cuts the node off from the internet: everything it,
+or any pod, sends to a non-private address is refused, while the LAN and the cluster stay reachable. It checks a
+registry pull and `https://ghcr.io` now fail. It then deletes every pod of the environment, Traefik, monitoring,
+Argo CD and the Sealed Secrets controller, waits for all of them to start again, checks no image pull was attempted,
+and settles a demo trade. Measured on prod (2026-11-24, images still from the local registry): every pod back and the
+trade settled, with no pull errors. Argo CD cannot reach GitHub while offline. The running system does not need it:
+the cluster keeps running what it last synced.
 
 ## 5. Infrastructure as Code (Terraform)
 
@@ -482,6 +560,7 @@ infra/
 | **Restore drill** | `make k8s-check c=sealed-drill` | Deletes the controller's key, shows a SealedSecret made before cannot be decrypted, restores the backup, shows it decrypts to the same value. Running Secrets are never touched. |
 | Rotate one secret | Edit (or delete, for a new random) its value in `private/secrets/<env>.json`, or `make seal env=<env> rotate="jwt-secret"`; commit | Argo CD updates the Secret; pods read environment variables at start, so restart the services that use it (`kubectl rollout restart`, ignored by Argo CD). A database password also needs the role changed in the database (`ALTER ROLE` / `ALTER USER`) first. |
 | Rotate the sealing key | Set `keycutofftime` in `infra/platform/sealed-secrets.yaml` to now (`LC_ALL=C date -R`) and `make platform`: the controller restarts with `--key-cutoff-time` and makes a new key, keeping the old ones. Then `make sealing-cert`, `make seal env=staging` and `env=prod` (a new certificate re-seals every file), commit, `make sealing-key-backup` | Verified on the cluster (2026-11-23): a new key appeared, the controller served a new certificate, and every existing SealedSecret still decrypted with the old key. The setting can stay: it only makes a key when the newest is older than the cutoff. After a **leak**, rotating the key is not enough: the old ciphertext is in Git history, so every secret value must change too. |
+| GHCR pull token | `make ghcr-token` (a person) | Prompts for the token without echoing it. Refuses anything but a **classic** token with exactly `read:packages` and an expiry date: it asks GitHub for the token's scopes and expiry. Sealed as `ghcr-pull` (type `kubernetes.io/dockerconfigjson`) for both environments. `sealed_secrets.py check` warns 14 days before it expires; to renew, make a new token, run `make ghcr-token`, commit. Images already on the node keep working after it expires; only new pulls fail. |
 | Lost key, no backup | `make sealing-cert` (the new key's certificate), then `make seal` for both environments: a new certificate re-seals every file | Possible only because the plaintext source exists. Without it too, every credential must be changed (new values, `ALTER ROLE` for the databases). |
 
 ### How this maps onto the textbook's AWS infrastructure
@@ -510,6 +589,16 @@ managed Kubernetes service and a GitOps deployment server. A sandbox environment
 | Bad release in prod | PostSync smoke test fails → `git revert` the promotion and Argo CD syncs back. If it degrades later, the SRE agent rolls back at once and opens the `git revert` pull request; Release & Reliability approves and merges it. |
 
 ## Viva Notes
+
+**Q: CI scans images with Trivy. Why fail only on CRITICAL vulnerabilities that have a fix?**
+A: The gate should block what we can act on. A critical hole with a fixed version means "upgrade before
+deploying", so the build fails and we upgrade (it happened at once: web's nginx base had five). One with no fix
+yet cannot be upgraded away, so failing would block every change for nothing; it stays visible in the report.
+
+**Q: `main` needs a pull request for every change. How does CI commit tag bumps to it?**
+A: With a deploy key that the ruleset lets bypass. Only CI's job on `main` can read that key (it is in the `gitops`
+environment), and only after every test passed. The SRE agent's GitHub App is never allowed to bypass: its revert
+pull requests wait for a person.
 
 **Q: What is the difference between staging and prod in your project?**
 A: Separate namespaces with their own data stores, secrets and settings. Both use the same chart, with different

@@ -37,6 +37,13 @@ spec:
     spec:
       serviceAccountName: {{ include "service.name" . }}
       automountServiceAccountToken: false
+      {{- with .Values.global.image.pullSecrets }}
+      # The registry login (the SealedSecret ghcr-pull: a read-only GHCR token).
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
       # No Docker-link variables: Service `cassandra` would set CASSANDRA_PORT=tcp://..., clashing with settings.
       enableServiceLinks: false
       securityContext:

@@ -4,7 +4,9 @@
 enabled: true
 
 image:
-  # <global.image.registry>/<repository>:<tag>; the tag defaults to global.image.tag (set by make k8s-up).
+  # <registry>/<repository>:<tag>. The registry and tag default to global.image.*; deploy/envs/<env>/<service>.yaml
+  # sets both together (CI writes them there, ADR-0014), so a service moves registry in the same commit as its tag.
+  registry: ""
   repository: ""
   tag: ""
 
