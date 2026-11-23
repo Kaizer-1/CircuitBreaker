@@ -1,5 +1,5 @@
 {{- if include "service.enabled" . }}
-# Who may call this service. Everything else is refused by the namespace's default-deny policy (umbrella chart).
+# Who may call this service. Everything else is refused by the namespace's default-deny policy (Terraform).
 # Downstream services trust X-Trader-Id / X-Role only because nothing but the gateway can reach them.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

@@ -72,6 +72,17 @@ for the SealedSecrets ([ADR-0019](0019-sealed-secrets-for-gitops.md)) and `obser
 alert rules. All belong to the AppProject `circuitbreaker`, which allows only this repository, only our namespaces
 and **no cluster-wide objects**.
 
+**Found while testing (2026-11-23): one Application per service was not enough.** With automated sync, Argo CD
+re-synced **every** `OutOfSync` Application whenever **any** commit reached the branch, not only the Applications
+whose files it changed. Measured on staging: order-service drifted by hand (as after the SRE agent's emergency
+rollback), then a commit changed only web's values file, and Argo CD re-applied order-service from Git within a
+minute. In production that would let an unrelated tag bump undo the agent's rollback before its `git revert` pull
+request is merged ([ADR-0016](0016-rollback-reconciles-through-git.md)). Each Application now declares its own paths
+(`argocd.argoproj.io/manifest-generate-paths`: the umbrella chart, `dev/`, its environment's `global.yaml` and its
+own values file); a commit outside them updates the Application's revision without a sync. Re-tested: the drift
+stayed through the unrelated commit (`make k8s-check c=gitops-push`). What remains, as ADR-0016 says: a commit to
+the **same** service's file, or to the shared chart, re-applies Git.
+
 ## Alternatives considered
 
 | Alternative | Why rejected |

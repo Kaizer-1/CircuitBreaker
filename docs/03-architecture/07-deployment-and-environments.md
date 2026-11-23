@@ -357,7 +357,55 @@ runner).
   agent, are *reported* as `OutOfSync` but not reverted, so Argo CD never fights the agent or erases an experiment.
 - **Ignored fields:** `spec.replicas` and the pod-template `restartedAt` annotation. These belong to the agent's
   `scale_deployment` and `restart_deployment` tools, so later syncs don't reset them.
-- **One Application per service per environment.** A commit for `order-service` syncs only `order-service`.
+- **One Application per service per environment, each with its own paths.** A commit for `order-service` syncs only
+  `order-service`. The paths (`manifest-generate-paths`) are what make that true: without them, any commit re-synced
+  every drifted Application (measured; [ADR-0014](../adr/0014-gitops-with-argo-cd.md) amendment).
+- **Polls Git every 30 s** (a laptop gets no webhooks); `make sync` asks at once.
+
+### GitOps as built (Phase 6)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Developer / CI
+    participant GH as GitHub (deploy/envs/ENV/)
+    participant RS as Argo CD repo server
+    participant AC as Argo CD application controller
+    participant K as Kubernetes (namespace ENV)
+    Dev->>GH: push a commit (a tag bump, a setting, a SealedSecret)
+    loop every 30 s
+        RS->>GH: any new commit? (read-only deploy key)
+    end
+    RS->>RS: helm template the umbrella chart with global.only=SERVICE,<br/>only for Applications whose paths the commit changed
+    AC->>K: compare with the live objects (replicas, restartedAt ignored)
+    AC->>K: OutOfSync: apply (automated sync, prune)
+    K-->>AC: rollout done, probes pass: Synced + Healthy
+```
+
+**Who owns which part of the running system:**
+
+| What | Owner | Changed by |
+|---|---|---|
+| The platform: cluster, namespaces, quotas, policies, Traefik, monitoring, Sealed Secrets, Argo CD | Terraform (`infra/`) | `make platform` |
+| What runs in `staging` and `prod`: images, settings, data stores, the ingress, dashboards and alerts | Git (`deploy/envs/`, `charts/`) through Argo CD | a commit (CI's tag bump; a promotion PR for prod) |
+| Secrets | Git, encrypted (`deploy/envs/<env>/sealed/`, ADR-0019) | `make seal` + a commit |
+| Replica counts, restarts | The SRE agent (Phase 7) or a person; Argo CD ignores them | `scale_deployment`, `restart_deployment` |
+| Tonight's settings: the QR code's address, the bots on or off | The operator (ConfigMap `operator-settings`, never in Git) | `make k8s-set-url`, `make k8s-bots` |
+
+**Measured: push to running (2026-11-23, staging, one service, no `make sync`).** `make k8s-check c=gitops-push`
+commits a pod annotation on web, pushes, and times Argo CD until the Application has synced that commit and web is
+`Healthy` again; then it `git revert`s the commit and times the way back:
+
+| Run | Push → `Synced` | Push → `Healthy` | Revert → `Synced` | Revert → `Healthy` |
+|---|---:|---:|---:|---:|
+| 1 | 86 s | 88 s | 33 s | 36 s |
+| 2 | 57 s | 59 s | 35 s | 38 s |
+
+Most of it is waiting for the next poll (up to 30 s) plus rendering the chart; web's rolling update adds 2–3 s. CI's
+own build and push before the commit (PR 6b) comes on top. In both runs an order-service drifted by hand was left
+alone by the unrelated commit, and in the agent-safety check (`make k8s-check c=gitops`) a scale (2 → 3) and a
+restart by hand stayed through two polls with the Application still `Synced`, while a changed pod template was
+reported `OutOfSync`, left in place, and back to `Synced` after `kubectl rollout undo`.
 
 **How a rollback interacts with Git: mitigate fast, reconcile through Git**
 ([ADR-0016](../adr/0016-rollback-reconciles-through-git.md)):

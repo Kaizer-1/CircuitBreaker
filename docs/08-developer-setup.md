@@ -29,6 +29,7 @@ Run `make doctor`. It prints the version of each tool and tells you how to fix a
 | uv | ≥ 0.10 | Python dependencies and virtual environments | `brew install uv` |
 | Node.js | **≥ 22.12, 24 LTS recommended** | Web app (Vite 8, ESLint 10 and Vitest 5 need 22.12+) | `brew install node@24 && brew link --overwrite --force node@24` |
 | kind, kubectl, Helm | kind ≥ 0.27 (0.33 used), Helm 4, kubectl within a version or two of Kubernetes 1.37 (an older one only warns) | The Kubernetes deployment ([§11](#11-kubernetes-kind)) | `brew install kind kubectl helm` |
+| Terraform, kubeseal | Terraform **1.17.x**, kubeseal 0.41 | The platform as code (`make platform`) and sealing secrets ([§11](#11-kubernetes-kind)) | `brew tap hashicorp/tap && brew install hashicorp/tap/terraform kubeseal` |
 | make | GNU Make 3.81+ (the macOS one is fine) | Developer entry point | `xcode-select --install` |
 | gitleaks, pre-commit | any current | Secret scanning and the commit hooks | `brew install gitleaks pre-commit` |
 
@@ -305,10 +306,23 @@ console logs the full error.
 ## 11. Kubernetes (kind)
 
 The demo platform: the same images on a one-node Kubernetes cluster, with Prometheus, Grafana and Loki. Compose stays
-the fast developer loop. Layout and reasoning: [deployment §3](03-architecture/07-deployment-and-environments.md#3-kubernetes-with-kind--helm-umbrella-chart).
+the fast developer loop. Layout and reasoning: [deployment §3–5](03-architecture/07-deployment-and-environments.md#3-kubernetes-with-kind--helm-umbrella-chart).
+
+**Two ways to run it (Phase 6).**
+
+- **GitOps, the demo platform:** `make platform` (Terraform: the cluster, namespaces, Traefik, monitoring, Sealed
+  Secrets, Argo CD), and Argo CD deploys `staging` and `prod` from `deploy/envs/` in Git. To change what runs, commit;
+  `make sync` makes Argo CD look at once instead of within 30 s; `make argocd` opens its UI on
+  <http://localhost:8443>. Before the first run, copy `infra/envs/local/secrets.auto.tfvars.example` to
+  `secrets.auto.tfvars` and put Argo CD's read-only deploy key in `private/keys/argocd-deploy-key`; after the first
+  run, **back up the sealing key** (`make sealing-key-backup`, then copy it off the laptop). The secrets are random:
+  `make k8s-passcode` prints the presenter's passcode.
+- **Developing with local builds:** `make k8s-up` in a namespace Argo CD does not manage (with no cluster, it first
+  makes one without Argo CD). In a namespace Argo CD manages it deploys nothing: it starts a stopped cluster and
+  waits for Argo CD. The commands below work in both.
 
 ```bash
-make k8s-up          # cluster + local registry + images + platform + prod; waits until every pod is ready
+make k8s-up          # developing: images + prod; GitOps: start the cluster, wait until Argo CD reports it Synced
 make k8s-bots        # the 20 bots trade (seed=, activity= as with make bots)
 make k8s-demo-trade  # the demo trade, against the cluster
 make k8s-status      # pods, the memory per namespace (the RAM budget's numbers), the QR code's address
@@ -324,7 +338,7 @@ changes). `make k8s-up env=staging` adds staging on port 8090 (about 2 GiB more;
 |---|---|
 | <http://localhost/> | prod: the app, as on <http://localhost:5173> in Compose (`/dashboard`, `/join`, …) |
 | <http://localhost:8090/> | staging, if started |
-| <http://localhost:3000/> | Grafana: dashboards *CircuitBreaker — Business*, *System*, *Follow an order*. Anyone may look; sign in as `admin` / `cb-dev-grafana` (local placeholder) to change things |
+| <http://localhost:3000/> | Grafana: dashboards *CircuitBreaker — Business*, *System*, *Follow an order*. Anyone may look; sign in as `admin` with the password in `infra/envs/local/secrets.auto.tfvars` to change things |
 | <http://localhost:9090/> | Prometheus: targets, alert rules (`/alerts`) |
 
 **Phones on Kubernetes.** Exactly as in [§10](#10-phones-on-a-hotspot-demo-day), without the port. **Join the hotspot
@@ -333,12 +347,13 @@ first** (the laptop's address belongs to the network it is on), then:
 ```bash
 PUBLIC_BASE_URL=http://192.168.43.12 make k8s-up   # or, cluster already up: make k8s-set-url url=http://192.168.43.12
 make k8s-status                                    # ends with "QR code / phones (prod): http://192.168.43.12"
-make test-phone url=http://192.168.43.12           # a phone's view over that address (needs the bots)
+make k8s-test-phone                                # a phone's view of prod, with prod's own bot secret (needs the bots)
 ```
 
 Phones open `http://192.168.43.12/join` (or scan the QR code). The address is kept through `make k8s-down` /
-`k8s-up`, `make k8s-bots` and upgrades; only `PUBLIC_BASE_URL=… make k8s-up` or `make k8s-set-url` change it
-(`k8s-set-url` restarts only the web pod and touches no data). `make k8s-status` also warns when the QR code still
+`k8s-up`, `make k8s-bots`, upgrades and Argo CD syncs (it lives in the ConfigMap `operator-settings`, which Git never
+owns); only `PUBLIC_BASE_URL=… make k8s-up` or `make k8s-set-url` change it (`k8s-set-url` restarts only the web pod
+and touches no data). `make k8s-status` also warns when the QR code still
 says localhost, or when the laptop's current address differs from it (you rejoined the hotspot and got a new one).
 Port 80 is open to the network (kind maps it on all interfaces); Grafana and Prometheus are not.
 
@@ -352,7 +367,11 @@ Port 80 is open to the network (kind maps it on all interfaces); Grafana and Pro
 | `make k8s-check c=scale` | 200 orders/s: order p95 high at 2 order-service replicas, back down at 4 (`scripts/load_orders.py`) |
 | `make k8s-check c=alerts` | Each Phase 7 alert's condition is caused for real (about 20 minutes) and the alert fires; `--only over-provisioned` adds the 10-minute one |
 | `make k8s-check c=url` | The QR code's address survives a stopped and restarted cluster, `k8s-bots` and a plain `k8s-up`, changes with `PUBLIC_BASE_URL=… k8s-up` and `k8s-set-url`, and a test account's portfolio is unchanged (about 2 minutes) |
-| `make test-phone url=http://localhost` | The phone pages from a non-secure origin (below), against the cluster |
+| `make k8s-check c=gitops` | Argo CD never undoes the SRE agent: a scale and a restart by hand stay and the Application stays `Synced`; a changed pod template is reported `OutOfSync`, left in place, and `Synced` again after `kubectl rollout undo` (about 6 minutes) |
+| `make k8s-check c=gitops-push env=staging` | A commit's way to the cluster, timed: commits and **pushes** a pod annotation on web, waits for `Synced` and `Healthy`, checks an unrelated drifted service is left alone, then `git revert`s and times the way back. Needs a clean tree on the branch Argo CD follows |
+| `make k8s-check c=sealed` | Every SealedSecret decrypted; a secret sealed with the right certificate decrypts; one sealed with another key, for the other namespace, or renamed after sealing, does not |
+| `make k8s-check c=sealed-drill` | The sealing key's restore drill (needs the backup): the key is lost, an old SealedSecret fails, the backup goes back in, it decrypts again |
+| `make k8s-test-phone [env=]` | The phone pages from a non-secure origin (below), against the cluster, with that environment's bot secret |
 | `python3 scripts/k8s.py run bots_check.py 120` | Any `scripts/` check against the cluster (port-forwards stand in for Compose's host ports) |
 
 **Follow one order** in Grafana's *Follow an order* dashboard: paste the `X-Correlation-Id` a response returned (or
@@ -364,7 +383,9 @@ tests, within the 5.5 GiB budget (Docker Desktop shows more, including reclaimab
 6.5 GiB. Keep Docker Desktop at 10–11 GB, and run Compose or the cluster, not
 both.
 
-**`make k8s-reset`** deletes the cluster and all its data (it asks first). Like `make reset`, it is run by a person.
+**`make k8s-reset`** deletes the cluster and all its data, and Terraform's state with it (it asks first). Like
+`make reset`, it is run by a person. Afterwards `make platform` rebuilds everything; with the sealing key backed up,
+the SealedSecrets in Git decrypt again on the new cluster.
 
 ## Viva Notes
 
