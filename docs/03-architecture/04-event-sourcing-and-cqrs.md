@@ -220,8 +220,27 @@ Its SHA-256 is `6972eb25572940985d0a48d704f8ef3789be40100130b3da1dedd0ffac426697
 
 Without snapshots a seek near the end of an hour of bot trading would replay every event since the start, about 6,000
 per ticker. With a snapshot every 500 events, a seek never applies more than about 500. Measured on the dev stack over a
-full hour of bot trading (`scripts/time_travel_check.py`): 100 seeks to random moments, **p50 41 ms, p95 70 ms**, the
-slowest 143 ms, never more than 498 events after a snapshot. The brief's target was under 2 seconds.
+full hour of bot trading in Phase 4 (`scripts/time_travel_check.py`): 100 seeks to random moments, **p50 41 ms, p95
+70 ms**, the slowest 143 ms. The brief's target was under 2 seconds.
+
+Two things changed that since, and the profiling PR (2026-11-23) measured both on kind:
+
+- **A snapshot now carries an hour of finished orders** (ADR-0017 note "A memory of one hour"), about 160 bytes each,
+  so its size follows the last hour's trading: about 1 MB under the bots, 3 MB during an hour at 40 orders/s, 5 MB
+  after the panic-sell spike. Loading it, not replaying events, is most of a seek's cost.
+- **The 30-second spacing** (P-03) lets up to about 4,000 events pass between snapshots during the panic sell (about
+  120 events/s per ticker).
+
+| History behind the seek | Seeks (p50 / p95 / slowest) | Events after the snapshot (median / most) | Mac load |
+|---|---|---|---:|
+| Bots only, last 10 minutes | **83 / 169 / 240 ms** | 224 / 499 | 5 |
+| Last 2 hours: bots, a 40-orders/s hour, the spike calibration | 237 / 424 / 719 ms | 539 / 6,278 | 10 |
+| Last hour, during 40 orders/s of load, after the calibration | 407 / 965 / 1,604 ms | 234 / 1,105 | 11 |
+| Before this PR: last 10 hours of a 19-hour cluster | 505 / 2,307 / 5,362 ms | up to 5,362 | 11 |
+
+Every seek inside the 24-hour horizon is under 2 seconds, and every rewind to now matched the live engine. The last
+hour with only the bots is close to Phase 4 but not equal to it (p95 169 against 70 ms): the price of a snapshot that
+remembers an hour of finished orders, which the fail-closed orphan rule needs.
 
 ### Replay (Q-13)
 
@@ -306,7 +325,8 @@ compares: "hashes match" on the screen is that comparison.
 
 **Q: Why snapshots?**
 A: Without them, every seek replays every event since the start (about 6,000 per ticker after an hour of bot trading).
-A snapshot every 500 events caps that at about 500: seeks measured p50 41 ms, p95 70 ms.
+A snapshot every 500 events caps that at about 500: with only the bots trading, seeks measure p50 83 ms, p95 169 ms;
+after a load test, when snapshots carry an hour of extra finished orders, still under 2 seconds.
 
 **Q: Time travel reaches back 24 hours. Did you delete history?**
 A: No. The events are the history, and none is ever deleted: every event since the first day is still in
