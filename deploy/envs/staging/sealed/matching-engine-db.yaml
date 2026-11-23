@@ -1,0 +1,17 @@
+# matching-engine-db in staging: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as staging/matching-engine-db. make seal env=staging
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: matching-engine-db
+  namespace: staging
+spec:
+  encryptedData:
+    password: AgBQl8OatcMqh+jDcsTKBz488MK2r3YNF9VQq/rmBsM5Ohek8nt1s4SuXVy2tvy/TTCRr/QpKBdZRub8n8uCjTjFHdodSXdtHFTK9HTHySBvpHJaQj4vRtY3tjPwDPj+gN7p6jUTUoN8ENRbmSCQbO802bW8jZC3s0ocFC9+BRpV8HuBGykaycoXIBwFEhAPTJAkSbLUE295sc4/niafZgGF+WgVwU0WiA5S+uxR82m114yzaD89YWeJ8G8De/TbzVctMeFcV0Mdmm5tuIF9m3M/iIvHvBaMKLkmcFeChnCuLmU11H0AUt9rvzJ4cCwaF4mkzoT0kSZP1RskhBhQ0tNaO8sV6S3GvX1HsoczaW2ijcyNLQHG2B1LK6JiKwhP8DIJoTBRoM5a6w3U2avi60DM1dmhMhh9gA+oE/9vjzeGldop1fg+8WaISzMAGc51or2xAldeFm3WpmojdIhGQFrpIu+jUSCYUdIGPdCzBL/Do1Uax5bbV/tb2AXzvBXWeYQc4s9OO5XbL7WJ5D9nIwN4+38VSvYxm/dzeUOCCYiwUZ8iK4uYIOCi3W1WcLNvjMiJ6TAl1T436pZEk6dsGmABzxxb1WvwA/LbnoqhgXqJ3IljGudkuRIaOo+hxYTenccIhilC2HRg3+wMS0lPUnZdO30flLpe7ql0NcDT7FdwzaD4Ase+lqXin8q2Yn07yVd6QpTY/wLBl2t+uktmPYjw8LkvRCjrkYGx6ZGjf68SJwbQILWnrG33n0Gp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: matching-engine-db
+      namespace: staging
+    type: Opaque

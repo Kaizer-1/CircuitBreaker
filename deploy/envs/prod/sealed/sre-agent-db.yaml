@@ -1,0 +1,17 @@
+# sre-agent-db in prod: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as prod/sre-agent-db. make seal env=prod
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: sre-agent-db
+  namespace: prod
+spec:
+  encryptedData:
+    password: AgA+6RuCyHuLErVIld4mb6f8HNQzPYQM2vZYpWmEDed69njHN7EbTywQZYYCzvtoDSSomPFmKz3Ok0O9kL8HCs3+J6MkPVDQhPBIU/WEaIkztn+cl9QNcOfF17dC9O8rRfNt4SOrpGVLQRX+lRguIUz6AYAdiCPpFrKzwHJ9LLzdOM5b6Fb/cCjcBtDXin/P/vNHM2/6MPBfLU0upGY5L9o6VVJyl4eHQ4iVWWvWBZPnUOhI89BCpakYd+kDO9NJvBw99kk9IaGB99XPaAdun47RneePlz5xYR2VGb7/xWkbnmx3dcMBJZU6+V0FRA0bcGpB8al0GCeVu1VP8IqOQYHg5mHaGOHPiPEChes4IQuWk9cpGSGyr6qp5Ha7vVcS1R+Srt6tUkwheyzcuPb/p7+r1VTLVQHNY554rk+N07jNBQK48h+OEUzOUcCB92mVmmJYy2K+4lihlbjWF88BxTJqzp42yVdLKCmLKipLPD71IZOB6eECjaA/ZP6p50Aq24OiY92UGvHf3VAcY+ZL9xm1IBBpuAWx29PFYOLG57rLV/P3bQwJxfcVJSaty3r+98pAvj8d0Kz3+7WOzL8m4VgrybD3QTP/vuVtoP/J+rCmQume9ZDPvJYWT8Xk0koQ4VTxHOuCpWqcpPU0gZfTGcgo7bwbRhTqPDHOa0LLsulXnXlXdEdjLg9mS/YuspdEqDNxF8reARQWPQI6nfhoqKXkwd5ftLfW7ChEMEnj26FVkC36IYLZCTWjy60W
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: sre-agent-db
+      namespace: prod
+    type: Opaque

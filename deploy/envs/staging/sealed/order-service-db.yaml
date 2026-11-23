@@ -1,0 +1,17 @@
+# order-service-db in staging: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as staging/order-service-db. make seal env=staging
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: order-service-db
+  namespace: staging
+spec:
+  encryptedData:
+    password: AgCpZbGQou49ayG0CERD35K/S4OmjsiIGG7oaKjo9mHc2QZkcyojkWL3Ij1xIfyw7XXauOb6V/h+Az1cbvS/oSudpyH9P0vUriurE6+BmwdEI+m8AY5l61tZbA97NqHCqKl6f+v+HeP+3Dw9vw9CEXyDtx88jWyT+FRaRQVJd/DdE7rNbSaCDK/Bo1f/lJtLuNq4+AYhd+x4EUwENGd3kWEvZHtHiGCsRK1sVH/mY2XHVIGRRPMXNqcVNtzCowQSxM3T6GgXgQKS0r1b+t7tRJwBf7w1xlE+TIv7N43c7O8UVe0bp+2f6KOayb52cY0815q4dvHmwJet5vnKppuYlYjq56w0So3dAhyseGZpMdUyZtm5g+preWky6JJhX7nOaXaUgWjyDBgZGSWecFvq81ypB7Ibx0dWydmppz4Nz0L/ZOUHQBnmBenQJ80YY8d6zeBuoznHtZDR+dtL2XRQeK/mw8wKEsGVdjiuJfpcI5PG0u5VR87dFK3Hp6jDv/g2iHIiIumiGxPUqtxhcQ8ZCvMauucmcuyLPE6L11Cc3Pjpv6FldZDO775pq1uGPFIywc0IoUFf+hEJpjn0F5n0uEAVBQXHFqQtBx/ooEfLzMFuFy/R56llNUqNubZQt4v3h1raIESufs4tG+Dk1CSLNW4i6FxD7zRZNBBzC1SlU/lh93QmbPc6+AjK4wZYF3aGSQAK9mrTcMSqFG3WW1WdYRV9ZX+XGOrnjGanr5IJbXXpJ0/oUgPmBCcOc/gN
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: order-service-db
+      namespace: staging
+    type: Opaque

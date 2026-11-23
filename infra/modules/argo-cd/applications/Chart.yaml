@@ -1,0 +1,8 @@
+apiVersion: v2
+name: circuitbreaker-applications
+description: >-
+  What Argo CD deploys (ADR-0014): the circuitbreaker AppProject, an ApplicationSet with one Application per service,
+  data store and ingress per environment, one with each environment's SealedSecrets, and the dashboards and alert
+  rules. Installed by Terraform's argo-cd module.
+type: application
+version: 0.6.0

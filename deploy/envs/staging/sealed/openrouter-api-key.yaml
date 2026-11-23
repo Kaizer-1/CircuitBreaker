@@ -1,0 +1,17 @@
+# openrouter-api-key in staging: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as staging/openrouter-api-key. make seal env=staging
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: openrouter-api-key
+  namespace: staging
+spec:
+  encryptedData:
+    value: AgC0xUwPONdKikixXEwNpRiBXI5rqRCSqRVexvntU1DIOI5NYIMjUudJGshyU9mTI0AGadvOTdSGw5HbjV4T/g66H/yXQvMEfVYGojluxLQShsxb0s5V+J/GfLumfPn3mskuV/9LDExrWMztrhIwpn85/JaMKp3/zWWEhbJ+kBJRSOqS488TO4FDs6K2k0pR+ZZjlK1olzg7sJqQaxL0giujyD+ctvhY7ALBVg8YnR03zHDztXPeuz4Bf9N4kf7uwRcJpcGqd7xL+/jR8o/IxH/D+9pYBl/+aXt/bpiL1Yl9xLrVc0Ag6hx34Qz6cFNLJnNui1omuBEKjsPY4YO+celd1vDmAbo1kpmMhGAh1Fo2YweAkchGqYbzs6KYKJ16uNXosvuMWujzTBbs5yYXym9KiwNwGkq2+jYrSUHksRwklZb1nG4G31vlyMeBIxdWMqGZd57AId9rdLVKmbJOMlEHPHU64ZaiGfLnybMwGaX2ezBZgoQSq45K5Mv435cTD8qgX96I5MZ2gkKyDd0DaqYhOGOsrIDWc0CsOSaJyb/wZ3rirZqSC4DWWdwzXoTh/numEty2943hi5z9/U2kzghmY7m3/OH4IecHM7+AvDcqPRG20CJS13wOyYUJLeH9Ldh4ZZ2M3XZhJHakQxyI0HYw+CFQLoJkRPlYO/Hjg9TLt0DD5F31sUqTs3+fNXo5MAuYAjCK/VBXF60KITqJpaxbpEBgFLBEfuoYvdyRuQ==
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: openrouter-api-key
+      namespace: staging
+    type: Opaque

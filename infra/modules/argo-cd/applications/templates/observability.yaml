@@ -1,0 +1,26 @@
+{{- if .Values.environments }}
+# Our dashboards and alert rules (charts/observability), shared by both environments.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  labels:
+    circuitbreaker.io/component: observability
+  annotations:
+    argocd.argoproj.io/manifest-generate-paths: /charts/observability;/observability
+spec:
+  project: circuitbreaker
+  source:
+    repoURL: {{ .Values.repoURL | quote }}
+    targetRevision: {{ .Values.targetRevision | quote }}
+    path: charts/observability
+    helm:
+      releaseName: circuitbreaker-observability
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
+{{- end }}

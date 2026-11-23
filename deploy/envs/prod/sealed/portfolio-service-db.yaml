@@ -1,0 +1,17 @@
+# portfolio-service-db in prod: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as prod/portfolio-service-db. make seal env=prod
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: portfolio-service-db
+  namespace: prod
+spec:
+  encryptedData:
+    password: AgAa1baRxtWvKzfSBAbzkCFr61zKPih0w8kQxMrgKn/+A5DkCCyMIj6iawul0qW0MnvO1FYf9kTFItAvr61Eb/TeBOd86QnUe9GPppn9Wxzp1Cj2kzdxWLvTHSzkdCWoI+B1dKgutM6ndJ0ktj3R7Pw/3WjFswiTZ67hTeF6GYJ40kJW38PO0Z/jWOYTo6+bfMeh5laXsSigxDrEdcz783eB/9mPZhmirhv2YvY29cGYJBRE/mAJAzBvzLB/mrVecNZK9ms8nfpUQfg0g5siSUzFgxtKAT+8V3M2UEtZWkprOB/Yal3tN3vDPk7LlzlA+sqoqn298kZsvsaOYhYChUVZ/FvkzzF6xADa6VSclKcb2IuW4i+7XldlAiR58hxxoj8lI1iWJyxE2+E8H+JSI60X+BXaEyMVRztCoKIgbpLu0GiljLKSDxNndG4AD4WD3tkMqe0xj8jtZL4wg5LL96sRWlQdJe4FBDVA/tf0zVX4ZNeynQDy0OxZisKZdvsd5x3qfKLpid167w+nUg/PJxVfNc8oph4LK+bXIkoVdA2AdHWgXillPw3N4WtLnWplO9yQ9cHoY2r1kGRXRfp65+7OEhoXRD/xen/cGm/2/GpRhDYhZi6PJibI9WyrL+HH2kBX2dxDNQBbe38u0fBan51V1qrsCZX4n+s93F7NKc6rMmSv5j/nObC/VKYDAZuG5kD8ASse7vDJo7Rw0UutiI81/moF3FP7LRH8VTqlt1MLQipXAomf8pC66FOl
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: portfolio-service-db
+      namespace: prod
+    type: Opaque

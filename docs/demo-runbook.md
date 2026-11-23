@@ -26,7 +26,7 @@ Do not rebuild or restart containers once the audience is in: a gateway restart 
 connection (the bots are back within about a minute). **Never restart the stack right before presenting**: bring it
 up early enough for the warm-up spike below and the 5-minute wait, then leave it running.
 
-### The Kubernetes path (the demo platform from Phase 5)
+### The Kubernetes path (the demo platform: GitOps from Phase 6)
 
 The same steps on the cluster ([developer setup §11](08-developer-setup.md#11-kubernetes-kind)). Run Compose **or**
 the cluster, not both (`make down` first): together they do not fit in Docker's memory.
@@ -35,18 +35,20 @@ the cluster, not both (`make down` first): together they do not fit in Docker's 
 |---|---|---|
 | 0 | Step 0 above: mains power, other apps closed, `uptime` about 4–6 with the cluster and bots running | The same reasons; the cluster needs more of the laptop than Compose |
 | 1 | `caffeinate -dims` as above; **join the hotspot first** and note the laptop's address (`ipconfig getifaddr en0`) | The QR code needs the address on the network the phones are on |
-| 2 | **A person** runs `CONFIRM=yes make k8s-reset`, then `PUBLIC_BASE_URL=http://<laptop LAN IP> make k8s-up` | A clean cluster and the QR code pointing at port 80. Data-wiping commands are run by a person. Allow about 7 minutes. The address is kept from then on (restarts, `k8s-bots`) |
+| 2 | **A person** runs `CONFIRM=yes make k8s-reset`, then `make platform` (Terraform; answer `yes`), then `make k8s-set-url url=http://<laptop LAN IP>` | A clean cluster built from code; Argo CD deploys prod and staging from Git (all Applications `Synced` and `Healthy`: `make k8s-status`). Needs the sealing key's backup in `private/sealed-secrets/` (else the secrets in Git cannot be decrypted) and `secrets.auto.tfvars`. Data-wiping commands are run by a person. Allow about 10 minutes. The address is kept from then on (restarts, syncs, `k8s-bots`) |
+| 2a | `make k8s-passcode` | The presenter's passcode for the dashboard: random since Phase 6 (sealed in Git), not the Compose placeholder |
 | 3 | `make k8s-bots`, wait 5 minutes | The market moves; time travel has a history |
 | 3a | `make k8s-status`: the last lines show the QR code's address and warn if it is localhost or not this laptop's current address | Fix with `make k8s-set-url url=http://<LAN IP>` (only the web pod restarts; no data touched) |
-| 3b | `make test-phone url=http://<LAN IP>` | A phone's view over the real address, as on the Compose path |
+| 3b | `make k8s-test-phone` | A phone's view of prod with prod's own bot secret, as on the Compose path |
 | 3c | **Warm-up spike:** `make k8s-check c=scale`; it must say PASS (2 replicas above 500 ms, 5 replicas back below it). If it fails, wait a few minutes, check step 0, and run it once more | The traffic spike at its calibrated 110 requests/s, once, before anyone watches. In the calibration the only run where 5 replicas did not recover (861 ms) was the first one after Redpanda had restarted; the four after it passed. It stops the bots for about 5 minutes and starts them again |
 | 4 | `make test-k8s` is **not** for the audience (it starts the bots itself); use `python3 scripts/k8s.py run bots_check.py 120` and `python3 scripts/k8s.py run time_travel_check.py 5 5` | The same checks as the Compose path, through port-forwards |
 | 5 | Projector: `http://<LAN IP>/dashboard?theme=paper`; a second screen or tab: Grafana `http://localhost:3000`, dashboard *CircuitBreaker — Business* | The circuit breaker panel is the first thing Grafana shows |
 | 6 | Optional demo moment: *Follow an order*: place an order on a phone, paste its correlation ID (or pick one from *Orders placed*) | One order's journey through four services, from one query |
 
-If something goes wrong on Kubernetes: `make k8s-status` (pods and memory); a pod stuck `0/1` → `kubectl -n prod logs
-<pod>`; a service misbehaving → `kubectl -n prod rollout restart deployment/<service>` (rolling, no downtime: two
-replicas and a 5 s preStop pause).
+If something goes wrong on Kubernetes: `make k8s-status` (pods, Argo CD's Applications, memory); a pod stuck `0/1` →
+`kubectl -n prod logs <pod>`; a service misbehaving → `kubectl -n prod rollout restart deployment/<service>` (rolling,
+no downtime: two replicas and a 5 s preStop pause; Argo CD ignores restarts). Never `helm` or `kubectl apply` into
+prod: Argo CD owns it, and a fix goes through Git (a revert of the bad commit; `make sync` to apply it at once).
 
 ## 2. During the demo
 
@@ -77,7 +79,8 @@ takes minutes, not a reset, as long as the data is from the same tickers.
 
 | Tag | Verified | Runs on |
 |---|---|---|
-| **`v0.5.2-demoable`** (preferred) | The professional ticker names (CALVERA, KORVIN, ASTRYX, HELIOR, TAVIRA), plus everything in `v0.5.1-demoable`; CI green | Compose **and** Kubernetes |
+| **`v0.5.3-demoable`** (preferred) | Cassandra sized for its container, the bounded snapshot tables (`book_snapshots_by_hour`, a 24-hour time-travel horizon), the traffic spike calibrated to 110 requests/s, plus everything in `v0.5.2-demoable`; CI green | Compose **and** Kubernetes |
+| `v0.5.2-demoable` | The professional ticker names (CALVERA, KORVIN, ASTRYX, HELIOR, TAVIRA), plus everything in `v0.5.1-demoable`; CI green. **Cannot read the new snapshot tables:** `v0.5.3` moved the engine's snapshots to `book_snapshots_by_hour` and dropped `book_snapshots`, so this version's engine finds no snapshot and rebuilds every book from all its events (correct, but slow on a long history). A person resets first | Compose **and** Kubernetes |
 | `v0.5.1-demoable` | Phones ordering over the hotspot address (`make test-phone` on a LAN IP), the tab bar, the QR address kept on Kubernetes, CI green. **Old ticker names:** it cannot read data made with the new ones, so a person resets first | Compose **and** Kubernetes |
 | `v0.4-demoable` | Phase 4: time travel, leaderboard; phone ordering over the LAN did **not** work yet (only on the laptop). Old ticker names, as above | Compose only (Kubernetes came in Phase 5) |
 
@@ -85,7 +88,7 @@ takes minutes, not a reset, as long as the data is from the same tickers.
 
 ```bash
 make down                                         # stops the containers; volumes (data) are kept
-git switch -c demo-fallback v0.5.2-demoable       # a branch at the tag (the working tree must be clean)
+git switch -c demo-fallback v0.5.3-demoable       # a branch at the tag (the working tree must be clean)
 PUBLIC_BASE_URL=http://<LAN IP>:5173 make up      # builds that version's images
 make bots
 ```
@@ -93,7 +96,7 @@ make bots
 **Kubernetes:**
 
 ```bash
-git switch -c demo-fallback v0.5.2-demoable
+git switch -c demo-fallback v0.5.3-demoable
 PUBLIC_BASE_URL=http://<LAN IP> make k8s-up       # builds and rolls only the images that differ; data kept
 make k8s-bots
 ```
@@ -110,7 +113,10 @@ were built instead: an index of each trader's open orders (Q-07 `status=open` re
 Cassandra partition per ticker to 2 GB in 19 hours (profiling PR, 2026-11-23: one partition per ticker per hour,
 thinned, a 24-hour time-travel horizon; [event sourcing](03-architecture/04-event-sourcing-and-cqrs.md#snapshots)).
 
-Nothing is on the list now.
+- **Change the Cassandra superuser's password.** It is still the image's default (`cassandra`/`cassandra`), sealed
+  like every secret since Phase 6 but known. Changing it needs an `ALTER ROLE` step in the init Job on a running
+  cluster (ADR-0019).
+- **LocalStack** (the optional `localstack` Terraform module, ADR-0015): not built; nothing depends on it.
 
 ## Viva Notes
 

@@ -19,6 +19,7 @@ env:
   REDOCLY_VERSION: "1.34.3"
   GITLEAKS_VERSION: "8.30.1"
   HELM_VERSION: "4.3.0"
+  TERRAFORM_VERSION: "1.17.2"
 
 jobs:
   python:
@@ -83,6 +84,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      # The failure step below keeps the containers' logs from this moment on, so they cover
+      # the whole test window (a fixed --tail=300 lost the bots check's window on 2026-11-23).
+      - name: Note the start time
+        run: echo "JOB_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
       - name: Build and start every container, wait until all are healthy
         run: make up
       - name: make demo-trade
@@ -103,9 +108,24 @@ jobs:
         run: |
           make bots seed=42
           make test-phone
-      - name: Container logs (on failure)
+      - name: Container logs since the job started (on failure)
         if: failure()
-        run: docker compose --profile infra --profile app logs --tail=300
+        run: |
+          mkdir -p build/container-logs
+          for c in $(docker compose --profile infra --profile app config --services); do
+            docker compose --profile infra --profile app logs --no-color --since "$JOB_STARTED_AT" "$c" \
+              > "build/container-logs/$c.log" 2>&1 || true
+          done
+          wc -l build/container-logs/*.log
+          # The 5xx answers, with route and correlation ID, so the cause is one search away.
+          grep -h '"status": 5[0-9][0-9]' build/container-logs/*.log | tail -n 50 || true
+      - name: Upload the container logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-container-logs
+          path: build/container-logs/
+          retention-days: 7
 
   contracts:
     name: API specs, event contracts, template drift, retired names, Compose file
@@ -126,6 +146,8 @@ jobs:
         run: python3 tools/check_template_drift.py
       - name: retired instrument names appear only in dated history notes
         run: python3 tools/check_retired_names.py
+      - name: Sealed secrets are sealed (the other half of the gitleaks allowlist)
+        run: python3 tools/check_sealed_secrets.py
       - name: docker-compose.yml is valid
         run: docker compose --profile infra --profile app config -q
 
@@ -141,6 +163,23 @@ jobs:
           helm version --short
       - name: make k8s-lint
         run: make k8s-lint
+
+  terraform:
+    name: Terraform (fmt, validate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive -diff infra
+      # validate needs the providers (from the committed lock file) but no cluster and no state.
+      - name: terraform validate
+        run: |
+          terraform -chdir=infra/envs/local init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/envs/local validate
 
   web:
     name: web (lint, types, tests, build)

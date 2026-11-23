@@ -5,7 +5,7 @@
 global:
   # prod or staging; also the namespace (deploy/envs/<env>/global.yaml).
   environment: prod
-  # Phase 6: one Argo CD Application per service renders this chart with global.only=<service> (ADR-0014).
+  # One Argo CD Application per service renders this chart with global.only=<service> (ADR-0014).
   # Empty = render everything (make k8s-up, CI).
   only: ""
   # The release name in the change-cause annotation: "release 0.5.0 (<image tag>)".
@@ -17,10 +17,12 @@ global:
   # Traefik entry point (= host port) of this environment: web (80) for prod, staging (8090) for staging.
   ingressEntryPoint: web
   observabilityNamespace: observability
-  # Where phones reach the app; the join QR code encodes <publicBaseUrl>/join. make k8s-up sets it from
-  # PUBLIC_BASE_URL (docs/08-developer-setup.md section 10).
+  # Where phones reach the app; the join QR code encodes <publicBaseUrl>/join. This is only the default: tonight's
+  # address (the hotspot's) is an operator setting, not a release, kept in the ConfigMap operator-settings
+  # (make k8s-set-url, or PUBLIC_BASE_URL=... make k8s-up), which wins (docs/08-developer-setup.md section 10).
   publicBaseUrl: http://localhost
-  # The Secrets are created outside the chart (make k8s-up from the local placeholders; Phase 6 Terraform).
+  # The Secrets are created outside the chart: SealedSecrets in deploy/envs/<env>/sealed/ (ADR-0019), or the local
+  # placeholders from make k8s-up while developing.
   secrets:
     jwt: jwt-secret
     bot: bot-secret
@@ -133,11 +135,12 @@ bot-traders:
     LOG_LEVEL: INFO
     KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
     GATEWAY_URL: http://api-gateway:8000 # bots use the public API, like everyone else
-    BOTS_ENABLED: "false" # make k8s-bots turns them on
+    BOTS_ENABLED: "false" # make k8s-bots turns them on (operator-settings)
     BOT_RANDOM_SEED: ""
     BOT_ACTIVITY: "1.0"
   secretEnv:
     BOT_SECRET: {secret: bot-secret, key: value}
+  operatorEnv: [BOTS_ENABLED, BOT_RANDOM_SEED, BOT_ACTIVITY]
   networkPolicy:
     allowFrom: [api-gateway] # the status page's readiness check
 
@@ -168,6 +171,7 @@ web:
   port: 8080 # nginx-unprivileged
   env:
     PUBLIC_BASE_URL: "{{ .Values.global.publicBaseUrl }}"
+  operatorEnv: [PUBLIC_BASE_URL] # make k8s-set-url
   resources:
     requests: {cpu: 20m, memory: 16Mi}
     limits: {cpu: 200m, memory: 64Mi}

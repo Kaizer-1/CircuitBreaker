@@ -29,6 +29,8 @@ web/dist/
 !.env.example
 *.pem
 *.key
+# ...except the Sealed Secrets controller's PUBLIC certificate: sealing needs it, and it is meant to be shared (ADR-0019).
+!infra/sealed-secrets/sealing-cert.pem
 
 # --- Terraform / LocalStack ------------------------------------------------
 .terraform/
@@ -36,6 +38,8 @@ web/dist/
 *.tfstate.*
 *.tfplan
 secrets.auto.tfvars
+# A kubeconfig (with the cluster's client key) that the kind provider writes when not told where.
+infra/envs/local/*-config
 *.secret.tfvars
 .terraform.lock.hcl.bak
 .localstack/

@@ -1,0 +1,17 @@
+# portfolio-service-db in staging: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as staging/portfolio-service-db. make seal env=staging
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: portfolio-service-db
+  namespace: staging
+spec:
+  encryptedData:
+    password: AgBUbksWpbso+S5KZ8nxzmK3RKonB7Zw13P7Cm9+hzmjnuaw/WpkbDqLjMzw5HHdRG2EhbDJp/G8zKaMIracPKPz3KLBjEQ99pcd1a8KHMs2J/PFC9f3CtcNPwJMNilz0JgxZfpqjzPYVJws9qRoTXbTbj2dCHCTLW/NdFoi4UbMjAKUVYgaGCk9Lvgq+AxzUPY9cVvwHYRt2e493L3zCbU36viq0IXHvcRFeSXvNcl/O9Vsls5TBzXXtmMLVYEQJf3zkDqX2bNBNu57v1OtTYjMzABseUx6LG+niJo5zyWBS2wpwtmt6cgK17QkgOAhOrBmtNB8nz+LbOQuTvkEG7PV9aHOjJpu1e5Ox42TGpgIirC5uDmbT0dxr7OXCznqdMgyETinPD7gy7rod+815sBgYzQmyY8zcachRV6OC4ujkgVYO/yW8o0hkSplGiWRz8or/vX/mhn5mhsDVRhDzWLDNBKq3PRcydH1M7925P+3OzRMaVcbO3/9267YrRXta/cCh7nlsiCVfxRJWQXw7rOTI8LwdzHgUZKuDvQF5g+903xUBpq/nt+rZCFU+a84+IzgIoBCSRV39twbJfs9CNV60pGMUB9RQnfDyuQfX8kxSJnf+9//UmBSjTGSO2FvmMIPQyck8O5WCZBzbHaiL8LspbA/Mb0cO0ou6q8PF0Jwa6oxEdeAIYZLCj1zz5FuIHvUaRDAp/0T19E+TkVswwwFLkPl/Unc3uPtrix1FEWiUQy9JW5qVnwfTaBj
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: portfolio-service-db
+      namespace: staging
+    type: Opaque

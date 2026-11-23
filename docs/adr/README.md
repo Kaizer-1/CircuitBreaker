@@ -20,10 +20,11 @@
 | [0012](0012-prices-in-integer-paise.md) | Money and prices as integer paise | Accepted |
 | [0013](0013-openrouter-llm-gateway.md) | OpenRouter as the SRE agent's LLM gateway | Accepted |
 | [0014](0014-gitops-with-argo-cd.md) | GitOps deployment with Argo CD | Accepted (agent rollback amended by 0016) |
-| [0015](0015-terraform-local-platform.md) | Terraform for the local platform; LocalStack optional | Accepted |
+| [0015](0015-terraform-local-platform.md) | Terraform for the local platform; LocalStack optional | Accepted (Secrets amended by 0019) |
 | [0016](0016-rollback-reconciles-through-git.md) | Rollback mitigates in the cluster, then reconciles through Git | Accepted |
 | [0017](0017-fail-closed-orphan-release.md) | Fail-closed release of orphaned reservations | Accepted |
 | [0018](0018-kubernetes-platform-components.md) | Kubernetes platform components: Traefik, in-repo data stores, kube-prometheus-stack, community Loki, Alloy | Accepted |
+| [0019](0019-sealed-secrets-for-gitops.md) | Sealed Secrets: encrypted Secrets in Git for GitOps (an owner's exception to the design freeze) | Accepted |
 
 **Template:** `# NNNN — Title` · Status · Date · Deciders · Context · Decision · Alternatives considered ·
 Consequences (positive / negative) · Viva Notes.

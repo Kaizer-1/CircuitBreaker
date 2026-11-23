@@ -5,7 +5,8 @@
   market-data shows (Q-04): best bid < best ask whenever both exist;
 - every ticker has 5s candles with trades in the window, and its last price keeps moving;
 - not one bot order was refused by the exchange (bot_orders_total{result="refused"} stays 0);
-- no service answered a 5xx meanwhile (counted from the containers' JSON access logs);
+- no service answered a 5xx meanwhile (counted from the containers' JSON access logs; each one is
+  printed: time, service, method, route, status, duration and correlation ID);
 - the market trades at least TRADES_PER_MINUTE_FLOOR times a minute per ticker, averaged over the
   five. Steady state with the 20 bots is 20 to 50 per ticker (Phase 3's simulated hour and the
   Phase 4 event store agree). One ticker alone can have a quiet minute near zero (the bots trade
@@ -127,8 +128,11 @@ def container_cpu() -> dict[str, float]:
     return cpu
 
 
-def server_errors(since: str) -> dict[str, int]:
+def server_errors(since: str) -> tuple[dict[str, int], list[str]]:
+    """5xx answers per service since `since`, and one printable line per answer (the first
+    PR 6a item: a CI flake counted two order-service 5xx and nothing said which requests)."""
     found = {}
+    lines_out: list[str] = []
     for service in SERVICES:
         if K8S_NAMESPACE:
             cmd = [
@@ -154,11 +158,20 @@ def server_errors(since: str) -> dict[str, int]:
             if '"status": 5' not in line:
                 continue
             try:
-                count += int(json.loads(line).get("status", 0)) >= 500
+                record = json.loads(line)
             except ValueError:
                 continue
+            if int(record.get("status", 0)) < 500:
+                continue
+            count += 1
+            lines_out.append(
+                f"{record.get('timestamp', '?')} {service} {record.get('method', '?')}"
+                f" {record.get('route', record.get('path', '?'))} {record['status']}"
+                f" {record.get('duration_ms', '?')} ms"
+                f" correlation_id={record.get('correlation_id')}"
+            )
         found[service] = count
-    return found
+    return found, lines_out
 
 
 def crossed(bid: int | None, ask: int | None) -> bool:
@@ -318,9 +331,11 @@ def main() -> int:
     newly_refused = refused() - refused_before
     if newly_refused:
         failures.append(f"{newly_refused:.0f} bot orders refused by the exchange")
-    errors = server_errors(started)
+    errors, error_lines = server_errors(started)
     if any(errors.values()):
         failures.append(f"5xx answers: {errors}")
+    for error_line in error_lines:
+        print(f"  5xx {error_line}")
     problems = len(failures)
     print(
         f"  {samples} book samples (engine and market-data), {problems} problems; "

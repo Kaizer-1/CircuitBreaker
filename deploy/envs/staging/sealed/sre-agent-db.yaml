@@ -1,0 +1,17 @@
+# sre-agent-db in staging: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as staging/sre-agent-db. make seal env=staging
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: sre-agent-db
+  namespace: staging
+spec:
+  encryptedData:
+    password: AgA6+vOR0BkhiozIVDCmx7zTEGasS7ycad0c3LgbAJwZEjj6Hbdl+Cl1Z5LCrBzcE/yQcVpnRE3VYqqN0KNia3tiboDttwq6/VUnL99errNW93B7sGNSoN0q3lIV7LMZQTAd9C4EkRJN9eedMWp/eMoZgKuLJ4ydXWsOUCIoRWTv1P9xKRhVW2SxRxQfLoQlXclfYWA1rOy0526gMQs3tyUyQ4mUWKwlz8w4eoWE8QxIeJMvkn3X+7R/ogOsqZUKJPa64jLc3SQH7zPzF0yZFgy/yJT8fe+EhaVO/uWysGr1Te/xrbSh0untAoEBrCcrUgXK1x2h4+mdRClSiXOOmeBkMB7+vzM2c65Y9xwZh4DAoRqO3l+EgqQ/Pr4kiLLF7kfYb0ltvXfQLn09RlTyuwt/SRMYtEPf5E4tZ6+2hVThn0FobBYT+KLqF5puZGbGVqQCWow0mwmESMYl8u0NIMP848tad8c9+J/zuTSY14MW4zMKVkTIxMCEWsAIW73KtJxTqhe5ogdfI/lmj84QpQtxuH9vU5WU4aQlPVcKutQNL/iCPkxIwNsGmnCFFGZbkMVyV/MWsZZtxzbl9TVtJYodg9Q2PSotxZbY5WJVvOcvdmU5OHrgVInP0vQHgzcCQcncg0A6WxIp1q4FtXbw9nhtn1kQewdnDtM5T5yPxPIHNIys+yAiZz6pfQn5HWh8/jOUBIlKBXNGyVjuHtQUyyqlLydqfXRCS3LFusM1BMX+S/tnmH1epDAPtYJr
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: sre-agent-db
+      namespace: staging
+    type: Opaque

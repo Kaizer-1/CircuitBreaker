@@ -3,7 +3,7 @@ name: circuitbreaker
 description: >-
   The umbrella chart: the whole CircuitBreaker system as one versioned package. One generic `service` sub-chart,
   included once per service (alias = service name), plus minimal in-repo data stores (ADR-0018). make k8s-up installs
-  it into a namespace (prod or staging); from Phase 6 Argo CD renders it once per service with global.only (ADR-0014).
+  it into a namespace while developing; Argo CD renders it once per service with global.only (ADR-0014).
 type: application
 version: 0.5.0
 appVersion: "0.5.0"

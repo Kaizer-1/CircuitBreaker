@@ -1,0 +1,17 @@
+# market-data-service-db in staging: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as staging/market-data-service-db. make seal env=staging
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: market-data-service-db
+  namespace: staging
+spec:
+  encryptedData:
+    password: AgCzxyWwTiY1uUeneu0g3keGTRwdeTD+213+YfuNtiAiHA5v+EjruvIRFh2RzPkmGpYUpf6DHwDqH0ByDocejJXtZSduoQAzE54RvmMTA+OCN+ipNOqNq2Ivw5TLfVmE93EoznynUIMufU/c8GwsHM5k0SY/Ouf1qb2k/p8/C4aw6IFpRBqx+2Vk7MKbKup3cgdMEOdkDNi0dxJPAyAjYpCvI4z0VOJH/6Sui9l0JmG5+wddoCGz7SV6Vyf55uI3tFdeTQPdQcvmVOm8WFKzz08r9OX+yzbFWeVVJ7y2ndYwxNT201graEHxZZvrrM0EiEdB9dsTcJHlqqFJLMSq9P0Npr8m9r2ZUiyMolMzqTKWmAXzElAn2nR2usUui6NBV5H8Zvxi9iL2/CDhL2J4k3rAcZxrehI+ZVyF/sx1vKz3kBlbwQKbxC2SAIOOBMLZ+hK9LdNSowyZnJzlk1UvoMfJ+s3pgjhCp+VoxhTqbEoVxS53tT7xZJCL0qI10fKrV/jIe5LDf3IkXYVhpmoK+/AAjRz7/jhuOid8Quo9s6qwiPmdwMt/0NJ0xeki6x2pI5eFnJWG5YKHDKz9KShz9BCw1nzTUEkPXnh5I5SwSLKh5yeDq2u3i+PvGF1GW1O6BQ2ecUOhYHFrDXTfmTwgS0UTC4HRziHRRUcxmoWgl0CYfHIpAGT40Hb3KP2c/2dSriiNS7yQvb4wiR5ggGBEQr0JPhnWSlsW8DhsuOO8sytbc22ek44he1PEkfuC
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: market-data-service-db
+      namespace: staging
+    type: Opaque

@@ -44,7 +44,7 @@ Helm provider, as in the textbook's `module-argo-cd` ([ADR-0015](0015-terraform-
 | Automated sync | On, with `prune` | Git changes reach the cluster without anyone running `kubectl` or `helm`. |
 | Self-heal | **Off** | With self-heal on, Argo CD would instantly undo *any* live change. It would undo the chaos experiment (so nothing would be left to heal) and the SRE agent's emergency rollback. With it off, Argo CD **reports** drift as `OutOfSync` but does not fight the agent. |
 | Ignored differences | `spec.replicas` of Deployments, and the pod-template `restartedAt` annotation (with `RespectIgnoreDifferences=true`) | These fields belong to the SRE agent's `scale_deployment` and `restart_deployment` tools. Git doesn't own them, so a later sync must not reset them. |
-| Polling | Default refresh (about 3 minutes); `make sync` forces an immediate refresh in demos | A laptop cannot receive GitHub webhooks. |
+| Polling | Every **30 s** (amended 2026-11-23, below; first: the default, about 3 minutes); `make sync` forces an immediate refresh in demos | A laptop cannot receive GitHub webhooks. |
 | Repository access | Argo CD pulls from the GitHub repository (public, or a read-only deploy key stored as a Kubernetes Secret) | Pull means the cluster only needs *outbound* access to GitHub. That solves problem 1 above. |
 
 **How Argo CD and the SRE agent work together:** the agent's four tools still act through the Kubernetes API (no new
@@ -56,6 +56,32 @@ tools — [ADR-0009](0009-sre-agent-fixed-tool-allowlist.md) is unchanged).
 - **Rollback of a bad release that came through Git** is an emergency fix that leaves the Application `OutOfSync`.
   *Amended by [ADR-0016](0016-rollback-reconciles-through-git.md):* the rollback tool's own code then opens a
   `git revert` pull request. When a human merges it, Git and the cluster are back in line.
+
+### Amendment (2026-11-23, owner's decision, Phase 6): poll every 30 seconds
+
+Argo CD's default is to ask Git every 120 s plus up to 60 s of random jitter, so a commit waited up to 3 minutes
+before anything happened. That is too slow to show "push → staging" live. Argo CD now polls every **30 s** with no
+jitter (`timeout.reconciliation: 30s`, [infra/platform/argo-cd.yaml](../../infra/platform/argo-cd.yaml)); the measured
+push-to-synced time is in the [deployment doc §4](../03-architecture/07-deployment-and-environments.md#4-cicd-pipeline-github-actions--argo-cd-gitops).
+The cost is about 40 small Git fetches a minute from GitHub by the repo server, each answered from its cache unless
+the commit changed. `make sync` stays, for "now". A webhook would remove the delay, but GitHub cannot reach a laptop.
+
+The settings above are implemented in Terraform's `argo-cd` module (Phase 6): one `ApplicationSet` makes the
+Applications `<service>-<env>` (13 per environment: 9 services, 3 data stores and the ingress), plus `secrets-<env>`
+for the SealedSecrets ([ADR-0019](0019-sealed-secrets-for-gitops.md)) and `observability` for the dashboards and
+alert rules. All belong to the AppProject `circuitbreaker`, which allows only this repository, only our namespaces
+and **no cluster-wide objects**.
+
+**Found while testing (2026-11-23): one Application per service was not enough.** With automated sync, Argo CD
+re-synced **every** `OutOfSync` Application whenever **any** commit reached the branch, not only the Applications
+whose files it changed. Measured on staging: order-service drifted by hand (as after the SRE agent's emergency
+rollback), then a commit changed only web's values file, and Argo CD re-applied order-service from Git within a
+minute. In production that would let an unrelated tag bump undo the agent's rollback before its `git revert` pull
+request is merged ([ADR-0016](0016-rollback-reconciles-through-git.md)). Each Application now declares its own paths
+(`argocd.argoproj.io/manifest-generate-paths`: the umbrella chart, `dev/`, its environment's `global.yaml` and its
+own values file); a commit outside them updates the Application's revision without a sync. Re-tested: the drift
+stayed through the unrelated commit (`make k8s-check c=gitops-push`). What remains, as ADR-0016 says: a commit to
+the **same** service's file, or to the shared chart, re-applies Git.
 
 ## Alternatives considered
 
@@ -75,7 +101,7 @@ tools — [ADR-0009](0009-sre-agent-fixed-tool-allowlist.md) is unchanged).
 - ✅ Independent deployability holds in the deploy layer too: one Application per service.
 - ✅ The approval step is a pull-request review, which fits the release team's responsibility of coordinating approvals (Ch. 2).
 - ❌ One more component to run on a laptop (Argo CD uses roughly 0.5–1 GB of memory).
-- ❌ Polling adds up to ~3 minutes before a commit is deployed (or a manual `make sync`).
+- ❌ Polling adds up to 30 s before a commit is noticed (amended 2026-11-23; ~3 minutes before), or a manual `make sync`.
 - ❌ With self-heal off, manual drift persists until someone looks. The Argo CD UI and an `ArgoAppOutOfSync`
   dashboard panel make it visible.
 - ❌ CI bot commits (tag bumps) add noise to `git log`. They are scoped to `deploy/` and excluded from the CI trigger

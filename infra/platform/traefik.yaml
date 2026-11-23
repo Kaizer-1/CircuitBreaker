@@ -9,6 +9,14 @@
 
 deployment:
   replicas: 1
+# Host ports 80 and 8090 can be held by one pod at a time on our one node, so an upgrade stops the old pod before the
+# new one starts (a few seconds without ingress). The chart's default (surge one new pod first) waits forever for the
+# ports: found in Phase 6, the first time Traefik's values changed after its install.
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 0
 nodeSelector:
   ingress-ready: "true"
 tolerations:
@@ -27,6 +35,13 @@ ingressClass:
 providers:
   kubernetesIngress:
     enabled: true
+    # Write an address into each Ingress's status. Argo CD calls an Ingress Healthy only once it has one, and on kind
+    # there is no load balancer to provide it (Phase 6, found when Argo CD left ingress-prod "Progressing"). The
+    # ingress is reached on this laptop's own ports, so the address is localhost.
+    publishedService:
+      enabled: false
+    ingressEndpoint:
+      hostname: localhost
   # No Traefik-specific CRDs are used (standard Ingress objects only).
   kubernetesCRD:
     enabled: false

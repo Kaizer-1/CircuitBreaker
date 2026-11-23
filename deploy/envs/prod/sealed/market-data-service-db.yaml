@@ -1,0 +1,17 @@
+# market-data-service-db in prod: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as prod/market-data-service-db. make seal env=prod
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: market-data-service-db
+  namespace: prod
+spec:
+  encryptedData:
+    password: AgAUR7frW+y2LZgaW4ZRQHq9GYiM6a7Za3nypmIKpni1d8rtQcsqZw/ao+5RhXZIb5o15gaz5dv+oraP0htcKE72Wq9f8TfuWouKn1AxhFDB6N3sxeivWd1yrjnvka0NNJDPvEWA8pVuYyQUP2Yq17SVIytEHjmms4bBoFKF+8Cd8kwPY3JkXsXA+/XBVUiptUTEtviN0GQA9Z7v8M82RwXhx/i04ejDcQ07z5PBnoWWmH0Og9MsvSpEhr72uaPYgwSvgdQq4cX+jlFBDo9sEeyGvSGBCxaeN9Ps7AWIGJ9JFcy7erLWnjUq7zvsG+ZJbG8e67mDx1BpgAXamNTNpgU6J/s15eRtcyBEAuI2dv3fr0LwzqdbmyRefcaSb0dtXHH9qMaGtdw66+S/pGB+hZcCBxesMWy0FLy+Jb1RUJG1X5D/uCSrC5IuHcDuEyeB0BPr4NbNXrJRSJVlrvZKqi3tqnMxrw07bj7a7kCgJIFlhb/4GJi8/YVyM+l70/UqHygMsx5ot7k70sA6Ek7txXqq3NLzsCfZEY01LwuI1++C82+sr7RiWEUhrrvc7wQTntQBMzUrXEEE9spXj+D3pSiKcqWbOExZPA8ZkIzS7K5/IhpEBElfVl73Z/tJB0ucTWJ4y4XTP5x50yD3vkmo64Us95a1wlxmSskASo+a8zM/AvJdF+Is+5N5GAtGsEoAzbDrB5U2/kvglw/4N7id7EkocLYdClO3I1jI46kaM8E71VD5ZFsBBTCGaorl
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: market-data-service-db
+      namespace: prod
+    type: Opaque

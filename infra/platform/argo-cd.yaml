@@ -1,0 +1,46 @@
+# Argo CD, the GitOps deployment server (ADR-0014), installed by Terraform's argo-cd module (chart argo-cd 10.18.2 =
+# Argo CD v3.6.2). Trimmed for one laptop: no Dex (single sign-on), no notifications, one replica of everything.
+# Reached with `make argocd` (a port-forward; it prints the admin password).
+
+dex:
+  enabled: false
+notifications:
+  enabled: false
+
+configs:
+  cm:
+    # How often Argo CD asks GitHub for new commits. A laptop cannot receive GitHub's webhooks, so it polls; 30 s
+    # instead of the default 120 s (+ up to 60 s jitter) makes a push reach staging fast enough to show live
+    # (ADR-0014 amendment, 2026-11-23). `make sync` still refreshes at once.
+    timeout.reconciliation: 30s
+    timeout.reconciliation.jitter: 0s
+    # Ownership by annotation (the v3 default, written down): the charts' own app.kubernetes.io/instance labels are
+    # left alone, so selectors never change when Argo CD takes over.
+    application.resourceTrackingMethod: annotation
+    exec.enabled: false
+    admin.enabled: true
+    statusbadge.enabled: false
+  params:
+    # Plain HTTP behind the port-forward (no certificate to accept in the browser).
+    server.insecure: true
+
+controller:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 768Mi}
+server:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+repoServer:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+applicationSet:
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+redis:
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}

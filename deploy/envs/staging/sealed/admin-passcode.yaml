@@ -1,0 +1,17 @@
+# admin-passcode in staging: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as staging/admin-passcode. make seal env=staging
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: admin-passcode
+  namespace: staging
+spec:
+  encryptedData:
+    value: AgBSh1CiJ8mjVg/cTFls9EonXaQ1U9WKEJCiNuRyNWYIdcbdb5yTG3exMSsOYA3FJfaGP4Lf/SkYhZQCUuRv5p/8DB4H70SLvMMjZANRMDzebF53ih1a/guMGhy4ZW5QAFm1euGJcOKqHZJ+3yMvwZBhE1ba+4ATk81rhpF4cg6u54R4D98HuN0GgBs0mRRK9oyr8fkkWMWhdiat2pO9BTMAKF+aP4o3tGGnHjXgTS6soia4nzZSDFOzoNKwOvid8DmuWGkxgEvwQssREEIjFKzhwiMObcO8gOiq9k47kkorvlNhkLJyB3o+Mqhdu3hJ805vrVfvSuI6+m2zvFea/UvCi9aZiK28YysuiGgqDapAAPfVJ3quCYG8ERPzCYPttrYzmwLYpSnddUM0S5Yjulxijj33uiCCxtCIm2qKE+mkSQ0S1dsOnp7hTsLMo3HD/LJK2khMC1jqpQg8IVJIQxrg5jwMvV+EeUktXRDyGA134W8fwRJD3cpFTHcvXbANpRM3uIEvNV3koza8SsAreYfgZzX2IgqoZ0QwA68LpYP0NNrMlvHfP3nZwexApu6JemCO0AauaNhecgn1x8+xuYX0ZpCzeb6lnCHo0V378Xrwq+HYk58cSaEFT8efiqQhg19ZvaIqadDlUgul6lh9a5prJFzBHcsfzhX9W15S3vzEIb7+df6OQjFl9WIQ3NkXaFW/2jVDhAoX3fpVkGG/8o3R59izzsOU44n5Clc=
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: admin-passcode
+      namespace: staging
+    type: Opaque

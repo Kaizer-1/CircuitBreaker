@@ -1,0 +1,17 @@
+# matching-engine-db in prod: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as prod/matching-engine-db. make seal env=prod
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: matching-engine-db
+  namespace: prod
+spec:
+  encryptedData:
+    password: AgB7m8gOiBoLrAMuIkm1XkhwptlXx0HeF5QCC5EogtLQ5QWp2e/uBPyj7kYY0iDDbNMJmCN6iNzt0VkcRk7RggVTfnXxLfFAtUMTF6XcUeCzGa6+s0OUZGel8qacRBFmDSz+GP602H9aOMQeD5cRujvXQXxTcanOGvElMWfIX0BNG9Vzlv9yi9Yd6MoKDA+YGUAn5oujzuT7sryT+28ncUkC4GTgg+dOBJKJqgfe7tzlRlVQgn3KsRawdXxEQz73QzgEiauU9jQYYZkXDipZC8QBgTf0aCkegEHLy6DfSHcx+kQOADnI+ZD8C725m1uaYhyxVlyP7BXe0zKwFlEHozZqeR4FatPVWAO9yYPa0eTO94aP3o4lLSncY3KjbULAOt/lKuJPGi9S4MDNGGH2zUKug8o6Mi5VnmynsiAOv/HSFavOKCG+PjY75yjOU4iJBEQvhTNN801A7dv2CeUMBg+HwTyb8ZI5TA0YJ4QD1DiMvP078bwWCZ4bRaNdRuWs8bKQCdXU/Cf2WZ8HvDIlC27m5AGNWfb8i/WWPsuUcYKYJ/96rQTkOTmEmvNcakoqLkgw6R+Jep9WWFhjr846Zg6VmEToWwWHqfnpOvngQiq+XIJJ4fYKqXKyUIQHbchYP6E7bdzOjmXxQS97cukw2DdteJDiTjbZJNfBvnFncqCET+QN4ZL3U3pu3KdyOxxbPWCivapVzYZzOeWDjartRDm+mUaurovlG0lorkjN8SYcJJDJZLG9NYR3vebL
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: matching-engine-db
+      namespace: prod
+    type: Opaque
