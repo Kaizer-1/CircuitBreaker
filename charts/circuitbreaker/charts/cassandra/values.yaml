@@ -9,6 +9,7 @@ roles:
   MARKET_DATA: market-data-service-db
   SRE_AGENT: sre-agent-db
 resources:
-  # 512 MB heap + off-heap. Measured in Compose under the bots: 1.62 GiB.
+  # 512 MB heap + capped native memory (dev/cassandra/entrypoint.sh): 944-991 MiB process memory measured under the
+  # bots plus 60 orders/s, about 1.35 GiB if every cap filled; the rest of the limit is page cache the kernel reclaims.
   requests: {cpu: 250m, memory: 1536Mi}
   limits: {cpu: 2000m, memory: 2Gi}

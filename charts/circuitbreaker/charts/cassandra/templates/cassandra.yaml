@@ -49,9 +49,10 @@ spec:
           args: ["cassandra", "-f"]
           env:
             - {name: CASSANDRA_CLUSTER_NAME, value: circuitbreaker-{{ .Values.global.environment }}}
-            # Laptop tuning (as in Compose): a 512 MB heap, a small young generation, no wait for absent peers.
+            # Laptop tuning (as in Compose): a 512 MB heap and no wait for absent peers. GC threads, native memory
+            # caps, off-heap memtables and the commit log cap: dev/cassandra/entrypoint.sh (memory budget in
+            # docs/03-architecture/07-deployment-and-environments.md).
             - {name: MAX_HEAP_SIZE, value: 512M}
-            - {name: HEAP_NEWSIZE, value: 128M}
             - {name: JVM_EXTRA_OPTS, value: "-Dcassandra.ring_delay_ms=1000 -Dcassandra.skip_wait_for_gossip_to_settle=0"}
             # For the readiness probe's cqlsh. The superuser keeps Cassandra's built-in password, as in Compose.
             - name: CASSANDRA_ADMIN_PASSWORD

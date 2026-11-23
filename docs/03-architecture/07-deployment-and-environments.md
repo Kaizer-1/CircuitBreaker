@@ -180,7 +180,7 @@ its memory limit it is killed (`OOMKilled`), above its CPU limit it is slowed do
 | bot-traders | 1 | 100m / 96 MiB | 1000m / 256 MiB | 57 MiB |
 | sre-agent, chaos-service | 1 each | 100m / 96 MiB | 1000m / 256 MiB | 49, 43 MiB |
 | web (nginx) | 1 | 20m / 16 MiB | 200m / 64 MiB | 10 MiB |
-| Cassandra | 1 | 250m / 1.5 GiB | 2000m / 2 GiB | 1,397 MiB (512 MB heap) |
+| Cassandra | 1 | 250m / 1.5 GiB | 2000m / 2 GiB | 944–991 MiB process memory (512 MB heap); see its budget below |
 | Redpanda | 1 | 250m / 512 MiB | 1000m / 896 MiB | 170 MiB |
 | Postgres | 1 | 100m / 96 MiB | 1000m / 256 MiB | 76 MiB |
 | Prometheus / Grafana / Loki / Alloy | 1 each | see `infra/platform/` | 768 / **512** / 384 / 256 MiB | 103 / 403 / 118 / 82 MiB |
@@ -203,6 +203,51 @@ Four limits are deliberate, and are not "small for a laptop":
   MiB over 60 minutes at 40 orders a second plus the bots (about 100,000 orders remembered). A 5-minute traffic
   spike at 400 requests/s adds about 120,000 orders to that hour; 384 MiB holds both. Before the one-hour memory,
   the engine kept every order ever seen and was OOM-killed at 256 MiB after about 600,000.
+
+### Cassandra's memory budget
+
+An OOM-killed Cassandra stops the whole exchange, so its memory must have a ceiling below its 2 GiB limit by
+construction, not by luck. Cassandra's start-up scripts size it for the **machine**, not the container: on this
+12-core laptop they chose 12 GC threads (on a 2-CPU quota), allowed 2,735 MB of direct memory (more than the whole
+limit), and the preloaded allocator (jemalloc) made 48 memory arenas. The profiling PR (2026-11-23) measured where the
+memory goes with the JVM's Native Memory Tracking, set every part from the container's size
+(`dev/cassandra/entrypoint.sh`, used by Compose and the chart alike), and measured again. Each run was the same
+16 minutes: 7 minutes of the bots, 4 minutes of 60 orders/s on top (`load_orders.py`), 5 minutes after.
+
+| Part (MiB) | Stock settings, measured | Ours, measured | Cap | Setting, and why |
+|---|---:|---:|---:|---|
+| Heap | 512 | 512 | 512 | `MAX_HEAP_SIZE`; touched in full at start. Live data after a collection fell from 300–414 to 169–188: memtables moved off it |
+| Memtables (writes not yet on disk) | inside the heap, up to 128 | off the heap (in the next row) | 128 off + 64 on | `memtable_allocation_type: offheap_objects`: the garbage collector no longer copies them |
+| Direct buffers and other native memory Java allocates | 137–141 | 97–104 | 192 (direct) | `-XX:MaxDirectMemorySize=192M` (stock: 2,735, above the limit). Direct buffers in use: 58–63 |
+| GC data structures | 77 | 56 | | 2 GC threads instead of 12 |
+| Thread stacks | 76 (126–137 threads) | 31 (85–91 threads) | | `concurrent_reads` 8, `concurrent_writes` 16, one compactor, `-XX:ActiveProcessorCount=2` |
+| Class metadata, compiled code, symbols | 114 | 108 | 128 + 64 | `-XX:MaxMetaspaceSize=128M`, `-XX:ReservedCodeCacheSize=64M` |
+| Other JVM areas | 18 | 18 | | |
+| Native memory outside the JVM (allocator, native libraries) | 358–465 | 126–165 | | `MALLOC_CONF`: 2 arenas, no huge pages for the allocator's memory, freed memory returned within 2 s |
+| **Process memory (what an OOM kill counts)** | **1,280–1,387** | **944–991** | **≈ 1,350 (sum of caps)** | 0.7 GiB below the 2,048 limit even if every part filled up |
+| Page cache (recently read files) | 343–536 | 293–614 | | The kernel gives it back under pressure; never the cause of an OOM kill |
+
+The commit log is capped too (`commitlog_total_space: 256MiB`; it had reached 5.7 GB on the long-running cluster):
+that is disk, not memory, but an unbounded log means an unbounded replay after a restart. `-XX:+ExitOnOutOfMemoryError`
+replaces the stock behaviour, where a heap OutOfMemoryError killed one thread and the JVM went on (seen when an ad-hoc
+query scanned the old snapshot table): now it exits and Kubernetes restarts it.
+
+**Garbage collection, same 16 minutes:**
+
+| | Stock settings | Ours |
+|---|---:|---:|
+| Pauses | 124 (4 of them full collections) | 37 (no full collection) |
+| Pause p95 / max | 287 / 615 ms | 146 / 147 ms |
+| Time paused | 1.15% | 0.31% |
+| Order POST p95 at 60 orders/s, median and worst 5-second window | 139 / 578 ms | 52 / 267 ms |
+| Mac load average (median, 12 cores) | 7.2 | 6.6 |
+
+**The bound, and its condition.** No GC pause above 200 ms (measured max 147) **on a quiet laptop**. The young
+collections take 60–150 ms with two GC threads; when the Mac itself is saturated they stretch: a third run (G1 left to
+size the young generation itself, otherwise the same) measured pauses of 203, 240 and 641 ms in the one minute the
+Mac's load average reached 12–16, and no gain otherwise, so Cassandra's own young-generation setting stays. Hence the
+runbook's rule: mains power, other apps closed, host load checked before the demo. The proposed p99 below 100 ms was
+not reached (p95 146 ms).
 
 ### The RAM budget (measured)
 
@@ -380,3 +425,10 @@ metrics, and explains its decision, so it can tell a traffic spike (scale) from 
 A: Both, measuring different things. 4.3 GiB is what the processes hold. Docker also counts page cache, files the
 kernel keeps in RAM because they were read recently (images, database files), which it gives back as soon as a
 process needs memory. We budget process memory, and we checked that dropping the cache removes most of the gap.
+
+**Q: Cassandra has a 512 MB heap. Why did it use 1.3 GB, and how do you know it cannot be OOM-killed?**
+A: A JVM uses memory outside its heap too: GC bookkeeping, a stack per thread, direct buffers, compiled code, and the
+native allocator's own pools. Cassandra's start-up scripts sized all of those for the 12-core laptop, not the 2-CPU,
+2 GiB container. We measured every part with the JVM's Native Memory Tracking, capped each one for the container, and
+measured again: 944–991 MiB under load, and about 1.35 GiB if every cap filled at once, still 0.7 GiB below the limit.
+Page cache comes on top, but the kernel reclaims it before it would kill anything.
