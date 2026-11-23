@@ -101,6 +101,14 @@ one trial call: success closes it, failure opens it again. A business answer (`4
 | `circuit_breaker_state{dependency="portfolio-service",state="closed\|open\|half_open"}` | `1` for the current state, `0` for the others |
 | `circuit_breaker_trips_total{dependency="portfolio-service"}` | How many times it opened |
 
+Where a placement's time goes (added for the order-path profiling, 2026-11-15; `scripts/k8s_checks.py profile` reads
+them):
+
+| Metric | Meaning |
+|---|---|
+| `order_place_stage_seconds{stage="claim\|reserve\|store\|publish"}` | A-05's stages: claim the Idempotency-Key and read any earlier order, reserve (A-06), store the order and its outbox row, the one publish attempt |
+| `cassandra_call_seconds{phase="thread_wait\|execute"}` | Each blocking Cassandra driver call: waiting for a worker thread, then the call itself |
+
 ```bash
 curl -s localhost:8001/metrics | grep ^circuit_breaker
 docker compose --profile infra --profile app stop portfolio-service   # then place 5 orders: state="open" 1

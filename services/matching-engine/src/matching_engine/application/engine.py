@@ -27,7 +27,9 @@ from matching_engine.domain.model import (
     Command,
     Decision,
     InvalidCommandError,
+    ms_of,
 )
+from matching_engine.domain.retention import MIN_SPACING_MS
 from matching_engine.events.commands import parse_command
 from matching_engine.events.market import from_envelope, to_envelope
 from matching_engine.ports.event_store import EventStore
@@ -36,7 +38,7 @@ from matching_engine.runtime.events import EventEnvelope, format_timestamp
 
 logger = logging.getLogger("engine")
 
-SNAPSHOT_EVERY = 500  # events per ticker (policy P-03)
+SNAPSHOT_EVERY = 500  # events per ticker (policy P-03), at most one per MIN_SPACING_MS
 
 
 class MatchingEngine:
@@ -47,6 +49,7 @@ class MatchingEngine:
         *,
         environment: str,
         snapshot_every: int = SNAPSHOT_EVERY,
+        snapshot_spacing_ms: int = MIN_SPACING_MS,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         new_id: Callable[[], str] = lambda: str(uuid4()),
         tickers: tuple[str, ...] = TICKERS,
@@ -55,11 +58,13 @@ class MatchingEngine:
         self._publisher = publisher
         self._environment = environment
         self._snapshot_every = snapshot_every
+        self._snapshot_spacing_ms = snapshot_spacing_ms
         self._clock = clock
         self._new_id = new_id
         self._books = {t: OrderBook(t) for t in tickers}
         self._unpublished: dict[str, list[EventEnvelope]] = {t: [] for t in tickers}
         self._last_snapshot: dict[str, int] = dict.fromkeys(tickers, 0)
+        self._last_snapshot_at: dict[str, int | None] = dict.fromkeys(tickers)  # as_of, ms
         self.ready = False
         # Set when an append failed: the store may or may not hold the batch (a Cassandra write
         # timeout can still succeed later), so memory is not trusted until rebuilt from the store.
@@ -90,6 +95,7 @@ class MatchingEngine:
                 book.apply(from_envelope(envelope))
             self._books[ticker] = book
             self._last_snapshot[ticker] = raw["sequence"] if raw else 0
+            self._last_snapshot_at[ticker] = ms_of(raw["as_of"]) if raw else None
             cursor = await self._store.publish_cursor(ticker)
             self._unpublished[ticker] = (
                 await self._store.events_after(ticker, cursor) if cursor < book.sequence else []
@@ -162,7 +168,23 @@ class MatchingEngine:
         await self._store.set_publish_cursor(ticker, last)
 
     async def _maybe_snapshot(self, book: OrderBook) -> None:
-        if book.sequence - self._last_snapshot[book.ticker] >= self._snapshot_every:
-            await self._store.save_snapshot(book.ticker, book.snapshot().to_dict())
-            self._last_snapshot[book.ticker] = book.sequence
-            logger.info("snapshot taken", extra={"ticker": book.ticker, "sequence": book.sequence})
+        ticker = book.ticker
+        if book.sequence - self._last_snapshot[ticker] < self._snapshot_every or book.as_of is None:
+            return
+        # At most one per 30 s of event time: under heavy trading 500 events come every few
+        # seconds, and each snapshot is the whole book (megabytes with an hour of finished orders).
+        last_at = self._last_snapshot_at[ticker]
+        if last_at is not None and ms_of(book.as_of) - last_at < self._snapshot_spacing_ms:
+            return
+        await self._store.save_snapshot(ticker, book.snapshot().to_dict())
+        self._last_snapshot[ticker] = book.sequence
+        self._last_snapshot_at[ticker] = ms_of(book.as_of)
+        logger.info("snapshot taken", extra={"ticker": ticker, "sequence": book.sequence})
+        try:
+            deleted = await self._store.prune_snapshots(ticker, book.as_of)
+        except Exception:
+            # Retention only saves space: the next snapshot prunes again (the rule is idempotent).
+            logger.warning("snapshot pruning failed", extra={"ticker": ticker}, exc_info=True)
+            return
+        if deleted:
+            logger.info("snapshots pruned", extra={"ticker": ticker, "deleted": deleted})

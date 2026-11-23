@@ -79,9 +79,35 @@ anything after the cursor → resume consuming from the last committed offset. D
 
 ### Snapshots
 
-Every **500 events per ticker**, the engine saves the whole book for that ticker into `book_snapshots` with its
-`sequence` and time (local event `BookSnapshotTaken`). To rebuild a book at any point we load the nearest earlier
-snapshot and apply at most ~500 events, instead of the whole day.
+Every **500 events per ticker, but at most once per 30 seconds of event time** (policy P-03), the engine saves the
+whole book for that ticker into `book_snapshots_by_hour` with its `sequence` and time (local event
+`BookSnapshotTaken`). To rebuild a book at any point we load the nearest earlier snapshot and apply only the events
+after it, instead of the whole day.
+
+**The events are the history; snapshots only make reading it fast.** Nothing ever deletes, changes or expires a row
+of `market_events`: every event since the first day stays stored. A snapshot holds nothing that the events do not,
+so the engine can throw snapshots away and keeps only the ones fast seeks need (`domain/retention.py`):
+
+- the **newest** one, always (a restart rebuilds from it, even after a day without trading);
+- **every** one of the last hour;
+- older ones, the **earliest in each 10-minute slot**, so a seek there replays at most about 10 minutes of events;
+- older than the **24-hour time-travel horizon**, none, except the hour just before the horizon (so a seek at the
+  very start of the horizon still has a snapshot at or before it).
+
+The engine applies the rule after each new snapshot, in event time (the ticker's latest event), so every rerun keeps
+the same snapshots. Snapshots live in one partition per ticker **per hour** of the snapshot's time (`snapshot_hours`
+lists the hours), so no partition ever holds more than an hour of them: at most 120 at the 30-second spacing.
+
+*Why it changed (profiling, 2026-11-15).* The first table kept every snapshot of a ticker in **one** partition, for
+ever. After 19 hours of trading and load tests it held 4.3 GB, the largest partition 2.0 GB; every seek read the
+times of all of them, and Cassandra spent 2.6 times the CPU per order and paused for garbage collection 4 times as
+much as on a fresh cluster. That is the same class of fault as the engine's memory of finished orders (ADR-0017 note
+"A memory of one hour"): growth without a bound.
+
+*Bounds.* Per ticker at most about 120 + 23 × 6 + 6 ≈ 264 snapshots. A snapshot's size grows with the book's memory
+of finished orders (about 160 bytes each, one hour of them): about 1 MB under the bots, about 3.3 MB under a sustained
+40 orders/s. So the table stays below about 264 × 5 snapshots (≈ 1.3 GB of JSON under the bots, ≈ 4.4 GB under a
+whole day of sustained load, before Cassandra's compression), however long the market runs.
 
 ### Single writer per ticker
 
@@ -136,8 +162,8 @@ Sequence diagram: [01-seeds/03-sequence-diagrams.md §5](../01-seeds/03-sequence
 
 `GET /v1/time-travel/{ticker}?at=T` is answered by market-data-service in five steps:
 
-1. **The nearest snapshot at or before T** (matching-engine Q-15). The engine stores one every 500 events per ticker
-   (policy P-03): the whole book, plus `closed`, every order it had finished or expired in the hour before (the
+1. **The nearest snapshot at or before T** (matching-engine Q-15). The engine stores one every 500 events per ticker,
+   at most one per 30 s, and keeps them as described in "Snapshots" above (policy P-03): the whole book, plus `closed`, every order it had finished or expired in the hour before (the
    engine remembers finished orders for one hour of event time, from `forget_before` on; see below).
 2. **The events after that snapshot, up to T** (Q-14, `after_sequence` = the snapshot's sequence, `until` = T).
 3. **Apply them to a fresh book, never decide.** `OrderAccepted` adds an order, `TradeExecuted` reduces both orders,
@@ -194,8 +220,27 @@ Its SHA-256 is `6972eb25572940985d0a48d704f8ef3789be40100130b3da1dedd0ffac426697
 
 Without snapshots a seek near the end of an hour of bot trading would replay every event since the start, about 6,000
 per ticker. With a snapshot every 500 events, a seek never applies more than about 500. Measured on the dev stack over a
-full hour of bot trading (`scripts/time_travel_check.py`): 100 seeks to random moments, **p50 41 ms, p95 70 ms**, the
-slowest 143 ms, never more than 498 events after a snapshot. The brief's target was under 2 seconds.
+full hour of bot trading in Phase 4 (`scripts/time_travel_check.py`): 100 seeks to random moments, **p50 41 ms, p95
+70 ms**, the slowest 143 ms. The brief's target was under 2 seconds.
+
+Two things changed that since, and the profiling PR (2026-11-23) measured both on kind:
+
+- **A snapshot now carries an hour of finished orders** (ADR-0017 note "A memory of one hour"), about 160 bytes each,
+  so its size follows the last hour's trading: about 1 MB under the bots, 3 MB during an hour at 40 orders/s, 5 MB
+  after the panic-sell spike. Loading it, not replaying events, is most of a seek's cost.
+- **The 30-second spacing** (P-03) lets up to about 4,000 events pass between snapshots during the panic sell (about
+  120 events/s per ticker).
+
+| History behind the seek | Seeks (p50 / p95 / slowest) | Events after the snapshot (median / most) | Mac load |
+|---|---|---|---:|
+| Bots only, last 10 minutes | **83 / 169 / 240 ms** | 224 / 499 | 5 |
+| Last 2 hours: bots, a 40-orders/s hour, the spike calibration | 237 / 424 / 719 ms | 539 / 6,278 | 10 |
+| Last hour, during 40 orders/s of load, after the calibration | 407 / 965 / 1,604 ms | 234 / 1,105 | 11 |
+| Before this PR: last 10 hours of a 19-hour cluster | 505 / 2,307 / 3,561 ms | 249 / 5,362 | 11 |
+
+Every seek inside the 24-hour horizon is under 2 seconds, and every rewind to now matched the live engine. The last
+hour with only the bots is close to Phase 4 but not equal to it (p95 169 against 70 ms): the price of a snapshot that
+remembers an hour of finished orders, which the fail-closed orphan rule needs.
 
 ### Replay (Q-13)
 
@@ -203,7 +248,15 @@ slowest 143 ms, never more than 498 events after a snapshot. The brief's target 
 Then it walks the events up to `to` and sends one `frame` per **command**: all events with the same `causation_id`
 (an order's acceptance and its fills), so a viewer never sees half a match. Between frames it waits for the market
 time that passed, divided by the speed (1, 2, 5, 10 or 60). The client can pause, resume and change speed. At the end
-it sends `end` with the state hash at `to`. A replay window is at most 30 minutes; seeking (Q-12) has no such limit.
+it sends `end` with the state hash at `to`. A replay window is at most 30 minutes.
+
+### The time-travel horizon: 24 hours
+
+Q-12 seeks, and Q-13 replays start, anywhere in the **last 24 hours**. An older moment gets `422
+TIME_BEFORE_HORIZON` (Q-13: close 4422 with that reason). The horizon limits **fast seeking, not what is recorded**:
+every event older than 24 hours is still in `market_events` and Q-14 still pages through all of them; only the
+snapshots that make a seek take milliseconds are gone. A demo session lasts a few hours, and the time-travel screen's
+timeline shows the last 500 minutes, so 24 hours covers every moment anyone can pick.
 
 ### Why replay can never affect live trading
 
@@ -224,7 +277,7 @@ it sends `end` with the state hash at `to`. A replay window is at most 30 minute
 
 A **backup** is a copy of the whole state at the moments it was taken (say, nightly). Restoring one replaces the live
 data and loses everything since. **Time travel** derives any moment, to the exact event, from the history the system
-already keeps, reads it next to the live market without changing it, and proves its result with the hash. They answer
+already keeps (in milliseconds for the last 24 hours, where snapshots are kept), reads it next to the live market without changing it, and proves its result with the hash. They answer
 different questions: "what did the market look like at 10:42:15?" versus "how do we get our data back if the disk
 dies?". Time travel does not replace backups: if the event store itself were lost, so would be the history it reads.
 
@@ -272,7 +325,14 @@ compares: "hashes match" on the screen is that comparison.
 
 **Q: Why snapshots?**
 A: Without them, every seek replays every event since the start (about 6,000 per ticker after an hour of bot trading).
-A snapshot every 500 events caps that at about 500: seeks measured p50 41 ms, p95 70 ms.
+A snapshot every 500 events caps that at about 500: with only the bots trading, seeks measure p50 83 ms, p95 169 ms;
+after a load test, when snapshots carry an hour of extra finished orders, still under 2 seconds.
+
+**Q: Time travel reaches back 24 hours. Did you delete history?**
+A: No. The events are the history, and none is ever deleted: every event since the first day is still in
+`market_events`. Snapshots are only a cache of "the book after event N", which the events can always recompute. We
+thin and drop old snapshots because keeping all of them grew one Cassandra partition per ticker to 2 GB and slowed
+the whole exchange. The 24-hour horizon limits how far a *fast* seek reaches, not what is recorded.
 
 **Q: Why can't a replay affect live trading?**
 A: It only reads (GET requests to the engine), on its own copy of the book, in a different service, with at most 4 at a

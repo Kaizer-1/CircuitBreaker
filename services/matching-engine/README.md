@@ -18,8 +18,9 @@ Keeps one in-memory order book per ticker and matches orders by price-time prior
 limited by their protection price, self-trade prevention (cancel newest), cancellations, and fail-closed expiry
 requests ([ADR-0017](../../docs/adr/0017-fail-closed-orphan-release.md)). Event sourced
 ([ADR-0005](../../docs/adr/0005-event-sourcing-for-matching-engine.md)): every result is appended to the Cassandra
-event store with a per-ticker sequence number before it is published. Takes a snapshot every 500 events per ticker.
-Serves the internal event-store API used for time travel.
+event store with a per-ticker sequence number before it is published. Takes a snapshot every 500 events per ticker
+(at most one per 30 s) and prunes old ones (policy P-03, `domain/retention.py`); never deletes an event. Serves the
+internal event-store API used for time travel.
 
 ## How it works
 
@@ -42,7 +43,8 @@ store first (a Cassandra write timeout can still succeed later).
 ## Owned data
 
 Cassandra keyspace `matching_engine` (schema: [`src/matching_engine/migrations/`](src/matching_engine/migrations/),
-applied at start-up): `market_events`, `ticker_days`, `book_snapshots`, `processed_commands`, `publish_cursor`.
+applied at start-up): `market_events`, `ticker_days`, `book_snapshots_by_hour`, `snapshot_hours`, `processed_commands`,
+`publish_cursor`. The first snapshot table, `book_snapshots`, is copied over (what retention keeps) and dropped once.
 **The market's source of truth.** Snapshots also hold the orders finished or expired in the last hour of event time
 (with when each closed, and `forget_before`), so cancel rejections and tombstones answer the same after a restart.
 

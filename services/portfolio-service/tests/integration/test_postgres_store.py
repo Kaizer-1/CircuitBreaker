@@ -177,3 +177,25 @@ async def test_the_leaderboard_reads_humans_with_their_shares_and_marks_them_to_
 
     board = await service.leaderboard.get(include_bots=False, limit=20)
     assert [(e["rank"], e["nickname"]) for e in board["entries"]] == [(1, "Meera"), (1, "Raju")]
+
+
+async def test_a_transaction_reports_its_wait_for_a_connection_and_its_own_time(
+    conninfo: str,
+) -> None:
+    """With one pooled connection, a second transaction waits for the first one to finish."""
+    times: list[tuple[float, float]] = []
+    one = await PostgresPortfolioStore.open(
+        conninfo, max_size=1, on_transaction=lambda waited, ran: times.append((waited, ran))
+    )
+    try:
+
+        async def hold() -> None:
+            async with one.transaction() as tx:
+                await tx._conn.execute("SELECT pg_sleep(0.2)")
+
+        await asyncio.gather(hold(), hold())
+    finally:
+        await one.close()
+    assert len(times) == 2
+    assert all(ran >= 0.2 for _, ran in times)
+    assert max(waited for waited, _ in times) >= 0.15  # the second one queued for the connection

@@ -100,6 +100,10 @@ def test_a_replay_streams_frames_then_end_and_closes_normally(
         (lambda s, e: url(e, s), 4422),  # to before from
         (lambda s, e: url(s, "2099-01-01T00:00:00Z"), 4422),  # to in the future
         (lambda s, e: url(s, stamp(ms(s) + 31 * 60_000)), 4422),  # more than 30 minutes
+        (  # from before the 24-hour horizon
+            lambda s, e: url(stamp(ms(e) - 25 * 3_600_000), stamp(ms(e) - 24 * 3_600_000 - 60_000)),
+            4422,
+        ),
         (lambda s, e: url(s, e).replace("Z&", "&", 1), 4422),  # no UTC offset
         (lambda s, e: "/v1/ws/replay/CALVERA", 4422),  # nothing given
     ],

@@ -9,6 +9,8 @@ from collections import defaultdict
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from matching_engine.domain.model import ms_of
+from matching_engine.domain.retention import snapshots_to_keep
 from matching_engine.runtime.events import EventEnvelope, parse_timestamp
 
 
@@ -69,6 +71,13 @@ class InMemoryEventStore:
         self.hook("snapshot.before")
         self.snapshots[ticker].append(snapshot)
         self.hook("snapshot.after")
+
+    async def prune_snapshots(self, ticker: str, now: str) -> int:
+        """The retention rule over the whole list (the real store applies it hour by hour)."""
+        stored = self.snapshots[ticker]
+        keep = snapshots_to_keep(((s["sequence"], ms_of(s["as_of"])) for s in stored), ms_of(now))
+        self.snapshots[ticker] = [s for s in stored if s["sequence"] in keep]
+        return len(stored) - len(self.snapshots[ticker])
 
     async def publish_cursor(self, ticker: str) -> int:
         return self.cursors[ticker]

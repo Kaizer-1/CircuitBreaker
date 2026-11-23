@@ -140,8 +140,10 @@ that holds that ticker at most once a second. An `OrderExpired` (an order the en
 
 ### Q-13 — `/v1/ws/replay/{ticker}?from=…&to=…&speed=…` (market-data-service, any role)
 
-Query parameters: `from`, `to` (ISO-8601 with a UTC offset, window ≤ 30 minutes, `to` not in the future), `speed` ∈
-{1, 2, 5, 10, 60}. The 30-minute cap is for playback only: time travel (Q-12) seeks anywhere in the stored history.
+Query parameters: `from`, `to` (ISO-8601 with a UTC offset, window ≤ 30 minutes, `to` not in the future, `from` within
+the last 24 hours), `speed` ∈ {1, 2, 5, 10, 60}. The 30-minute cap is for playback only: time travel (Q-12) seeks
+anywhere in the last 24 hours, the time-travel horizon (every older event is still stored; only the snapshots that make
+seeking fast are not kept longer).
 
 | Direction | `type` | `data` |
 |---|---|---|
@@ -221,6 +223,7 @@ rule covers both (matching-engine spec 1.3.0; market-data spec 1.1.2 describes i
 | `INSUFFICIENT_FUNDS` | 422 | Not enough available cash (no margin) |
 | `INSUFFICIENT_SHARES` | 422 | Not enough available shares (no short selling) |
 | `TIME_IN_FUTURE` | 422 | Time travel to a moment that hasn't happened |
+| `TIME_BEFORE_HORIZON` | 422 | Time travel to a moment more than 24 hours ago (the events are still stored; fast seeking reaches back 24 hours) |
 | `RATE_LIMITED` | 429 | Too many requests |
 | `DEPENDENCY_UNAVAILABLE` | 503 | A dependency is down / circuit breaker open |
 | `OVERLOADED` | 503 | Service at its concurrency limit (traffic spike) |

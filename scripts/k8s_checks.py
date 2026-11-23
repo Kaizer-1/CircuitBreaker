@@ -9,6 +9,9 @@
     alerts   trigger each Phase 7 alert's condition for real and time how fast it fires
     url      the join QR code's URL survives a restart and k8s-bots, changes only when asked
              (PUBLIC_BASE_URL with k8s-up, or k8s-set-url), and no data is lost
+    profile  where a placement's time goes under load, per replica count (a measurement, not a
+             pass/fail check): every stage of A-05, Cassandra and Postgres waits, event-loop lag,
+             CPU and throttling, Cassandra's GC pauses; saved to build/profile/<label>.json
 
 Standard library only. The environment is prod unless --env staging. These checks change the
 running system on purpose (scale, stop, patch); each one puts it back as it found it.
@@ -485,6 +488,164 @@ def check_scale(args: argparse.Namespace) -> bool:
     return ok
 
 
+PROFILE_WINDOW_SKIP = 10  # seconds at the start of a run left out (connections opening)
+
+
+def profile_queries(env: str) -> dict[str, str]:
+    """name -> PromQL with {w} for the window, one number each."""
+    ns = f'namespace="{env}"'
+
+    def q(quantile: float, metric: str, labels: str) -> str:
+        return (
+            f"histogram_quantile({quantile}, sum by (le) (rate({metric}_bucket"
+            f"{{{ns},{labels}}}[{{w}}s])))"
+        )
+
+    post = 'route="/v1/orders",method="POST"'
+    out = {
+        "post/s at order-service": (
+            f'sum(rate(http_request_duration_seconds_count{{{ns},service="order-service",{post}}}'
+            "[{w}s]))"
+        ),
+    }
+    for p in (0.5, 0.95):
+        tag = f"p{int(p * 100)}"
+        out |= {
+            f"gateway POST {tag}": q(
+                p, "http_request_duration_seconds", f'service="api-gateway",{post}'
+            ),
+            f"order-service POST {tag}": q(
+                p, "http_request_duration_seconds", f'service="order-service",{post}'
+            ),
+            **{
+                f"stage {stage} {tag}": q(p, "order_place_stage_seconds", f'stage="{stage}"')
+                for stage in ("claim", "reserve", "store", "publish")
+            },
+            f"cassandra thread_wait {tag}": q(p, "cassandra_call_seconds", 'phase="thread_wait"'),
+            f"cassandra execute {tag}": q(p, "cassandra_call_seconds", 'phase="execute"'),
+            f"portfolio reservation {tag}": q(
+                p,
+                "http_request_duration_seconds",
+                'service="portfolio-service",route="/internal/v1/reservations"',
+            ),
+            f"postgres pool_wait {tag}": q(p, "postgres_transaction_seconds", 'phase="pool_wait"'),
+            f"postgres transaction {tag}": q(
+                p, "postgres_transaction_seconds", 'phase="transaction"'
+            ),
+            **{
+                f"loop lag {svc} {tag}": q(p, "event_loop_lag_seconds", f'service="{svc}"')
+                for svc in ("api-gateway", "order-service", "portfolio-service")
+            },
+        }
+    for c in (
+        "api-gateway",
+        "order-service",
+        "portfolio-service",
+        "postgres",
+        "cassandra",
+        "redpanda",
+        "matching-engine",
+    ):
+        out[f"cpu {c}"] = (
+            f'sum(rate(container_cpu_usage_seconds_total{{{ns},container="{c}"}}[{{w}}s]))'
+        )
+        out[f"throttled {c}"] = (
+            f'sum(rate(container_cpu_cfs_throttled_periods_total{{{ns},container="{c}"}}[{{w}}s]))'
+            f' / sum(rate(container_cpu_cfs_periods_total{{{ns},container="{c}"}}[{{w}}s]))'
+        )
+    return out
+
+
+def cassandra_pauses(env: str, start: float, end: float) -> dict[str, float]:
+    """Cassandra's GC pauses between start and end, from its gc.log files (all rotations)."""
+    import re
+    from datetime import datetime
+
+    lines = kubectl(
+        "-n",
+        env,
+        "exec",
+        "cassandra-0",
+        "--",
+        "sh",
+        "-c",
+        r"grep -h '\[info \] GC(.*) Pause' /opt/cassandra/logs/gc.log*",
+        check=False,
+    )
+    pauses = []
+    for line in lines.splitlines():
+        m = re.match(r"\[(\S+?)\+0000\].* ([\d.]+)ms$", line)
+        if m:
+            at = datetime.fromisoformat(m[1] + "+00:00").timestamp()
+            if start <= at <= end:
+                pauses.append(float(m[2]))
+    pauses.sort()
+    if not pauses:
+        return {"gc pauses": 0}
+
+    def pick(p: float) -> float:
+        return pauses[min(len(pauses) - 1, int(p * len(pauses)))]
+
+    return {
+        "gc pauses": len(pauses),
+        "gc pause p50 ms": pick(0.5),
+        "gc pause p95 ms": pick(0.95),
+        "gc pause max ms": pauses[-1],
+        "gc paused % of time": sum(pauses) / 1000 / (end - start) * 100,
+    }
+
+
+def check_profile(args: argparse.Namespace) -> bool:
+    """The same load at each replica count; for each, where a placement's time went."""
+    heading(f"Profile '{args.label}': {args.rate:.0f} req/s ({args.mix}), replicas {args.replicas}")
+    bots_were_on = args.mix == "panic" and bots_enabled(args.env)
+    if bots_were_on:
+        k8s_script(args.env, "bots", "--stop")
+    queries = profile_queries(args.env)
+    phases = []
+    try:
+        for replicas in args.replicas:
+            scale(args.env, "deployment/order-service", replicas)
+            time.sleep(args.settle)
+            started = time.time()
+            summary = load(args.env, args.rate, args.seconds, args.mix)
+            ended = time.time()
+            window = int(ended - started - PROFILE_WINDOW_SKIP)
+            row: dict[str, Any] = {
+                "replicas": replicas,
+                "client rate": summary["rate_median"],
+                "client POST p95": summary["post_p95_ms_median"] / 1000,
+            }
+            for name, query in queries.items():
+                row[name] = scalar(query.replace("{w}", str(window)), ended)
+            row |= cassandra_pauses(args.env, started + PROFILE_WINDOW_SKIP, ended)
+            phases.append(row)
+    finally:
+        scale(args.env, "deployment/order-service", 2)
+        if bots_were_on:
+            k8s_script(args.env, "bots")
+    names = list(phases[0])
+    print(f"\n  {'':34}" + "".join(f"{p['replicas']:>12} repl" for p in phases))
+    for name in names[1:]:
+        cells = []
+        for p in phases:
+            v = p.get(name)
+            seconds = any(w in name for w in ("p50", "p95")) and "ms" not in name
+            cells.append(
+                f"{'-':>17}" if v is None else f"{v * 1000:>14.1f} ms" if seconds else f"{v:>17.2f}"
+            )
+        print(f"  {name:34}" + "".join(cells))
+    out = ROOT / "build" / "profile" / f"{args.label}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(
+            {"label": args.label, "rate": args.rate, "mix": args.mix, "phases": phases}, indent=2
+        )
+    )
+    print(f"\n  written: {out.relative_to(ROOT)}")
+    return True
+
+
 def load(env: str, rate: float, seconds: float, mix: str = "orders") -> dict[str, Any]:
     out = subprocess.run(  # noqa: S603 (fixed command)
         [
@@ -864,7 +1025,9 @@ def main() -> int:
     sub.add_parser("netpol").set_defaults(func=check_netpol)
     sub.add_parser("kill").set_defaults(func=check_kill)
     scale_ = sub.add_parser("scale")
-    scale_.add_argument("--rate", type=float, default=200)
+    # The traffic spike's rate, calibrated on the demo laptop (chaos scenarios section 3.3): above
+    # what 2 replicas carry, within what 5 carry.
+    scale_.add_argument("--rate", type=float, default=110)
     scale_.add_argument("--seconds", type=float, default=60)
     scale_.add_argument("--settle", type=float, default=30, help="seconds after the rollout")
     scale_.add_argument("--mix", choices=["panic", "orders", "spike"], default="panic")
@@ -880,6 +1043,14 @@ def main() -> int:
     )
     alerts.set_defaults(func=check_alerts)
     sub.add_parser("url").set_defaults(func=check_url)
+    profile = sub.add_parser("profile")
+    profile.add_argument("--label", required=True, help="name of the saved result")
+    profile.add_argument("--rate", type=float, default=100)
+    profile.add_argument("--seconds", type=float, default=90)
+    profile.add_argument("--settle", type=float, default=30, help="seconds after the rollout")
+    profile.add_argument("--mix", choices=["panic", "orders", "spike"], default="panic")
+    profile.add_argument("--replicas", type=int, nargs="+", default=[2, 5])
+    profile.set_defaults(func=check_profile)
     args = parser.parse_args()
     ok = args.func(args)
     print(f"\n{GREEN + 'all passed' if ok else RED + 'FAILED'}{RESET}")

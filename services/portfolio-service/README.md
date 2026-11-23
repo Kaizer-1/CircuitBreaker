@@ -96,7 +96,9 @@ callers that arrive together wait for one computation. The presenter dashboard p
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
 **Business metrics:** `reservations_total{side,result}` (`created`, `repeat`, `refused`), `trades_settled_total`,
-`orphan_expiry_requests_total`, `portfolio_ws_connections` (open Q-10 sockets on this replica).
+`orphan_expiry_requests_total`, `portfolio_ws_connections` (open Q-10 sockets on this replica),
+`postgres_transaction_seconds{phase="pool_wait|transaction"}` (waiting for one of the pool's connections, then the
+transaction itself, row-lock waits included: tells a queue for connections from slow SQL).
 
 ## Synchronous dependencies
 

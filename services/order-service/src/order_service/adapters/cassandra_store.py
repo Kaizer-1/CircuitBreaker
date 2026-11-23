@@ -22,10 +22,11 @@ still found.
 import asyncio
 import json
 import logging
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from importlib import resources
-from typing import Any
+from typing import Any, TypeVar
 
 from order_service.domain.order import (
     FINISHED,
@@ -183,9 +184,20 @@ def _order(row: Any) -> Order:
     )
 
 
+T = TypeVar("T")
+
+
 class CassandraOrderStore:
-    def __init__(self, session: Any) -> None:
+    def __init__(
+        self,
+        session: Any,
+        *,
+        on_call: Callable[[float, float], None] = lambda waited, ran: None,
+    ) -> None:
         self._session = session
+        # Each blocking driver call runs on a worker thread: (seconds waiting for a free thread,
+        # seconds the call itself took), so a slow call can be told apart from a queue for threads.
+        self._on_call = on_call
         self._q: dict[str, Any] = {}
         self._scan_slots = asyncio.Semaphore(SCAN_READS_AT_ONCE)
         # The outbox relay's reading position (see the module docstring), per replica:
@@ -194,8 +206,20 @@ class CassandraOrderStore:
         self._waiting: set[tuple[int, datetime, str]] = set()  # rows read, not done yet (3)
         self._cursor: int | None = None  # as last saved
 
+    async def _threaded(self, call: Callable[[], T]) -> T:
+        submitted = time.perf_counter()
+
+        def timed() -> T:
+            started = time.perf_counter()
+            try:
+                return call()
+            finally:
+                self._on_call(started - submitted, time.perf_counter() - started)
+
+        return await asyncio.to_thread(timed)
+
     async def _run(self, query: Any, params: Sequence[Any] = ()) -> list[Any]:
-        return await asyncio.to_thread(lambda: list(self._session.execute(query, params)))
+        return await self._threaded(lambda: list(self._session.execute(query, params)))
 
     async def _batch(self, statements: list[tuple[str, tuple[Any, ...]]]) -> None:
         from cassandra.query import BatchStatement, BatchType
@@ -203,7 +227,7 @@ class CassandraOrderStore:
         batch = BatchStatement(batch_type=BatchType.LOGGED)
         for name, params in statements:
             batch.add(self._q[name], params)
-        await asyncio.to_thread(self._session.execute, batch)
+        await self._threaded(lambda: self._session.execute(batch))
 
     async def migrate(self) -> None:
         for statement in migration_statements():
@@ -344,7 +368,7 @@ class CassandraOrderStore:
             result = self._session.execute(self._q["claim_key"], (trader_id, key, order_id))
             return order_id if result.was_applied else str(result.one().order_id)
 
-        return await asyncio.to_thread(claim)
+        return await self._threaded(claim)
 
     async def orders_of(
         self, trader_id: str, *, before: tuple[str, str] | None, limit: int

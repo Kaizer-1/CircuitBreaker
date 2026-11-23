@@ -10,7 +10,9 @@ engine (or be REJECTED with PUBLISH_TIMEOUT after 60 s, never later).
 import asyncio
 import base64
 import logging
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -103,7 +105,11 @@ class Orders:
         on_placed: Callable[[Order], None] = lambda order: None,
         on_rejected: Callable[[RejectionReason], None] = lambda reason: None,
         publish_attempt_seconds: float = PUBLISH_ATTEMPT_SECONDS,
+        on_stage: Callable[[str, float], None] = lambda stage, seconds: None,
+        timer: Callable[[], float] = time.perf_counter,
     ) -> None:
+        self._on_stage = on_stage
+        self._timer = timer
         self._publish_attempt = publish_attempt_seconds
         self._store = store
         self._portfolio = portfolio
@@ -116,6 +122,15 @@ class Orders:
 
     def _now(self) -> str:
         return format_timestamp(self._clock())
+
+    @contextmanager
+    def _stage(self, name: str) -> Iterator[None]:
+        """Report how long one stage of a placement took, whether it worked or not."""
+        started = self._timer()
+        try:
+            yield
+        finally:
+            self._on_stage(name, self._timer() - started)
 
     # ------------------------------------------------------------------ A-05
 
@@ -130,8 +145,11 @@ class Orders:
         validate(request)  # OrderValidationError: 422, nothing stored, nothing reserved
         order_id = self._new_id()
         if idempotency_key:
-            order_id = await self._store.claim_idempotency_key(trader_id, idempotency_key, order_id)
-            existing = await self._store.get(order_id)
+            with self._stage("claim"):
+                order_id = await self._store.claim_idempotency_key(
+                    trader_id, idempotency_key, order_id
+                )
+                existing = await self._store.get(order_id)
             if existing is not None:  # a retry: the original result, not a second order
                 if existing.status is OrderStatus.REJECTED:
                     raise RejectedOrderError(existing, f"Order {order_id} was rejected.")
@@ -156,7 +174,8 @@ class Orders:
             updated_at=now,
         )
         try:
-            reservation = await self._portfolio.reserve(order_id, trader_id, request)
+            with self._stage("reserve"):
+                reservation = await self._portfolio.reserve(order_id, trader_id, request)
         except ReservationRefusedError as refused:
             order.reject(refused.reason, now)
             await self._store.create(order, None)  # local event OrderRejected; never on the bus
@@ -171,13 +190,15 @@ class Orders:
             order_placed(order, at, environment=self._environment, correlation_id=correlation_id),
         )
         try:
-            await self._store.create(order, entry)
+            with self._stage("store"):
+                await self._store.create(order, entry)
         except Exception as exc:
             # The cash or shares stay reserved; with no order stored, portfolio-service's sweeper
             # asks for an expiry after 120 s and the money comes back (ADR-0017).
             logger.exception("order store failed after reserving", extra={"order_id": order_id})
             raise DependencyUnavailableError("the order store is unavailable") from exc
-        await self._publish_now(entry, order)
+        with self._stage("publish"):
+            await self._publish_now(entry, order)
         self._on_placed(order)
         return order
 

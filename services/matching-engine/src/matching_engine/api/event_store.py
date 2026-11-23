@@ -1,13 +1,20 @@
 """Internal read API over the event store and the live books (api/matching-engine.yaml).
 
 Thin routers: parse, ask the engine or its store, shape the answer as BookState / EventPage.
+
+A snapshot (Q-15) carries the book's memory of an hour of finished orders: up to about 30,000 after
+a panic-sell test, 5 MB of JSON. FastAPI's generic encoder took over 100 ms on that, on the event
+loop that also matches orders, so Q-15 builds and encodes its answer once, in a worker thread.
+At most two at a time: each holds about 20 MB while it is built (the engine's limit is 384 MiB).
 """
 
+import asyncio
+import json
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from matching_engine.application.engine import MatchingEngine
 from matching_engine.domain.model import BookSnapshot, PriceLevel
@@ -17,6 +24,7 @@ from matching_engine.runtime.problem import problem_response
 Ticker = Literal["CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA"]
 
 router = APIRouter()
+_SNAPSHOT_BUILDS = asyncio.Semaphore(2)
 
 
 def _engine(request: Request) -> MatchingEngine | None:
@@ -118,8 +126,14 @@ async def get_book_snapshot(request: Request, ticker: Ticker, at: datetime) -> A
             "closed": [],
             "forget_before": None,
         }
+    async with _SNAPSHOT_BUILDS:
+        body = await asyncio.to_thread(_snapshot_body, ticker, stored)
+    return Response(body, media_type="application/json")
+
+
+def _snapshot_body(ticker: str, stored: dict[str, Any]) -> bytes:
     snapshot = BookSnapshot.from_dict(stored)  # also reads snapshots stored before closed_at
-    return {
+    content = {
         "ticker": ticker,
         "sequence": snapshot.sequence,
         "as_of": snapshot.as_of,
@@ -133,6 +147,8 @@ async def get_book_snapshot(request: Request, ticker: Ticker, at: datetime) -> A
         ],
         "forget_before": snapshot.forget_before,
     }
+    # The same bytes JSONResponse would send, without its generic per-value encoder.
+    return json.dumps(content, ensure_ascii=False, separators=(",", ":")).encode()
 
 
 @router.get(

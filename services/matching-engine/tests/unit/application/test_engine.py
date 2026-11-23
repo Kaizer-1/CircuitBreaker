@@ -1,12 +1,12 @@
 """The command loop (ES and CQRS doc section 4): dedupe → decide → append → apply → publish."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from matching_engine.application.engine import MatchingEngine
 from matching_engine.domain.model import InvalidCommandError, Outcome
-from matching_engine.runtime.events import build_event
+from matching_engine.runtime.events import build_event, format_timestamp, parse_timestamp
 from tests.builders import ALICE, BOB, CARA, cancel, expire, id_source, limit, market
 from tests.fakes import Crash, InMemoryEventStore, RecordingPublisher
 
@@ -21,6 +21,7 @@ def make_engine(
         publisher,
         environment="dev",
         snapshot_every=snapshot_every,
+        snapshot_spacing_ms=0,  # one fixed clock: every event at the same moment
         clock=lambda: NOW,
         new_id=id_source(),
     )
@@ -335,3 +336,74 @@ async def test_an_append_that_timed_out_but_was_written_is_found_by_rebuilding(
     await engine.handle(limit(2, BOB, "SELL", 4, 24600))
     assert [e.data["sequence"] for e in store.events["CALVERA"]] == [1, 2, 3]
     assert [e.data["sequence"] for e in publisher.first_copies("CALVERA")] == [1, 2, 3]
+
+
+class SteppingClock:
+    """Each command `step` seconds after the one before: event time moves as in real trading."""
+
+    def __init__(self, step: float) -> None:
+        self.now, self.step = NOW, step
+
+    def __call__(self) -> datetime:
+        self.now += timedelta(seconds=self.step)
+        return self.now
+
+
+async def test_snapshots_are_at_least_30_seconds_of_event_time_apart(
+    store: InMemoryEventStore, publisher: RecordingPublisher
+) -> None:
+    # Busy trading: 2 events every 10 s reach snapshot_every=2 at every order, but P-03 allows
+    # one snapshot per 30 s per ticker.
+    engine = MatchingEngine(
+        store,
+        publisher,
+        environment="dev",
+        snapshot_every=2,
+        clock=SteppingClock(10),
+        new_id=id_source(),
+    )
+    await engine.recover()
+    for n in range(1, 13):
+        await engine.handle(limit(n, ALICE, "BUY", 1, 24000 + 5 * n))
+    times = [parse_timestamp(s["as_of"]) for s in store.snapshots["CALVERA"]]
+    assert len(times) == 4
+    assert all(b - a >= timedelta(seconds=30) for a, b in zip(times, times[1:], strict=False))
+
+
+async def test_old_snapshots_are_pruned_after_each_new_one(
+    store: InMemoryEventStore, publisher: RecordingPublisher
+) -> None:
+    # One order a minute for three hours: snapshots older than an hour are thinned to one per
+    # 10-minute slot (domain/retention.py); the events are all still there.
+    engine = MatchingEngine(
+        store,
+        publisher,
+        environment="dev",
+        snapshot_every=1,
+        clock=SteppingClock(60),
+        new_id=id_source(),
+    )
+    await engine.recover()
+    for n in range(1, 181):
+        placed = format_timestamp(NOW + timedelta(minutes=n))  # fresh: within the 1-hour memory
+        await engine.handle(limit(n, ALICE, "BUY", 1, 20000 + 5 * n, placed_at=placed))
+    kept = store.snapshots["CALVERA"]
+    assert len(store.events["CALVERA"]) == 180
+    # Orders at 10:43:01 ... 13:42:01: the last hour's 61 snapshots (both ends), and before that
+    # the earliest of each 10-minute slot from 10:40 to 12:40 (13 slots).
+    assert len(kept) == 61 + 13
+    restarted = await started(store, publisher)
+    assert restarted.book("CALVERA").state_hash() == engine.book("CALVERA").state_hash()
+
+
+async def test_a_failed_pruning_does_not_fail_the_command(
+    store: InMemoryEventStore, publisher: RecordingPublisher
+) -> None:
+    engine = await started(store, publisher, snapshot_every=1)
+
+    async def broken(ticker: str, now: str) -> int:
+        raise OSError("Cassandra timeout")
+
+    store.prune_snapshots = broken  # type: ignore[method-assign]
+    decision = await engine.handle(limit(1, ALICE, "BUY", 1, 24000))
+    assert decision is not None and len(store.snapshots["CALVERA"]) == 1

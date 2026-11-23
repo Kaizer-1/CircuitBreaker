@@ -11,6 +11,7 @@
 
 | Step | Command or action | Why |
 |---|---|---|
+| 0 | **Mains power, nothing else running.** `pmset -g batt` says `AC Power`. Quit other apps and dev servers (another project's `npm run dev`, a second IDE, browsers with many tabs) and let a pending macOS update wait. With the stack and the bots running, `uptime` shows a 1-minute load average of about **4–6**; above 8, find what else is busy (`top -o cpu`) before the audience arrives | The exchange shares the laptop's 12 cores with everything else on it. On battery macOS slows the CPU: a 60-minute soak on battery measured order p95 615 ms against 281 ms on mains (2026-11-14). A busy Mac stretched Cassandra's pauses from 150 ms to 640 ms and narrows the traffic spike's window: 110 requests/s is calibrated for a quiet laptop (chaos scenarios §3.3) |
 | 1 | Laptop on power; in a spare terminal run **`caffeinate -dims`** and leave it running until the demo ends | macOS then never sleeps (`-d` display, `-i` idle, `-m` disk, `-s` system on power). A sleeping laptop freezes Docker: on waking, market-data has every missed 5-second candle to close (it saves them in chunks since Phase 4) and the bots' 12-hour sessions may have run out (they sign in again since Phase 4); both recover, but the market stalls meanwhile. `Ctrl+C` ends it |
 | 2 | **First** join the phone hotspot, **then** set `PUBLIC_BASE_URL` to the laptop's address on it (`ipconfig getifaddr en0`) | The QR code must point where phones can reach ([developer setup §10](08-developer-setup.md#10-phones-on-a-hotspot-demo-day)); the address belongs to the network, so it is only known once the laptop is on the hotspot |
 | 3 | **A person** runs `CONFIRM=yes make demo-reset` | Wipes all data, starts everything and checks the clean start: five empty books, only the seeded accounts, no humans. Rehearsal traders, test accounts and leftover orders are gone, and the leaderboard starts empty. Data-wiping commands are run by a person, never by a script or an assistant |
@@ -22,7 +23,8 @@
 | 9 | Projector: `/dashboard?theme=paper` (or `terminal` in a dim room), sign in with the presenter passcode; scan the QR code with one real phone and place an order | The QR box must not warn about localhost |
 
 Do not rebuild or restart containers once the audience is in: a gateway restart drops every phone's and bot's
-connection (the bots are back within about a minute).
+connection (the bots are back within about a minute). **Never restart the stack right before presenting**: bring it
+up early enough for the warm-up spike below and the 5-minute wait, then leave it running.
 
 ### The Kubernetes path (the demo platform from Phase 5)
 
@@ -31,11 +33,13 @@ the cluster, not both (`make down` first): together they do not fit in Docker's 
 
 | Step | Command or action | Why |
 |---|---|---|
+| 0 | Step 0 above: mains power, other apps closed, `uptime` about 4–6 with the cluster and bots running | The same reasons; the cluster needs more of the laptop than Compose |
 | 1 | `caffeinate -dims` as above; **join the hotspot first** and note the laptop's address (`ipconfig getifaddr en0`) | The QR code needs the address on the network the phones are on |
 | 2 | **A person** runs `CONFIRM=yes make k8s-reset`, then `PUBLIC_BASE_URL=http://<laptop LAN IP> make k8s-up` | A clean cluster and the QR code pointing at port 80. Data-wiping commands are run by a person. Allow about 7 minutes. The address is kept from then on (restarts, `k8s-bots`) |
 | 3 | `make k8s-bots`, wait 5 minutes | The market moves; time travel has a history |
 | 3a | `make k8s-status`: the last lines show the QR code's address and warn if it is localhost or not this laptop's current address | Fix with `make k8s-set-url url=http://<LAN IP>` (only the web pod restarts; no data touched) |
 | 3b | `make test-phone url=http://<LAN IP>` | A phone's view over the real address, as on the Compose path |
+| 3c | **Warm-up spike:** `make k8s-check c=scale`; it must say PASS (2 replicas above 500 ms, 5 replicas back below it). If it fails, wait a few minutes, check step 0, and run it once more | The traffic spike at its calibrated 110 requests/s, once, before anyone watches. In the calibration the only run where 5 replicas did not recover (861 ms) was the first one after Redpanda had restarted; the four after it passed. It stops the bots for about 5 minutes and starts them again |
 | 4 | `make test-k8s` is **not** for the audience (it starts the bots itself); use `python3 scripts/k8s.py run bots_check.py 120` and `python3 scripts/k8s.py run time_travel_check.py 5 5` | The same checks as the Compose path, through port-forwards |
 | 5 | Projector: `http://<LAN IP>/dashboard?theme=paper`; a second screen or tab: Grafana `http://localhost:3000`, dashboard *CircuitBreaker — Business* | The circuit breaker panel is the first thing Grafana shows |
 | 6 | Optional demo moment: *Follow an order*: place an order on a phone, paste its correlation ID (or pick one from *Orders placed*) | One order's journey through four services, from one query |
@@ -100,16 +104,13 @@ make k8s-reset` (Kubernetes) first; data-wiping commands are never run by a scri
 
 ## 5. The Later list
 
-Found while building, outside the frozen design, to reconsider in Phase 8 or after the course. Its first item, an
-index of each trader's open orders (Q-07 `status=open` read the whole order history), was built in the pre-chaos
-hardening PR of 2026-11-14 (the `open_orders_by_trader` table).
+Found while building, outside the frozen design, to reconsider in Phase 8 or after the course. Its first two items
+were built instead: an index of each trader's open orders (Q-07 `status=open` read the whole order history; the
+`open_orders_by_trader` table, pre-chaos hardening PR, 2026-11-14), and pruning the engine's snapshots, which grew one
+Cassandra partition per ticker to 2 GB in 19 hours (profiling PR, 2026-11-23: one partition per ticker per hour,
+thinned, a 24-hour time-travel horizon; [event sourcing](03-architecture/04-event-sourcing-and-cqrs.md#snapshots)).
 
-- **The engine's snapshots are never pruned.** `book_snapshots` keeps one Cassandra partition per ticker and a new row
-  every 500 events (policy P-03); time travel seeks from any of them, so none is deleted. Each holds the whole book
-  plus the last hour's finished orders (about 3.3 MB under the bots), so the partitions grow without limit: about
-  2 GB each after 19 hours on kind, far above the size Cassandra handles well. Measured: writing them costs Cassandra
-  almost no CPU with only the bots trading. A demo-day reset starts them empty. Options to weigh: a partition per
-  ticker and day, thinning old snapshots, or a time limit as well as an event count.
+Nothing is on the list now.
 
 ## Viva Notes
 
@@ -120,6 +121,17 @@ no orders left from earlier runs, an empty history. A script checks that state, 
 **Q: Why `caffeinate`?**
 A: A laptop that sleeps pauses every container. The system recovers on waking (Phase 4 fixed the two ways it used to
 freeze), but the audience would see a stalled market. `caffeinate -dims` keeps macOS awake for as long as it runs.
+
+**Q: Why does the runbook care about mains power and other apps?**
+A: Everything runs on one laptop, so the exchange's speed depends on what else that laptop is doing. We measured
+it: on battery, order latency more than doubled; with other apps busy, Cassandra's pauses stretched four times; and
+the traffic spike's rate (110 requests/s) only separates 2 replicas from 5 on a quiet Mac. Checking `uptime` takes
+seconds and turns "it was slow on the day" into something we can rule out beforehand.
+
+**Q: Why a warm-up spike before the audience arrives?**
+A: Measured: in the calibration, the one run where 5 replicas did not bring latency back below 500 ms was the first
+after Redpanda had restarted; the next four passed. Running the spike once beforehand both warms the system and proves,
+on that day's laptop, that the scenario will resolve, so the live run is not the first one.
 
 **Q: Why run Compose or the cluster, not both?**
 A: The cluster with monitoring uses about 4.3 GiB of process memory and Compose about 1.8 GiB, plus Docker's page

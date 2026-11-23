@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: market-data-service API
-  version: 1.1.2
+  version: 1.2.0
   summary: Instruments, candles, order-book depth, trades and time travel.
   description: |
     Owned by the **Market Insights Team** (MD Asif Ali). A CQRS read side: builds its models from `matching.v1`
@@ -219,9 +219,11 @@ paths:
       description: |
         **Q-12** — Rebuilds the ticker's order book at `at` by loading the nearest snapshot (Q-15) and applying stored
         events (Q-14) from matching-engine, and returns it with the candles and trades up to that moment, plus the
-        rebuilt book's `state_hash` (the same rule as matching-engine's Q-16). Works for any moment in the stored
-        history (only the replay stream, Q-13, limits its window). Never changes live state: the book is a private
-        copy built for this request.
+        rebuilt book's `state_hash` (the same rule as matching-engine's Q-16). Works for any moment in the last
+        **24 hours** (the time-travel horizon); an older `at` is refused with `422 TIME_BEFORE_HORIZON`. The horizon
+        limits fast seeking, not what is recorded: every event, however old, stays in the event store (Q-14 still
+        pages through all of them); matching-engine only keeps the snapshots that make a seek fast for 24 hours
+        (policy P-03). Never changes live state: the book is a private copy built for this request.
 
         **Proof of exactness.** When `at` is at or after the ticker's latest event, the live book *is* the market at
         `at`. market-data then reads matching-engine's live book (Q-16) first, stops the rebuild at exactly its
@@ -288,19 +290,30 @@ paths:
                 verification: null
         '422':
           description: |
-            Invalid request, or `at` is in the future. A moment up to 2 seconds ahead of the service's clock counts as now
+            Invalid request, `at` is in the future (`TIME_IN_FUTURE`), or `at` is more than 24 hours before the
+            service's clock (`TIME_BEFORE_HORIZON`). A moment up to 2 seconds ahead of the service's clock counts as now
             (viewers' clocks differ slightly), so "rewind to now" always lands after the latest event.
           content:
             application/problem+json:
               schema:
                 $ref: './shared/common.yaml#/components/schemas/Problem'
-              example:
-                type: https://circuitbreaker.local/errors/time-in-future
-                title: That moment hasn't happened yet
-                status: 422
-                code: TIME_IN_FUTURE
-                detail: at=2027-01-01T00:00:00Z is in the future.
-                correlation_id: req-7c8d9e
+              examples:
+                future:
+                  value:
+                    type: https://circuitbreaker.local/errors/time-in-future
+                    title: That moment hasn't happened yet
+                    status: 422
+                    code: TIME_IN_FUTURE
+                    detail: at=2027-01-01T00:00:00Z is in the future.
+                    correlation_id: req-7c8d9e
+                beforeHorizon:
+                  value:
+                    type: https://circuitbreaker.local/errors/time-before-horizon
+                    title: That moment is too far back
+                    status: 422
+                    code: TIME_BEFORE_HORIZON
+                    detail: at=2026-11-19T09:00:00Z is more than 24 hours ago. Time travel reaches back 24 hours; every event is still stored.
+                    correlation_id: req-7c8d9f
         '503':
           $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
   /internal/v1/faults:

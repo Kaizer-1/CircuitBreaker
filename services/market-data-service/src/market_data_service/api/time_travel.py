@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 from market_data_service.api.market import Ticker, _projection, _starting
 from market_data_service.application.slots import Slots
-from market_data_service.application.time_travel import TimeTravel
+from market_data_service.application.time_travel import HORIZON_MS, TimeTravel
 from market_data_service.application.views import time_travel_view
 from market_data_service.runtime.problem import problem_response
 
@@ -73,6 +73,15 @@ async def get_market_at(
             "TIME_IN_FUTURE",
             "That moment hasn't happened yet",
             detail=f"at={at} is in the future.",
+            instance=request.url.path,
+        )
+    if moment < now - HORIZON_MS:
+        return problem_response(
+            422,
+            "TIME_BEFORE_HORIZON",
+            "That moment is too far back",
+            detail=f"at={at} is more than 24 hours ago. Time travel reaches back 24 hours; "
+            "every event is still stored.",
             instance=request.url.path,
         )
     asked_for_now = moment >= now  # "now", give or take the clock skew allowed above

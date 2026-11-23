@@ -4,6 +4,8 @@ Alert rules and the SRE agent's evidence collector query these names, so do not 
 updating docs/03-architecture/06-chaos-scenarios.md.
 """
 
+import asyncio
+
 from fastapi import APIRouter, Response
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -74,6 +76,29 @@ class Metrics:
             ["service", "topic", "partition"],
             registry=self.registry,
         )
+        # Filled by watch_event_loop, in the services that start it (those on the order path).
+        self.event_loop_lag_seconds = Histogram(
+            "event_loop_lag_seconds",
+            "How late the event loop woke from a timer: the time ready work waits for the CPU.",
+            ["service"],
+            buckets=(0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5),
+            registry=self.registry,
+        )
+
+
+async def watch_event_loop(metrics: Metrics, interval: float = 0.25) -> None:
+    """Sleep `interval` again and again and record how much later than that the loop woke.
+
+    One event loop runs every request of a pod; when it is late, every request waits, whether for
+    the pod's CPU limit (throttling) or for code that blocked the loop. The lag shows which part of
+    a slow request was waiting rather than working.
+    """
+    loop = asyncio.get_running_loop()
+    lag = metrics.event_loop_lag_seconds.labels(metrics.service)
+    while True:
+        started = loop.time()
+        await asyncio.sleep(interval)
+        lag.observe(max(0.0, loop.time() - started - interval))
 
 
 def metrics_router(metrics: Metrics) -> APIRouter:
