@@ -261,7 +261,7 @@ class CassandraEventStore:
                     self._prepared("select_newest_snapshot"), (ticker, row.hour)
                 )
                 if found:
-                    return _state(found[0].state)
+                    return await asyncio.to_thread(_state, found[0].state)
             return None
         cut = parse_timestamp(at)
         until = _dt(hour_of(ms_of(at)))
@@ -274,7 +274,7 @@ class CassandraEventStore:
                 found = await self._run(
                     self._prepared("select_snapshot"), (ticker, row.hour, sequence)
                 )
-                return _state(found[0].state) if found else None
+                return await asyncio.to_thread(_state, found[0].state) if found else None
         return None
 
     async def save_snapshot(self, ticker: str, snapshot: dict[str, Any]) -> None:
