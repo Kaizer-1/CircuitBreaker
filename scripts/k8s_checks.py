@@ -1051,6 +1051,17 @@ def refresh(name: str) -> None:
         time.sleep(1)
 
 
+def becomes(app: str, sync: str, timeout: float = 60) -> bool:
+    """Whether the Application reaches this sync status within the timeout (its status can lag a
+    refresh by a few seconds)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if app_status(app)[0] == sync:
+            return True
+        time.sleep(2)
+    return False
+
+
 def deployment(env: str, name: str) -> dict[str, Any]:
     result: dict[str, Any] = json.loads(kubectl("get", "deployment", name, "-n", env, "-o", "json"))
     return result
@@ -1109,13 +1120,13 @@ def check_gitops(args: argparse.Namespace) -> bool:
     drift(env, "order-service")
     time.sleep(wait)
     refresh(app)
-    ok &= verdict(app_status(app)[0] == "OutOfSync", "a Git-owned field changed by hand: OutOfSync")
+    ok &= verdict(becomes(app, "OutOfSync"), "a Git-owned field changed by hand: OutOfSync")
     ok &= verdict(drifted(env, "order-service"), "and left in place (self-heal off)")
     undo_drift(env, "order-service")
     time.sleep(5)
     refresh(app)
     ok &= verdict(
-        app_status(app)[:2] == ("Synced", "Healthy"),
+        becomes(app, "Synced") and app_status(app)[1] == "Healthy",
         "kubectl rollout undo (what rollback_deployment does) brings it back to Synced",
     )
     return ok
@@ -1190,7 +1201,7 @@ def check_gitops_push(args: argparse.Namespace) -> bool:
     other = f"order-service-{env}"
     drift(env, "order-service")
     refresh(other)
-    ok = verdict(app_status(other)[0] == "OutOfSync", f"{other} drifted by hand: OutOfSync")
+    ok = verdict(becomes(other, "OutOfSync"), f"{other} drifted by hand: OutOfSync")
     git("add", str(values))
     git("commit", "-q", "-m", f"chore({env}): GitOps check, a pod annotation on web ({stamp})")
     sha = git("rev-parse", "HEAD")

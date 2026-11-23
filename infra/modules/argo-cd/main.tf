@@ -48,16 +48,25 @@ resource "helm_release" "argo_cd" {
   depends_on = [kubernetes_secret_v1.repository]
 }
 
+locals {
+  applications_chart = "${path.module}/applications"
+  # Helm reinstalls a local chart only when its version or values change; this value changes with any file in it.
+  applications_checksum = sha256(join("", [
+    for f in sort(fileset(local.applications_chart, "**")) : filesha256("${local.applications_chart}/${f}")
+  ]))
+}
+
 # The AppProject, the ApplicationSets and the observability Application, as a small chart in this module. A second
 # release, after Argo CD's own, because its objects need Argo CD's CRDs to exist first.
 resource "helm_release" "applications" {
   name      = "circuitbreaker-applications"
-  chart     = "${path.module}/applications"
+  chart     = local.applications_chart
   namespace = kubernetes_namespace_v1.argocd.metadata[0].name
   values = [yamlencode({
     repoURL        = var.repo_url
     targetRevision = var.target_revision
     environments   = var.environments
+    checksum       = local.applications_checksum
   })]
   depends_on = [helm_release.argo_cd]
 }

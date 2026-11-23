@@ -6,6 +6,8 @@ metadata:
   name: observability
   labels:
     circuitbreaker.io/component: observability
+  annotations:
+    argocd.argoproj.io/manifest-generate-paths: /charts/observability;/observability
 spec:
   project: circuitbreaker
   source:
