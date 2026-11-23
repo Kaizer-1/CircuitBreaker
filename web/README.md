@@ -152,7 +152,8 @@ market and waits for it in Holdings, re-sends the same order key (one order), ta
 top, tab lit, no reload) and fails on any console error. Needs the bots trading (a seller); it trades as `load-13`,
 which is never ranked.
 
-In Docker (`make up`) unprivileged nginx serves the built files on host port 5173. It forwards `/v1/` (and the
+In Docker (`make up`) unprivileged nginx (mainline 1.31, Alpine; the image runs `apk upgrade` while building, and CI's
+Trivy gate fails on a CRITICAL vulnerability with a fix) serves the built files on host port 5173. It forwards `/v1/` (and the
 WebSocket upgrade on `/v1/ws/`) to `api-gateway`, so the browser sees a single origin (no CORS). Versions: React 19,
 Vite 8, TypeScript 6.0 (pinned below 6.1 because typescript-eslint does not support TypeScript 7 yet), ESLint 10,
 Vitest 5, Lightweight Charts 5.2.1, Playwright 1.64.1 (development only).
