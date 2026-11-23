@@ -336,6 +336,7 @@ async def simulate(seed: int, fail_closed: bool, ticks: int = 120) -> Result:
             publisher,
             environment="dev",
             snapshot_every=5,
+            snapshot_spacing_ms=0,
             clock=lambda: START + timedelta(seconds=clock.now),
             new_id=new_id,
         )

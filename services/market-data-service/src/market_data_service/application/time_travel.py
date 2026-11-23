@@ -4,7 +4,10 @@ docs/03-architecture/04-event-sourcing-and-cqrs.md, section 5:
 
 1. **The book.** Take matching-engine's nearest snapshot taken at or before T (Q-15), then apply
    the stored events after it up to T (Q-14) to a fresh `ReplayBook`. Apply only, never decide.
-   Snapshots come every 500 events per ticker, so this is at most about 500 events wherever T is.
+   Snapshots come every 500 events per ticker (at most one per 30 s); the engine keeps every one
+   of the last hour and one per 10 minutes back to the horizon, so this is at most about 10
+   minutes of events wherever T is. The horizon is 24 hours (HORIZON_MS): older moments are
+   refused, although their events are all still stored.
 2. **The proof.** The rebuilt book's `state_hash` is computed by the same rule as the engine's
    live Q-16 hash, so two books are equal exactly when their hashes are. When T is at or after the
    live book's last event ("now"), the live book *is* the market at T: the engine's Q-16 is read
@@ -30,6 +33,10 @@ from market_data_service.ports.market_store import MarketStore
 from market_data_service.runtime.events import parse_timestamp
 
 CANDLES = 60  # 1-minute candles up to T (TimeTravelView)
+# How far back time travel reaches: matching-engine keeps book snapshots this long (its
+# domain/retention.py). The events go back to the first day; the snapshots that make seeking
+# fast do not.
+HORIZON_MS = 24 * 3_600_000
 RECENT_TRADES = 50
 CANDLE_INTERVAL = "1m"
 

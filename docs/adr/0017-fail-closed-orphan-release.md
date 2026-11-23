@@ -229,6 +229,13 @@ a snapshot stored before this change (200,000 orders, none with `closed_at`) cou
 so they are forgotten together an hour later. Snapshots stored before 2026-11-14 are read that way. Specs: matching-engine
 1.3.0 (`closed_at`, `forget_before`, and the hash rule), market-data 1.1.2.
 
+*Why one hour and not less (owner's decision, 2026-11-23).* A shorter memory would make snapshots smaller (about 160
+bytes per remembered order), and the profiling PR weighed 15 minutes. It stays one hour: the memory must be longer than
+the longest outage the system is proven to survive, and the outage tests (`tests/integration/test_outbox_outage.py`,
+the unit and system-model scenarios) hold Redpanda down for 25 minutes and then deliver the queued cancels and expiries.
+A 15-minute memory would be shorter than a tested scenario. The snapshots' size is bounded instead by keeping fewer of
+them (policy P-03 retention, [event sourcing](../03-architecture/04-event-sourcing-and-cqrs.md#snapshots)).
+
 ## Alternatives considered
 
 | Alternative | Why rejected |

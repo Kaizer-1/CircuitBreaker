@@ -28,6 +28,7 @@ from market_data_service.application.replay import (
     ReplaySession,
 )
 from market_data_service.application.slots import Slots
+from market_data_service.application.time_travel import HORIZON_MS
 from market_data_service.domain.instruments import TICKERS
 
 logger = logging.getLogger("replay")
@@ -50,6 +51,8 @@ def _window(params: Any, now_ms: int) -> tuple[int, int, int]:
         raise ValueError("the window is at most 30 minutes")
     if end > now_ms:
         raise ValueError("to is in the future")
+    if start < now_ms - HORIZON_MS:
+        raise ValueError("from is more than 24 hours ago (time travel reaches back 24 hours)")
     return start, end, speed
 
 

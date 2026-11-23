@@ -27,6 +27,10 @@ class EventStore(Protocol):
 
     async def save_snapshot(self, ticker: str, snapshot: dict[str, Any]) -> None: ...
 
+    async def prune_snapshots(self, ticker: str, now: str) -> int:
+        """Delete the snapshots domain/retention.py does not keep when the latest event is at `now`
+        (never an event); returns how many partitions and rows were deleted."""
+
     async def publish_cursor(self, ticker: str) -> int:
         """The last sequence known to be published to matching.v1 (0 if none)."""
 

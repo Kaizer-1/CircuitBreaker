@@ -193,7 +193,7 @@ flowchart LR
 |---|---|---|
 | P-01 | Whenever `OrderPlaced`, match the order | `matching-engine` |
 | P-02 | Whenever `OrderCancelRequested`, remove the remainder from the book (or reject if already filled) | `matching-engine` |
-| P-03 | Whenever 500 events have been appended for a ticker, take a snapshot | `matching-engine` |
+| P-03 | Whenever 500 events have been appended for a ticker, take a snapshot (at most one per 30 s of event time); keep every snapshot of the last hour, the earliest per 10 minutes back to the 24-hour time-travel horizon, and the newest always | `matching-engine` |
 | P-04 | Whenever `OrderAccepted` / `TradeExecuted` / `OrderCancelled` / `OrderCancelRejected`, update the order's status | `order-service` |
 | P-05 | Whenever `TradeExecuted`, settle cash and shares for buyer and seller | `portfolio-service` |
 | P-06 | Whenever an order is finished (filled, `OrderCancelled` or `OrderExpired`), release the leftover reservation. Money is released **only** on these engine events ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)) | `portfolio-service` |

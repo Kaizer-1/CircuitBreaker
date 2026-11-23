@@ -928,7 +928,7 @@ notice.
 | `ReservationReleased` | `portfolio-service` | Postgres `reservations` | Leftover reservation returned: order filled with price improvement, cancelled (any reason), or expired by the engine (`OrderExpired`). Only ever caused by an engine event ([ADR-0017](../adr/0017-fail-closed-orphan-release.md)). |
 | `ExpiryRequested` | `portfolio-service` | Postgres `reservations` (`expiry_requested_at`) | An unconfirmed reservation is 120 s old and order-service accepted the expiry request (A-19). |
 | `OrderRejected` | `order-service` | Cassandra `order_events` | Order failed validation or reservation; never reached the bus. |
-| `BookSnapshotTaken` | `matching-engine` | Cassandra `book_snapshots` | Full book for a ticker saved at a sequence number. |
+| `BookSnapshotTaken` | `matching-engine` | Cassandra `book_snapshots_by_hour` | Full book for a ticker saved at a sequence number (kept by policy P-03's retention; the events are never pruned). |
 | `ChaosExperimentStarted` / `ChaosExperimentEnded` | `chaos-service` | memory + Loki | Experiment lifecycle; `ended` carries outcome `REMEDIATED`, `STOPPED` or `EXPIRED`. |
 | `FaultInjected` / `FaultCleared` | `market-data-service` | memory + Loki | Memory-leak fault switched on/off via `/internal/v1/faults`. |
 

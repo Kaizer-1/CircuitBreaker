@@ -16,6 +16,8 @@ function describe(e: unknown): string {
     return 'Time travel is busy right now. Try again in a moment.'
   if (e instanceof ApiError && e.code === 'TIME_IN_FUTURE')
     return 'That moment has not happened yet.'
+  if (e instanceof ApiError && e.code === 'TIME_BEFORE_HORIZON')
+    return 'Time travel reaches back 24 hours.'
   return e instanceof Error ? e.message : String(e)
 }
 

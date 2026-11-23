@@ -51,6 +51,7 @@ async def run_with_crashes(
                 publisher,
                 environment="dev",
                 snapshot_every=snapshot_every,
+                snapshot_spacing_ms=0,
                 clock=lambda: NOW,
                 new_id=new_id,
             )
@@ -121,7 +122,12 @@ def test_a_crash_at_any_point_then_a_rebuild_gives_the_same_books_as_no_crash(
     # Kill it once more, idle: the rebuilt books equal the books just before the kill.
     before = engine.books_hash()
     restarted = MatchingEngine(
-        store, publisher, environment="dev", snapshot_every=snapshot_every, clock=lambda: NOW
+        store,
+        publisher,
+        environment="dev",
+        snapshot_every=snapshot_every,
+        snapshot_spacing_ms=0,
+        clock=lambda: NOW,
     )
     store.hook = publisher.hook = lambda point: None
     asyncio.run(restarted.recover())

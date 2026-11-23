@@ -23,6 +23,7 @@ def engine() -> MatchingEngine:
         RecordingPublisher(),
         environment="dev",
         snapshot_every=2,
+        snapshot_spacing_ms=0,
         clock=lambda: NOW,
         new_id=id_source(),
     )

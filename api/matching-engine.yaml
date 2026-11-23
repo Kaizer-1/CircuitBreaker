@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: matching-engine internal API
-  version: 1.3.0
+  version: 1.3.1
   summary: Read-only access to the market event store and order books.
   description: |
     Owned by the **Trading Team** (Kaizer Dewaswala); treated as a complicated subsystem.
@@ -127,8 +127,11 @@ paths:
       summary: Get the nearest order-book snapshot at or before a time
       x-seeds-id: Q-15
       description: |
-        **Q-15** — Return the latest snapshot of the ticker's book taken at or before `at`. If none exists yet, returns
-        an empty book at sequence 0 (replay then starts from the first event). Includes `closed`, every order the book
+        **Q-15** — Return the latest snapshot of the ticker's book taken at or before `at`, among those the engine keeps
+        (policy P-03: every snapshot of the last hour, the earliest per 10 minutes back to the 24-hour time-travel
+        horizon, the newest always; events are never deleted). So within the horizon it is at most about 10 minutes
+        of events before `at`. If none exists, returns an empty book at sequence 0 (replay then starts from the first
+        event: still exact, only slow; market-data refuses moments past the horizon). Includes `closed`, every order the book
         had finished or expired in the hour before (from `forget_before` on), so a rebuild from this snapshot plus later
         events (time travel, Q-12) has the whole state and reproduces Q-16's `state_hash` exactly.
       parameters:

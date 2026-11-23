@@ -67,7 +67,8 @@ clusters without changing any code.
 |---|---|---|---|
 | `market_events` | `(ticker, day)` | `sequence ASC` | "Events for CALVERA after sequence N until time T" (replay, time travel, re-publish) |
 | `ticker_days` | `ticker` | `day ASC` | "Which day partitions of `market_events` exist, and the first sequence in each" (where a rebuild or a Q-14 page starts) |
-| `book_snapshots` | `ticker` | `sequence DESC` | "Latest snapshot at or before time T" |
+| `book_snapshots_by_hour` | `(ticker, hour)` | `sequence DESC` | "Latest snapshot at or before time T" (in T's hour, or the hour before) |
+| `snapshot_hours` | `ticker` | `hour DESC` | "Which hour partitions of `book_snapshots_by_hour` exist, and which are already thinned" |
 | `processed_commands` | `command_id` (the `event_id` of the incoming `OrderPlaced`/`OrderCancelRequested`) | — | "Have I already processed this command?" (idempotency) |
 | `publish_cursor` | `ticker` | — | "Last sequence successfully published to `matching.v1`" |
 
@@ -77,6 +78,11 @@ clusters without changing any code.
 orders finished or expired in the last hour of event time, with when each closed, and `forget_before`, where that hour
 begins (so cancel rejections and tombstones give the same answer after a restart; ADR-0017 note "A memory of one
 hour"). `processed_commands` keeps every command ID for ever, on disk: an exact redelivery is always a duplicate.
+`market_events` is never pruned. Snapshots are: the engine keeps every one of the last hour, the earliest per
+10 minutes back to the 24-hour time-travel horizon, and the newest always, deleting the rest itself (not a TTL, which
+could expire a quiet ticker's only snapshot); `hour` bucketing keeps each partition to one hour of snapshots (policy
+P-03, [event sourcing](04-event-sourcing-and-cqrs.md#snapshots)). The first snapshot table, `book_snapshots` (one
+partition per ticker, never pruned), is copied over once at start-up and dropped.
 
 ### Keyspace `order_service` (owner: order-service)
 

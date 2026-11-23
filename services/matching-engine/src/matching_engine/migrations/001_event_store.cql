@@ -20,14 +20,8 @@ CREATE TABLE IF NOT EXISTS ticker_days (
     PRIMARY KEY (ticker, day)
 ) WITH CLUSTERING ORDER BY (day ASC);
 
--- The whole book every 500 events (local event BookSnapshotTaken); newest first.
-CREATE TABLE IF NOT EXISTS book_snapshots (
-    ticker   text,
-    sequence bigint,
-    as_of    timestamp,
-    state    text,  -- BookSnapshot.to_dict() as JSON
-    PRIMARY KEY (ticker, sequence)
-) WITH CLUSTERING ORDER BY (sequence DESC);
+-- Book snapshots: 002_snapshots_by_hour.cql (the first table, one partition per ticker, grew without
+-- bound and is moved and dropped at start-up: adapters/cassandra_store.py).
 
 -- Idempotency: the event_id of every orders.v1 command already processed.
 CREATE TABLE IF NOT EXISTS processed_commands (

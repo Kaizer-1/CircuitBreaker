@@ -192,6 +192,17 @@ def test_a_moment_in_the_future_or_without_an_offset_is_refused(
     assert unknown.status_code == 422
 
 
+def test_a_moment_before_the_24_hour_horizon_is_refused_and_one_inside_it_is_not(
+    client: TestClient, exchange: Exchange
+) -> None:
+    now = ms(exchange.as_of or "") + 60_000  # the fixture's server clock
+    day = 24 * 3_600_000
+    too_old = get(client, stamp(now - day - 1_000))
+    assert (too_old.status_code, too_old.json()["code"]) == (422, "TIME_BEFORE_HORIZON")
+    assert "every event is still stored" in too_old.json()["detail"]
+    assert get(client, stamp(now - day + 60_000)).status_code == 200
+
+
 def test_a_full_replica_refuses_traders_but_keeps_a_place_for_the_presenter(
     client: TestClient, app: FastAPI, exchange: Exchange
 ) -> None:
