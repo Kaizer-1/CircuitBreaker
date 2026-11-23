@@ -17,7 +17,7 @@ ADMIN_PASSCODE ?= cb-dev-admin-passcode
 
 .DEFAULT_GOAL := help
 .PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
-        k8s-up k8s-down k8s-status k8s-set-url k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade k8s-passcode \
+        k8s-up k8s-down k8s-status k8s-set-url k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade k8s-passcode k8s-test-phone \
         test-alerts test-k8s k8s-check k8s-lint test-phone \
         platform platform-plan sync argocd seal sealing-cert sealing-key-backup
 
@@ -197,7 +197,11 @@ k8s-bots-stop: ## Kubernetes: stop the bots trading
 	@python3 scripts/k8s.py bots --stop --env $(if $(env),$(env),prod)
 
 k8s-passcode: ## Kubernetes: the presenter's admin passcode (random, sealed in Git): make k8s-passcode [env=]
-	@python3 scripts/k8s.py passcode --env $(if $(env),$(env),prod)
+	@python3 scripts/k8s.py secret --env $(if $(env),$(env),prod) admin-passcode
+
+k8s-test-phone: ## Kubernetes: make test-phone against an environment, with its own bot secret: make k8s-test-phone [env=]
+	@cd web && BOT_SECRET="$$(python3 ../scripts/k8s.py secret --env $(if $(env),$(env),prod) bot-secret)" \
+	  node scripts/phone_check.mjs $(if $(filter staging,$(env)),http://localhost:8090,http://localhost)
 
 k8s-demo-trade: ## Kubernetes: make demo-trade against the cluster (env=prod|staging)
 	@python3 scripts/k8s.py run --env $(if $(env),$(env),prod) demo_trade.py

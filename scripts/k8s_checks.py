@@ -65,6 +65,17 @@ def kubectl(*args: str, check: bool = True, input_text: str | None = None) -> st
     return out.stdout
 
 
+def use_cluster_secrets(env: str) -> None:
+    """The environment's own bot secret and admin passcode (sealed, random since Phase 6) for
+    scripts/stack.py and load_orders.py, read before either is imported; set ones win."""
+    import k8s
+
+    for var, (secret, key) in k8s.SCRIPT_SECRETS.items():
+        value = k8s.secret_value(env, secret, key)
+        if value and var not in os.environ:
+            os.environ[var] = value
+
+
 def get_json(url: str) -> Any:
     with urllib.request.urlopen(url, timeout=15) as response:  # noqa: S310 (local http:// URLs)
         return json.load(response)
@@ -1092,33 +1103,15 @@ def check_gitops(args: argparse.Namespace) -> bool:
         app_status(app)[0] == "Synced", "the Application stays Synced (restartedAt ignored)"
     )
 
-    # Any other live change (here: what chaos BAD_DEPLOY does to a pod template) is drift: reported,
-    # never undone by Argo CD, so the SRE agent's rollback is what fixes it.
-    kubectl(
-        "patch",
-        "deployment/order-service",
-        "-n",
-        env,
-        "--type=strategic",
-        "-p",
-        json.dumps(
-            {
-                "spec": {
-                    "template": {"metadata": {"annotations": {"circuitbreaker.io/drift": "yes"}}}
-                }
-            }
-        ),
-    )
-    kubectl("rollout", "status", "-n", env, "deployment/order-service", "--timeout=300s")
+    # A change to a field Git owns (what chaos BAD_DEPLOY does to the image) is drift: reported as
+    # OutOfSync, never undone by Argo CD, so the SRE agent's rollback is what fixes it. (A field Git
+    # does not set, e.g. a new annotation, is no drift at all: Argo CD compares what Git owns.)
+    drift(env, "order-service")
     time.sleep(wait)
     refresh(app)
-    drifted = deployment(env, "order-service")["spec"]["template"]["metadata"]["annotations"]
-    ok &= verdict(app_status(app)[0] == "OutOfSync", "a pod-template change by hand: OutOfSync")
-    ok &= verdict(
-        drifted.get("circuitbreaker.io/drift") == "yes", "and left in place (self-heal off)"
-    )
-    kubectl("rollout", "undo", "-n", env, "deployment/order-service")
-    kubectl("rollout", "status", "-n", env, "deployment/order-service", "--timeout=300s")
+    ok &= verdict(app_status(app)[0] == "OutOfSync", "a Git-owned field changed by hand: OutOfSync")
+    ok &= verdict(drifted(env, "order-service"), "and left in place (self-heal off)")
+    undo_drift(env, "order-service")
     time.sleep(5)
     refresh(app)
     ok &= verdict(
@@ -1126,6 +1119,27 @@ def check_gitops(args: argparse.Namespace) -> bool:
         "kubectl rollout undo (what rollback_deployment does) brings it back to Synced",
     )
     return ok
+
+
+DRIFT = "drifted-by-hand"
+
+
+def drift(env: str, name: str) -> None:
+    """Change a pod-template field the chart sets (checksum/config), as a bad deploy changes the
+    image: the pods roll, and Git no longer describes the live Deployment."""
+    patch = {"spec": {"template": {"metadata": {"annotations": {"checksum/config": DRIFT}}}}}
+    kubectl("patch", f"deployment/{name}", "-n", env, "--type=strategic", "-p", json.dumps(patch))
+    kubectl("rollout", "status", "-n", env, f"deployment/{name}", "--timeout=300s")
+
+
+def drifted(env: str, name: str) -> bool:
+    annotations = deployment(env, name)["spec"]["template"]["metadata"].get("annotations", {})
+    return bool(annotations.get("checksum/config") == DRIFT)
+
+
+def undo_drift(env: str, name: str) -> None:
+    kubectl("rollout", "undo", "-n", env, f"deployment/{name}")
+    kubectl("rollout", "status", "-n", env, f"deployment/{name}", "--timeout=300s")
 
 
 def git(*args: str) -> str:
@@ -1171,6 +1185,12 @@ def check_gitops_push(args: argparse.Namespace) -> bool:
     # The file's last block is web's own mapping, so the annotation is appended inside it.
     annotation = f'  podAnnotations:\n    circuitbreaker.io/gitops-check: "{stamp}"\n'
     values.write_text(original.rstrip("\n") + "\n" + annotation)
+    # An emergency fix in the cluster (the SRE agent's rollback) must survive an UNRELATED commit:
+    # order-service drifts first, then only web's file changes in Git (ADR-0014, ADR-0016).
+    other = f"order-service-{env}"
+    drift(env, "order-service")
+    refresh(other)
+    ok = verdict(app_status(other)[0] == "OutOfSync", f"{other} drifted by hand: OutOfSync")
     git("add", str(values))
     git("commit", "-q", "-m", f"chore({env}): GitOps check, a pod annotation on web ({stamp})")
     sha = git("rev-parse", "HEAD")
@@ -1179,7 +1199,14 @@ def check_gitops_push(args: argparse.Namespace) -> bool:
     pushed = time.monotonic() - started
     synced, healthy = wait_synced_to(app, sha, started)
     live = deployment(env, "web")["spec"]["template"]["metadata"]["annotations"]
-    ok = verdict(live.get("circuitbreaker.io/gitops-check") == stamp, "the change is live")
+    ok &= verdict(live.get("circuitbreaker.io/gitops-check") == stamp, "the change is live")
+    time.sleep(40)  # one more poll: had Argo CD meant to re-sync order-service, it would have
+    refresh(other)
+    ok &= verdict(
+        drifted(env, "order-service") and app_status(other)[0] == "OutOfSync",
+        f"the unrelated commit left {other}'s drift alone (no sync of an untouched service)",
+    )
+    undo_drift(env, "order-service")
     print(
         f"  push {pushed:.1f} s; after it started: Synced {synced:.0f} s, Healthy {healthy:.0f} s"
     )
@@ -1458,6 +1485,7 @@ def main() -> int:
     profile.add_argument("--replicas", type=int, nargs="+", default=[2, 5])
     profile.set_defaults(func=check_profile)
     args = parser.parse_args()
+    use_cluster_secrets(args.env)
     ok = args.func(args)
     print(f"\n{GREEN + 'all passed' if ok else RED + 'FAILED'}{RESET}")
     return 0 if ok else 1

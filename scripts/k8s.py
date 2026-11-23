@@ -11,7 +11,7 @@
     set-url URL [--env]      change only the URL in the join QR code (PUBLIC_BASE_URL), data kept
     bots [--stop] [--env]    turn the 20 bots on or off
     sync [--env] [svc]       ask Argo CD to look at Git now instead of within 30 s (make sync)
-    passcode [--env]         the presenter's admin passcode (make k8s-passcode)
+    secret NAME [--env]      one value of a Secret, e.g. admin-passcode (make k8s-passcode)
     argocd                   Argo CD's web UI on http://localhost:8443 and its admin password
     images [svc ...]         build changed images, push them to the local registry
     charts                   download the pinned third-party charts once (make platform needs them)
@@ -941,11 +941,12 @@ def cmd_argocd(_: argparse.Namespace) -> None:
     )
 
 
-def cmd_passcode(args: argparse.Namespace) -> None:
-    """The presenter's admin passcode (random since Phase 6: a SealedSecret, ADR-0019)."""
-    value = secret_value(args.env, "admin-passcode", "value")
+def cmd_secret(args: argparse.Namespace) -> None:
+    """One value of an environment's Secret (random since Phase 6: SealedSecrets, ADR-0019), e.g.
+    the presenter's admin passcode (make k8s-passcode) or the bot secret for make k8s-test-phone."""
+    value = secret_value(args.env, args.name, args.key)
     if not value:
-        sys.exit(f"no Secret admin-passcode in {args.env}")
+        sys.exit(f"no Secret {args.name} (key {args.key}) in {args.env}")
     print(value)
 
 
@@ -999,9 +1000,11 @@ def main() -> None:
     sync.add_argument("services", nargs="*")
     sync.set_defaults(func=cmd_sync)
     sub.add_parser("argocd").set_defaults(func=cmd_argocd)
-    passcode = sub.add_parser("passcode", help="the presenter's admin passcode")
-    passcode.add_argument("--env", choices=["prod", "staging"], default="prod")
-    passcode.set_defaults(func=cmd_passcode)
+    secret = sub.add_parser("secret", help="print one value of an environment's Secret")
+    secret.add_argument("--env", choices=["prod", "staging"], default="prod")
+    secret.add_argument("name")
+    secret.add_argument("--key", default="value")
+    secret.set_defaults(func=cmd_secret)
     sub.add_parser("charts").set_defaults(func=cmd_charts)
     sub.add_parser("registry").set_defaults(func=cmd_registry)
     run_ = sub.add_parser("run", help="run a scripts/ check against the cluster")

@@ -378,36 +378,63 @@ runner).
 > AWS). **LocalStack** emulates AWS APIs locally; it is **optional** in our design.
 
 Terraform is the primary IaC tool for the **local platform**
-([ADR-0015](../adr/0015-terraform-local-platform.md), amending [ADR-0010](../adr/0010-terraform-localstack.md)).
-It arrives in **Phase 6**; in Phase 5 `make k8s-up` creates the same one-node cluster from `infra/kind/cluster.yaml`
-and the dev Secrets from the local placeholders, and the modules take over with the same settings:
+([ADR-0015](../adr/0015-terraform-local-platform.md), amending [ADR-0010](../adr/0010-terraform-localstack.md)),
+built in **Phase 6**. `make platform` plans, asks, and applies `infra/envs/local`; from nothing it builds the whole
+platform, and on a running one it changes only what differs (`make platform-plan` shows that first).
 
 ```text
 infra/
+├── kind/cluster.yaml        # the cluster's settings: read by the kind-cluster module (the only copy)
+├── platform/*.yaml          # values for Traefik, kube-prometheus-stack, Loki, Alloy, Argo CD, Sealed Secrets
+├── sealed-secrets/sealing-cert.pem   # the sealing key's PUBLIC certificate (sealing needs only this)
 ├── modules/
-│   ├── kind-cluster/   # kind provider: cluster 'circuitbreaker'
-│   ├── environment/    # kubernetes provider: namespace, ResourceQuota, sre-agent Role/RoleBinding, Secrets
-│   ├── argo-cd/        # helm provider: Argo CD in namespace 'argocd' + the ApplicationSet
-│   └── localstack/     # OPTIONAL: aws provider → LocalStack (S3 event-archive bucket)
-└── envs/
-    └── local/main.tf   # calls kind-cluster, environment × {staging, prod}, argo-cd (and optionally localstack)
+│   ├── kind-cluster/        # kind provider (tehcyx/kind 0.13.0): the cluster; connects the local registry
+│   ├── environment/         # kubernetes provider: namespace, ResourceQuota, default-deny policy, sre-agent Role
+│   ├── platform-charts/     # helm provider: Traefik, kube-prometheus-stack, Loki, Alloy; Grafana's admin Secret
+│   ├── sealed-secrets/      # helm provider: the controller, after restoring the backed-up key
+│   └── argo-cd/             # helm + kubernetes: Argo CD, its repository key, the AppProject and ApplicationSets
+└── envs/local/              # main.tf calls them all; terraform.tfstate (git-ignored); .terraform.lock.hcl
 ```
 
 | Resource | Module / provider | Purpose |
 |---|---|---|
-| kind cluster `circuitbreaker` (one node, the settings of `infra/kind/cluster.yaml`) | `kind-cluster` / kind (community provider, version pinned) | The Kubernetes cluster itself, created as code. |
-| Namespaces `staging`, `prod`, `observability`, `argocd` with ResourceQuotas | `environment` / kubernetes | Separate, size-limited environments. |
-| The `sre-agent` ServiceAccount, Role and RoleBinding per environment | `environment` / kubernetes | The agent's least-privilege permissions ([SRE agent design](05-sre-agent-design.md#defence-in-depth-kubernetes-rbac)). |
-| Kubernetes Secrets: `openrouter-api-key`, `jwt-secret`, `bot-secret`, `admin-passcode`, DB passwords | `environment` / kubernetes | Values come from `TF_VAR_*` variables or a git-ignored `secrets.auto.tfvars`, never from Git. |
-| Argo CD + the `ApplicationSet` | `argo-cd` / helm + kubernetes | The GitOps deployment server ([§4](#4-cicd-pipeline-github-actions--argo-cd-gitops)). |
-| *Optional:* S3 bucket `circuitbreaker-<env>-event-archive` | `localstack` / aws → LocalStack | Nightly export of the market event store, to demonstrate cloud resources. ⚠️ Check LocalStack's current licence and free-tier terms before enabling it. |
+| kind cluster `circuitbreaker` (one node, `infra/kind/cluster.yaml`) | `kind-cluster` / kind (community provider, pinned 0.13.0) | The Kubernetes cluster itself, created as code. |
+| Namespaces `staging` and `prod`, each with a ResourceQuota, the default-deny ingress policy, and the `sre-agent` Role + RoleBinding | `environment` / kubernetes 3.5.0 | Two environments with a ceiling on what each may claim (section 3) and the agent's least privilege ([SRE agent design](05-sre-agent-design.md#defence-in-depth-kubernetes-rbac)). The chart creates the `sre-agent` ServiceAccount. |
+| Traefik, kube-prometheus-stack, Loki, Alloy (ADR-0018), from the verified chart cache | `platform-charts` / helm 3.3.0 | The Phase 5 platform, now as code. |
+| The Sealed Secrets controller (0.41.2, by digest) | `sealed-secrets` / helm | Decrypts the SealedSecrets in Git ([ADR-0019](../adr/0019-sealed-secrets-for-gitops.md)). |
+| Argo CD (chart 10.18.2 = v3.6.2), its repository key, the AppProject `circuitbreaker`, the ApplicationSets | `argo-cd` / helm + kubernetes | The GitOps deployment server (section 4). |
+| *Optional, not built:* S3 bucket in LocalStack | `localstack` | On the runbook's Later list. ⚠️ Check LocalStack's licence and free-tier terms before enabling it. |
 
-- **State:** local backend; the `.tfstate` file is git-ignored. It contains secret values, so it must never be
-  committed.
-- **Pipeline:** every PR runs `terraform fmt -check` and `validate`. A CI job also runs `terraform apply` on
-  `envs/local` inside the runner, checks that Argo CD's pods are running, then runs `terraform destroy`. This is the
-  textbook's "test the environment, then clean up". On the demo laptop the Cloud Platform Team runs `make platform`
-  (plan, review, apply).
+**Measured (2026-11-23, from a deleted cluster):** the platform without Argo CD (20 resources) and then Argo CD
+(4 more) took about 5 and 2 minutes; Argo CD then brought all 29 Applications to `Synced` and `Healthy` in about
+2.5 minutes. Afterwards `terraform plan` reports **no changes**.
+
+- **State: local and git-ignored.** `infra/envs/local/terraform.tfstate` lists every resource with its attributes,
+  **including secret values in plain text**: the Argo CD deploy key, Grafana's password, the cluster's client key.
+  That is why it is never committed (ADR-0015). One person applies, so it needs no locking or shared storage; a
+  team would keep it in an encrypted remote backend. `make k8s-reset` deletes it with the cluster it described.
+- **Secrets.** The services' Secrets are **SealedSecrets in Git**, `deploy/envs/<env>/sealed/`
+  ([ADR-0019](../adr/0019-sealed-secrets-for-gitops.md)); Terraform holds only the two bootstrap secrets that must
+  exist before Argo CD can read Git (its own deploy key and Grafana's password), from the git-ignored
+  `infra/envs/local/secrets.auto.tfvars` (copy the `.example`).
+- **Developing without GitOps.** `make k8s-up` on a laptop with no cluster applies the same root with
+  `gitops_environments=[]`: the same platform, no Argo CD, so it can deploy local builds. `make platform
+  envs="staging"` hands only staging to Argo CD and leaves prod to `make k8s-up`.
+- **Pipeline:** every PR runs `terraform fmt -check` and `terraform validate` (CI job `terraform`). The
+  create–check–destroy test of `envs/local` in a runner is PR 6c's (a slim profile; the full system does not fit
+  the runner, section 4).
+
+### Secrets: sealing, backing up the key, rotating
+
+| Task | How | Notes |
+|---|---|---|
+| Seal an environment's secrets | `make seal env=prod` | Reads `private/secrets/prod.json` (git-ignored, mode 600), makes any missing value at random, and seals only what changed into `deploy/envs/prod/sealed/` with the public certificate. Commit; Argo CD syncs them. |
+| **Back up the sealing key** | `make sealing-key-backup` (a person) | Writes the controller's private key to `private/sealed-secrets/sealing-key.json` (mode 600). **Copy it off the laptop** (an encrypted USB stick or a password manager): a dead laptop must not take the only copy. Re-run after any key rotation. |
+| Restore the key on a new cluster | Automatic in `make platform` | Before the controller starts, the backup is applied with `kubectl` (so the private key never enters Terraform's state); with an active key present, the controller makes no new one. |
+| **Restore drill** | `make k8s-check c=sealed-drill` | Deletes the controller's key, shows a SealedSecret made before cannot be decrypted, restores the backup, shows it decrypts to the same value. Running Secrets are never touched. |
+| Rotate one secret | Edit (or delete, for a new random) its value in `private/secrets/<env>.json`, or `make seal env=<env> rotate="jwt-secret"`; commit | Argo CD updates the Secret; pods read environment variables at start, so restart the services that use it (`kubectl rollout restart`, ignored by Argo CD). A database password also needs the role changed in the database (`ALTER ROLE` / `ALTER USER`) first. |
+| Rotate the sealing key | Have the controller make a new key, then `make sealing-cert`, `make seal env=staging` and `env=prod` (a new certificate re-seals every file), commit, `make sealing-key-backup` | Old keys keep decrypting old files until those are re-sealed. After a **leak**, rotating the key is not enough: the old ciphertext is in Git history, so every secret value must change too. |
+| Lost key, no backup | `make sealing-cert` (the new key's certificate), then `make seal` for both environments: a new certificate re-seals every file | Possible only because the plaintext source exists. Without it too, every credential must be changed (new values, `ALTER ROLE` for the databases). |
 
 ### How this maps onto the textbook's AWS infrastructure
 
