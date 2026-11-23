@@ -11,6 +11,7 @@
 
 | Step | Command or action | Why |
 |---|---|---|
+| 0 | **Mains power, nothing else running.** `pmset -g batt` says `AC Power`. Quit other apps and dev servers (another project's `npm run dev`, a second IDE, browsers with many tabs) and let a pending macOS update wait. With the stack and the bots running, `uptime` shows a 1-minute load average of about **4–6**; above 8, find what else is busy (`top -o cpu`) before the audience arrives | The exchange shares the laptop's 12 cores with everything else on it. On battery macOS slows the CPU: a 60-minute soak on battery measured order p95 615 ms against 281 ms on mains (2026-11-14). A busy Mac stretched Cassandra's pauses from 150 ms to 640 ms and narrows the traffic spike's window: 110 requests/s is calibrated for a quiet laptop (chaos scenarios §3.3) |
 | 1 | Laptop on power; in a spare terminal run **`caffeinate -dims`** and leave it running until the demo ends | macOS then never sleeps (`-d` display, `-i` idle, `-m` disk, `-s` system on power). A sleeping laptop freezes Docker: on waking, market-data has every missed 5-second candle to close (it saves them in chunks since Phase 4) and the bots' 12-hour sessions may have run out (they sign in again since Phase 4); both recover, but the market stalls meanwhile. `Ctrl+C` ends it |
 | 2 | **First** join the phone hotspot, **then** set `PUBLIC_BASE_URL` to the laptop's address on it (`ipconfig getifaddr en0`) | The QR code must point where phones can reach ([developer setup §10](08-developer-setup.md#10-phones-on-a-hotspot-demo-day)); the address belongs to the network, so it is only known once the laptop is on the hotspot |
 | 3 | **A person** runs `CONFIRM=yes make demo-reset` | Wipes all data, starts everything and checks the clean start: five empty books, only the seeded accounts, no humans. Rehearsal traders, test accounts and leftover orders are gone, and the leaderboard starts empty. Data-wiping commands are run by a person, never by a script or an assistant |
@@ -31,6 +32,7 @@ the cluster, not both (`make down` first): together they do not fit in Docker's 
 
 | Step | Command or action | Why |
 |---|---|---|
+| 0 | Step 0 above: mains power, other apps closed, `uptime` about 4–6 with the cluster and bots running | The same reasons; the cluster needs more of the laptop than Compose |
 | 1 | `caffeinate -dims` as above; **join the hotspot first** and note the laptop's address (`ipconfig getifaddr en0`) | The QR code needs the address on the network the phones are on |
 | 2 | **A person** runs `CONFIRM=yes make k8s-reset`, then `PUBLIC_BASE_URL=http://<laptop LAN IP> make k8s-up` | A clean cluster and the QR code pointing at port 80. Data-wiping commands are run by a person. Allow about 7 minutes. The address is kept from then on (restarts, `k8s-bots`) |
 | 3 | `make k8s-bots`, wait 5 minutes | The market moves; time travel has a history |
@@ -117,6 +119,12 @@ no orders left from earlier runs, an empty history. A script checks that state, 
 **Q: Why `caffeinate`?**
 A: A laptop that sleeps pauses every container. The system recovers on waking (Phase 4 fixed the two ways it used to
 freeze), but the audience would see a stalled market. `caffeinate -dims` keeps macOS awake for as long as it runs.
+
+**Q: Why does the runbook care about mains power and other apps?**
+A: Everything runs on one laptop, so the exchange's speed depends on what else that laptop is doing. We measured
+it: on battery, order latency more than doubled; with other apps busy, Cassandra's pauses stretched four times; and
+the traffic spike's rate (110 requests/s) only separates 2 replicas from 5 on a quiet Mac. Checking `uptime` takes
+seconds and turns "it was slow on the day" into something we can rule out beforehand.
 
 **Q: Why run Compose or the cluster, not both?**
 A: The cluster with monitoring uses about 4.3 GiB of process memory and Compose about 1.8 GiB, plus Docker's page

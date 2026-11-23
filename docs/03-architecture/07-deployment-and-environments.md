@@ -200,8 +200,9 @@ Four limits are deliberate, and are not "small for a laptop":
   migrations.
 - **matching-engine: 384 MiB.** The engine remembers every order it finished in the last hour (ADR-0017 note "A
   memory of one hour"), about 250 bytes each, and about 280 more each while a snapshot is written. Measured: 124–138
-  MiB over 60 minutes at 40 orders a second plus the bots (about 100,000 orders remembered). A 5-minute traffic
-  spike at 400 requests/s adds about 120,000 orders to that hour; 384 MiB holds both. Before the one-hour memory,
+  MiB over 60 minutes at 40 orders a second plus the bots (about 100,000 orders remembered). The 5-minute traffic
+  spike (110 requests/s, chaos scenarios §3.3) adds about 33,000; measured after a 40-orders/s soak followed by an
+  hour of calibration runs (panic sells at 100–150 requests/s, 18 minutes in all): 224 MiB. 384 MiB holds both. Before the one-hour memory,
   the engine kept every order ever seen and was OOM-killed at 256 MiB after about 600,000.
 
 ### Cassandra's memory budget

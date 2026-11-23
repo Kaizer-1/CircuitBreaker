@@ -21,7 +21,7 @@
 |---|---|---|---|
 | **Scenario ID** | `BAD_DEPLOY` | `MEMORY_LEAK` | `TRAFFIC_SPIKE` |
 | **Target** | `order-service` | `market-data-service` | `order-service` (through `api-gateway`) |
-| **How injected** | New rollout revision with `FAULT_PROFILE=bad-release` | `POST /internal/v1/faults` (A-12) | Panic sell: ~400 requests/s, 90% MARKET sells from the bots' accounts |
+| **How injected** | New rollout revision with `FAULT_PROFILE=bad-release` | `POST /internal/v1/faults` (A-12) | Panic sell: 110 requests/s (calibrated on the demo laptop), 90% MARKET sells from the bots' accounts |
 | **Symptom users see** | ~40% of orders fail with "something went wrong" | Charts get slow, then freeze when the pod is killed | Orders take seconds; some get `503` |
 | **Primary metric signal** | 5xx ratio ≫ baseline, starting right after a new revision | Memory rising linearly toward the limit; no deploy | Request rate 5–10× baseline; p95 latency high; CPU saturated |
 | **Alert** | `OrderServiceHighErrorRate` | `MarketDataMemoryGrowth` | `OrderServiceHighLatency` |
@@ -111,8 +111,8 @@ working while market data struggles, because they own their own data and do not 
 **Hypothesis:** if order traffic jumps 5–10×, the agent scales order-service up (max 5) and latency recovers while
 the load continues.
 
-**Injection: a panic sell** (owner's direction, 2026-11-04; mix fixed 2026-11-14). For 5 minutes, ~400 requests/s
-in total reach `api-gateway`: **90% `POST /v1/orders` MARKET SELL** of 1 share, spread over the five tickers, and
+**Injection: a panic sell** (owner's direction, 2026-11-04; mix fixed 2026-11-14; rate calibrated 2026-11-23). For
+5 minutes, **110 requests/s** in total reach `api-gateway`: **90% `POST /v1/orders` MARKET SELL** of 1 share, spread over the five tickers, and
 **10% `GET /v1/orders`** (traders checking what happened). The sellers are the bots' accounts (`bot-01` … `bot-20`):
 only accounts that hold shares can sell, and the bots hold 1,000 of each ticker. The audience sees prices fall on the
 dashboard while order-service is flooded and the agent scales it. A sell that finds no bid is cancelled by its
@@ -123,27 +123,37 @@ limit (50/s), just like a real crowd of many sellers.
 Why this mix and not Phase 5's (70% `GET /v1/orders`, 30% resting 1-share buys): a crowd that panics *sells*, and
 the scenario must be one that more order-service pods actually fix. Phase 5 found `GET /v1/orders` limited by a
 history scan, which scaling did not help; since the open-orders table (2026-11-14) that read costs only what is open,
-and every request of this mix is work an order-service pod does in parallel. Measured on kind with 2 → 5 replicas
-(`make k8s-check c=scale`, `scripts/load_orders.py --mix panic`; 2026-11-14, a cluster with about 19 hours of trading
-history, laptop on mains power):
+and every request of this mix is work an order-service pod does in parallel.
 
-| Offered load | Replicas | Requests/s that got through | `POST /v1/orders` p95, order-service | p95 at the client |
-|---|---:|---:|---:|---:|
-| 200 req/s, panic sell | 2 | 70 | ≥ 10 s (the histogram's top bucket) | 5.0 s (the gateway gives up at 5 s) |
-| 200 req/s, panic sell | 5 | 103 | 2.3 s | 8.8 s |
-| 100 req/s, panic sell | 2 | 74 | ≥ 10 s | 5.0 s |
-| 100 req/s, panic sell | 5 | 100 | 1.35 s | 0.79 s |
-| 200 req/s, Phase 5's place + cancel mix | 2 → 4 | 77 → 117 | ≥ 10 s → 1.6 s | 5.1 s → 7.1 s |
+**Where the time went, and the fix (profiling, 2026-11-15 to 11-23).** The first measurement (2026-11-14, a cluster
+with 19 hours of trading and load tests) found 2 → 5 replicas cutting order p95 from over 10 s only to 1–2 s. Timing
+every stage of a placement (`order_place_stage_seconds`) and py-spy on the pods showed the wait was **not** in the
+reservation (portfolio-service's Postgres pool wait p95 1 ms) but in **Cassandra**: query p95 141–291 ms, 2.6 times the
+CPU per order of a fresh cluster, paused for garbage collection 7–10% of the time. Two causes, both fixed: the engine's
+snapshot table grew without bound (one 2 GB partition per ticker; [event sourcing](04-event-sourcing-and-cqrs.md#snapshots)),
+and Cassandra was sized for the laptop instead of its container (12 GC threads on 2 CPUs; [deployment, Cassandra's
+memory budget](07-deployment-and-environments.md#cassandras-memory-budget)). So the bottleneck the agent scales is
+still order-service, as designed.
 
-**Known gap, not yet closed.** Scaling from 2 to 5 replicas cuts order latency from over 10 seconds to 1–2
-seconds, but not below the 500 ms alert line, so this scenario's incident would not yet resolve itself. Phase 5
-measured the place + cancel mix at **96 ms** with 4 replicas on a freshly created cluster; on this cluster the same
-mix stays at 1.6 s. The pre-chaos hardening did not cause it: at the same steady load (40 requests/s), order-service
-used 12.7 ms of CPU per request before and 12.0 ms after. Part of the remaining delay is waiting, not CPU (at 100
-requests/s the 5 pods used about 60% of their CPU and p95 stayed above 1 s). A profiling step before Phase 6 measures
-where requests wait (order-service itself, the synchronous reservation in portfolio-service and Postgres, Cassandra,
-the engine), on both a fresh cluster and one with a long history. If the bottleneck is downstream of order-service,
-that changes what the agent should scale. The spike's rate is calibrated only after that.
+**The rate, calibrated on the demo laptop** (2026-11-23, kind, 16 GB MacBook on mains power, 2 hours of bot trading
+plus an hour at 40 orders/s; `scripts/k8s_checks.py profile` and `scale`; Mac load average logged every 10 s). The
+rate has to be above what 2 replicas carry and within what 5 carry:
+
+| Offered (panic sell) | 2 replicas: got through, order-service p95 | 5 replicas: order-service p95 (client p95) | Mac load (median) |
+|---:|---|---|---:|
+| 90 req/s | all 91, **262 ms (no breach)** | 88 ms (82 ms) | 9 |
+| 100 req/s | 72, ≥ 10 s | 262 ms (258 ms) | 16 |
+| **110 req/s** | 76–96, 8.5 s to ≥ 10 s, in all 5 runs | **168, 223, 237, 407 ms; once 861 ms** (147–986 ms) | 9–11 |
+| 120 req/s | 76–83, ≥ 10 s | 358, 423 ms (331, 339 ms) | 11 |
+| 150 req/s | 77, ≥ 10 s | 1,373 ms (9.5 s): too much for the laptop | 10 |
+
+**110 requests/s** it is: 2 replicas breach the 500 ms alert line in every run (they carry 72–96 requests/s; on a quieter
+night, 2026-11-15, they carried 100), and 5 replicas recovered below it in 4 of 5 runs. The one miss (861 ms) was the
+first run after Redpanda had restarted. **What one 16 GB laptop can do:** at 5 replicas the whole exchange needs 6–7 of
+the Mac's 12 cores (order-service 2, gateway 1.2, Cassandra 1, the rest), so above about 120 requests/s the laptop, not
+order-service, is the limit, and a busy Mac (other apps, an OS update, a dev server) narrows the window. Hence the demo
+runbook's first step: mains power, other apps closed, host load checked. `make k8s-check c=scale` runs this check at
+110 requests/s.
 
 Each order-service pod handles at most 50 requests at once (a concurrency limit) and returns `503 OVERLOADED`
 beyond that — so more pods really do mean more capacity, even on one laptop.

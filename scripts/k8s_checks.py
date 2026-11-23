@@ -1025,7 +1025,9 @@ def main() -> int:
     sub.add_parser("netpol").set_defaults(func=check_netpol)
     sub.add_parser("kill").set_defaults(func=check_kill)
     scale_ = sub.add_parser("scale")
-    scale_.add_argument("--rate", type=float, default=200)
+    # The traffic spike's rate, calibrated on the demo laptop (chaos scenarios section 3.3): above
+    # what 2 replicas carry, within what 5 carry.
+    scale_.add_argument("--rate", type=float, default=110)
     scale_.add_argument("--seconds", type=float, default=60)
     scale_.add_argument("--settle", type=float, default=30, help="seconds after the rollout")
     scale_.add_argument("--mix", choices=["panic", "orders", "spike"], default="panic")
