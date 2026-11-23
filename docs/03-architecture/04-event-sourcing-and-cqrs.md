@@ -236,7 +236,7 @@ Two things changed that since, and the profiling PR (2026-11-23) measured both o
 | Bots only, last 10 minutes | **83 / 169 / 240 ms** | 224 / 499 | 5 |
 | Last 2 hours: bots, a 40-orders/s hour, the spike calibration | 237 / 424 / 719 ms | 539 / 6,278 | 10 |
 | Last hour, during 40 orders/s of load, after the calibration | 407 / 965 / 1,604 ms | 234 / 1,105 | 11 |
-| Before this PR: last 10 hours of a 19-hour cluster | 505 / 2,307 / 5,362 ms | up to 5,362 | 11 |
+| Before this PR: last 10 hours of a 19-hour cluster | 505 / 2,307 / 3,561 ms | 249 / 5,362 | 11 |
 
 Every seek inside the 24-hour horizon is under 2 seconds, and every rewind to now matched the live engine. The last
 hour with only the bots is close to Phase 4 but not equal to it (p95 169 against 70 ms): the price of a snapshot that
