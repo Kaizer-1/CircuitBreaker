@@ -359,8 +359,9 @@ Port 80 is open to the network (kind maps it on all interfaces); Grafana and Pro
 pick one from *Orders placed*). In Explore, the same query is `{namespace="prod"} | correlation_id="<id>"`.
 
 **Memory** (measured, [deployment §3](03-architecture/07-deployment-and-environments.md#the-ram-budget-measured)):
-prod with monitoring uses about 4.3 GiB of process memory (Docker Desktop shows about 5.7 GiB including reclaimable
-page cache); with staging too, about 6.5 GiB. Keep Docker Desktop at 10–11 GB, and run Compose or the cluster, not
+prod with monitoring uses about 4.3 GiB of process memory on a fresh cluster and about 5.2 GiB after hours of load
+tests, within the 5.5 GiB budget (Docker Desktop shows more, including reclaimable page cache); with staging too, about
+6.5 GiB. Keep Docker Desktop at 10–11 GB, and run Compose or the cluster, not
 both.
 
 **`make k8s-reset`** deletes the cluster and all its data (it asks first). Like `make reset`, it is run by a person.

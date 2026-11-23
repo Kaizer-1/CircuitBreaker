@@ -23,7 +23,8 @@
 | 9 | Projector: `/dashboard?theme=paper` (or `terminal` in a dim room), sign in with the presenter passcode; scan the QR code with one real phone and place an order | The QR box must not warn about localhost |
 
 Do not rebuild or restart containers once the audience is in: a gateway restart drops every phone's and bot's
-connection (the bots are back within about a minute).
+connection (the bots are back within about a minute). **Never restart the stack right before presenting**: bring it
+up early enough for the warm-up spike below and the 5-minute wait, then leave it running.
 
 ### The Kubernetes path (the demo platform from Phase 5)
 
@@ -38,6 +39,7 @@ the cluster, not both (`make down` first): together they do not fit in Docker's 
 | 3 | `make k8s-bots`, wait 5 minutes | The market moves; time travel has a history |
 | 3a | `make k8s-status`: the last lines show the QR code's address and warn if it is localhost or not this laptop's current address | Fix with `make k8s-set-url url=http://<LAN IP>` (only the web pod restarts; no data touched) |
 | 3b | `make test-phone url=http://<LAN IP>` | A phone's view over the real address, as on the Compose path |
+| 3c | **Warm-up spike:** `make k8s-check c=scale`; it must say PASS (2 replicas above 500 ms, 5 replicas back below it). If it fails, wait a few minutes, check step 0, and run it once more | The traffic spike at its calibrated 110 requests/s, once, before anyone watches. In the calibration the only run where 5 replicas did not recover (861 ms) was the first one after Redpanda had restarted; the four after it passed. It stops the bots for about 5 minutes and starts them again |
 | 4 | `make test-k8s` is **not** for the audience (it starts the bots itself); use `python3 scripts/k8s.py run bots_check.py 120` and `python3 scripts/k8s.py run time_travel_check.py 5 5` | The same checks as the Compose path, through port-forwards |
 | 5 | Projector: `http://<LAN IP>/dashboard?theme=paper`; a second screen or tab: Grafana `http://localhost:3000`, dashboard *CircuitBreaker — Business* | The circuit breaker panel is the first thing Grafana shows |
 | 6 | Optional demo moment: *Follow an order*: place an order on a phone, paste its correlation ID (or pick one from *Orders placed*) | One order's journey through four services, from one query |
@@ -125,6 +127,11 @@ A: Everything runs on one laptop, so the exchange's speed depends on what else t
 it: on battery, order latency more than doubled; with other apps busy, Cassandra's pauses stretched four times; and
 the traffic spike's rate (110 requests/s) only separates 2 replicas from 5 on a quiet Mac. Checking `uptime` takes
 seconds and turns "it was slow on the day" into something we can rule out beforehand.
+
+**Q: Why a warm-up spike before the audience arrives?**
+A: Measured: in the calibration, the one run where 5 replicas did not bring latency back below 500 ms was the first
+after Redpanda had restarted; the next four passed. Running the spike once beforehand both warms the system and proves,
+on that day's laptop, that the scenario will resolve, so the live run is not the first one.
 
 **Q: Why run Compose or the cluster, not both?**
 A: The cluster with monitoring uses about 4.3 GiB of process memory and Compose about 1.8 GiB, plus Docker's page

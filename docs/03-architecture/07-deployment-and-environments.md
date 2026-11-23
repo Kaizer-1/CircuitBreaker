@@ -259,13 +259,15 @@ reached 12–16, with no gain otherwise, so Cassandra's own young-generation set
 
 ### The RAM budget (measured)
 
-Agreed budget: **≤ 5.0 GiB for one environment plus monitoring, ≤ 8.5 GiB for everything** (both environments and,
-from Phase 6, Argo CD), with Docker Desktop given 11 GB. Measured on a fresh cluster after 10 minutes of the bots
-trading (`make k8s-status` prints these numbers):
+Agreed budget: **≤ 5.5 GiB for one environment plus monitoring**, measured as process memory after heavy testing
+(raised from 5.0 GiB on 2026-11-23, reason below), **≤ 8.5 GiB for everything** (both environments and, from Phase 6,
+Argo CD), with Docker Desktop given 11 GB. Measured on a fresh cluster after 10 minutes of the bots trading, and on one
+after heavy testing (`make k8s-status` prints these numbers):
 
 | What runs | Pods' working set | Node: processes + kernel (**the budget's measure**) | Docker Desktop shows |
 |---|---:|---:|---:|
 | prod + monitoring + Traefik + Kubernetes itself | 3,994 MiB (prod 2,251; kube-system 958, of which the API server 675; observability 749; Traefik 25) | **4.3 GiB** (4,063 + 357 MiB) | 5.7 GiB |
+| prod + monitoring after 3 hours: the bots, a 60-minute soak at 40 orders/s and an hour of spike calibration (2026-11-23) | 5,928 MiB (prod 3,237; observability 1,365; kube-system 1,232) | **5.16 GiB** (5,097 + 182 MiB) | 6.4 GiB |
 | + staging with its own bots | 6,452 MiB | **6.5 GiB** | 8.1 GiB |
 | + Argo CD (Phase 6, estimate) | | about 7.0 GiB | about 8.6 GiB |
 | The local image registry (outside the cluster) | | 0.04 GiB | 0.04 GiB |
@@ -277,6 +279,15 @@ data). The kernel gives page cache back whenever a process needs the memory, so 
 dropping the caches on the node, file memory fell from 3.9 GiB to 1.7 GiB; the rest is cache of files the databases
 are reading right now, which the kernel would also reclaim under pressure. By process memory both budgets hold;
 by Docker's figure one environment is about 0.7 GiB over.
+
+**Why the budget is 5.5 GiB, not 5.0.** After the Cassandra fix (300–600 MiB less), a cluster that has run the soak and
+the spike tests still measured 5.16 GiB: memory that fills up to a cap with use rather than leaks. Redpanda reaches its
+512 MB reservation (441 MiB, 174 on a fresh cluster), Loki its 24-hour retention (285 MiB), Grafana 458 MiB, the
+engine its hour of finished orders after a spike (224 MiB), and market-data keeps what it freed after parsing large
+snapshots (214 MiB). The one large lever measured was Redpanda at `--memory=256M`: 441 → 170 MiB, enough to fit 5.0,
+but in the same 110-requests/s spike the 5-replica client p95 went from 291 to 568 ms, above the 500 ms line the
+traffic-spike scenario needs to recover below (one run on a noisy laptop, so not all of it is Redpanda). The owner
+chose latency margin over 0.3 GiB: Redpanda stays at 512M and the budget is 5.5 GiB.
 
 ## 4. CI/CD pipeline: GitHub Actions + Argo CD (GitOps)
 
