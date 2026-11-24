@@ -481,7 +481,10 @@ staging tested ("build once"). **Merging that pull request is the release.** Arg
 (`make sync env=prod` for at once), and each synced service's PostSync smoke test runs. Rolling one service back is
 `git revert <its commit>` in a new pull request; because there is one commit per service, a revert touches nothing
 else. Prod moves from the local registry to GHCR this way too, one service at a time, because the registry is copied
-with the tag.
+with the tag. The first real release (2026-11-24, pull request #12, reviewed: nine one-line tag changes in
+`deploy/envs/prod/`) did exactly that: after the merge, prod was Synced and Healthy in 72 s with all nine PostSync smoke
+tests passed (1.3–3.7 s each), every service on `ghcr.io/kaizer-1/circuitbreaker/<service>:a3e1a35f85c2`, and
+`make k8s-prepull` found all 34 images already on the node.
 
 ### PostSync smoke tests (Phase 6)
 
