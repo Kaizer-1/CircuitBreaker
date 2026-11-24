@@ -206,7 +206,8 @@ def cmd_promote(args: argparse.Namespace) -> None:
             body = (
                 "Promotes to prod the images staging runs (`make promote`, ADR-0014).\n\n"
                 f"| Service | prod now | after merging |\n|---|---|---|\n{rows}\n\n"
-                "**Merging this pull request is the release.** Argo CD then syncs prod (within "
+                "**Merging this pull request is the release** (`main`'s ruleset: merge with "
+                "`gh pr merge <number> --merge --admin`). Argo CD then syncs prod (within "
                 "30 s; `make sync env=prod` for now), and each service's PostSync smoke test "
                 "places and cancels an order. One commit per service: `git revert <commit>` "
                 "rolls one back.\n"
@@ -219,7 +220,9 @@ def cmd_promote(args: argparse.Namespace) -> None:
             )  # fmt: skip
             if result.returncode != 0:
                 sys.exit(f"pushed {branch}, but gh pr create failed: {result.stderr.strip()}")
-            print(result.stdout.strip())
+            url = result.stdout.strip()
+            print(url)
+            print(f"release: gh pr merge {url.rsplit('/', 1)[-1]} --merge --admin")
         finally:
             git("worktree", "remove", "--force", str(tree), check=False)
             if args.dry_run:

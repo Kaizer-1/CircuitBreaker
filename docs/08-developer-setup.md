@@ -338,7 +338,9 @@ make promote s=web   # a pull request giving prod the image staging runs (s=all;
 
 **Releasing.** A merged change reaches staging by itself (CI's tag bump, then Argo CD and the PostSync smoke test:
 two load-test accounts trade a share). `make promote s="<service> ..."` (or `s=all`) opens the pull request that gives
-prod the same images; merging it is the release, and prod's smoke test places and cancels a far-from-market order.
+prod the same images; merging it is the release (`gh pr merge <number> --merge --admin`: `main`'s ruleset lets the
+owner merge only with an explicit bypass, deployment doc section 4), and prod's smoke test places and cancels a
+far-from-market order.
 `kubectl get jobs -n <env> -l app.kubernetes.io/name=smoke-test` lists the last smoke test of each service, and
 `kubectl logs -n <env> job/smoke-<service>` shows its result.
 

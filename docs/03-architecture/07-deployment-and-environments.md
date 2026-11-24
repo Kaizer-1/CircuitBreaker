@@ -447,11 +447,13 @@ Bypass list:
 
 | Who | Mode | For |
 |---|---|---|
-| The repository's admin role (the owner) | `pull_request`: only by merging a pull request, never by pushing | Merging pull requests, the human gate |
+| The repository's admin role (the owner) | `pull_request`: only by merging a pull request, never by pushing | Merging pull requests, the human gate. Because "restrict updates" applies to everyone not bypassing, the plain merge button stays blocked: the owner merges by choosing the bypass, `gh pr merge <n> --merge --admin` (on the website, "Merge without waiting for requirements to be met"). Found on the first merge after the rule (PR #11, 2026-11-24) |
 | Deploy keys | `always` | CI's `deploy-staging` job pushes the tag bumps with a **deploy key** (an SSH key for this one repository, write access) |
 
 The SRE agent's GitHub App (Phase 7, [ADR-0016](../adr/0016-rollback-reconciles-through-git.md)) is **never** on the
 list, so GitHub refuses both its merge and its push to `main`: its revert pull requests always wait for a person.
+The bypass is a deliberate act each time: a pull request that passes every check still says "blocked" until the owner
+merges it with `--admin`, and even the owner cannot push to `main` directly.
 Phase 7 adds a test that GitHub refuses the App's attempt to merge or push.
 
 **The known trade-off: a deploy key bypasses `always`.** A leaked CI deploy key could push **anything** to `main`,
