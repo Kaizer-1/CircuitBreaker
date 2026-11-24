@@ -72,6 +72,9 @@ jobs:
           start=$(date +%s)
           python3 scripts/k8s.py wait-argo --env staging --timeout 1500 --smoke
           echo "SYNC_S=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+          # The slim profile's memory, as Docker sees the node (the RAM table in deployment doc section 3).
+          echo "NODE_MEM=$(docker stats --no-stream --format '{{.MemUsage}}' circuitbreaker-control-plane)" >> "$GITHUB_ENV"
+          nproc; free -m
       - name: What went wrong (on failure)
         if: failure()
         run: |
@@ -98,4 +101,5 @@ jobs:
             echo "| 3. Argo CD (Terraform) | ${ARGO_S:-} |"
             echo "| 4. synced, healthy, smoke tests passed | ${SYNC_S:-} |"
             echo "| 5. destroy | ${DESTROY_S:-} |"
+            echo "| node memory once synced (Docker) | ${NODE_MEM:-} |"
           } | tee -a "$GITHUB_STEP_SUMMARY"
