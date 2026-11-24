@@ -6,7 +6,7 @@ import { AdminLogin } from './AdminLogin'
 import { navigate } from '../lib/router'
 import { loadAdminToken, saveAdminToken } from '../lib/session'
 
-export type Screen = 'market' | 'time-travel'
+export type Screen = 'market' | 'time-travel' | 'chaos'
 
 function go(path: string) {
   return (e: MouseEvent) => {
@@ -38,6 +38,9 @@ export function FKeys({ active }: { active: Screen }) {
       >
         <b>F5</b>TIME TRAVEL
       </a>
+      <a href="/chaos" className={active === 'chaos' ? 'on' : ''} onClick={go('/chaos')}>
+        <b>F6</b>CHAOS
+      </a>
       {active === 'market' && (
         <span>
           <b>F8</b>JOIN
@@ -66,6 +69,13 @@ export function Sections({ active }: { active: Screen }) {
         onClick={go('/time-travel')}
       >
         Time travel
+      </a>
+      <a
+        href="/chaos"
+        aria-current={active === 'chaos' ? 'page' : undefined}
+        onClick={go('/chaos')}
+      >
+        Chaos
       </a>
       <a href="/status">System</a>
     </nav>

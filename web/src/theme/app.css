@@ -1360,3 +1360,139 @@ td:first-child {
 :root[data-theme='paper'] .dash.time-travel .hero .facts dd {
   text-align: left; /* each value next to its own label, not pushed to the far edge */
 }
+
+/* ================================================================ the chaos panel (presenter) */
+/* Same frame as the other presenter screens: a status strip with the reset, the four scenarios as one
+   table (not a grid of cards), and chaos-service's own timeline below. */
+.chaos-strip {
+  display: flex;
+  align-items: center;
+  gap: 1.2em;
+  min-height: 2.9em;
+  padding: 0.3em var(--pad);
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: 0.9em;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  border-bottom: var(--frame);
+}
+:root[data-theme='terminal'] .chaos-strip {
+  margin: 0 var(--gap);
+  border: var(--frame);
+  background: var(--surface);
+}
+.chaos-strip .notice {
+  font-family: var(--font-ui);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-2);
+}
+.chaos-strip .reset {
+  margin-left: auto;
+}
+.chaos-button {
+  min-height: 44px; /* a target a nervous presenter hits */
+  min-width: 7.5em;
+  padding: 0.35em 1.2em;
+  border: 2px solid var(--select-bg);
+  background: var(--select-bg);
+  color: var(--select-text);
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: 1em;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.chaos-button.stop {
+  background: transparent;
+  color: var(--down);
+  border-color: var(--down);
+}
+.chaos-button.reset {
+  background: transparent;
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+.chaos-button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+:root[data-theme='terminal'] .chaos-button {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+:root[data-theme='terminal'] .chaos-button.stop,
+:root[data-theme='terminal'] .chaos-button.reset {
+  background: var(--bg);
+}
+:root[data-theme='terminal'] .chaos-button.stop {
+  color: var(--down);
+  border-color: var(--down);
+}
+:root[data-theme='terminal'] .chaos-button.reset {
+  color: var(--accent-text);
+}
+.chaos-scenarios,
+.chaos-timeline {
+  margin: 0 var(--gap);
+}
+:root[data-theme='paper'] .chaos-scenarios,
+:root[data-theme='paper'] .chaos-timeline {
+  margin: 0;
+}
+.chaos-scenarios table {
+  font-size: 1.12em;
+}
+.chaos-scenarios thead th {
+  font-family: var(--font-label);
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-3);
+  text-align: left;
+}
+.chaos-scenarios tbody th {
+  font-family: var(--title-font);
+  font-weight: var(--title-weight);
+  text-align: left;
+  white-space: nowrap;
+}
+.chaos-scenarios .what {
+  color: var(--text-2);
+  max-width: 34em;
+}
+.chaos-scenarios .state {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.chaos-scenarios .action {
+  text-align: right;
+}
+.chaos-scenarios tr.running th::before {
+  content: '● ';
+  color: var(--down);
+}
+.chaos-timeline {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.chaos-timeline td.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  width: 6em;
+  color: var(--text-3);
+}
+.chaos-timeline tbody th {
+  text-align: left;
+  white-space: nowrap;
+  width: 14em;
+  font-weight: 600;
+}

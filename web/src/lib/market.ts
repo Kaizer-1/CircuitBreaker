@@ -114,7 +114,7 @@ export class NetworkError extends Error {
   }
 }
 
-async function call<T>(
+export async function call<T>(
   method: string,
   path: string,
   token: string | null,
