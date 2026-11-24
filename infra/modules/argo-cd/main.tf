@@ -79,5 +79,19 @@ resource "helm_release" "applications" {
     skipComponents  = var.profile == "full" ? [] : ["ingress"]
     extraValueFiles = var.profile == "full" ? [] : ["../../deploy/profiles/${var.profile}.yaml"]
   })]
+  depends_on = [helm_release.argo_cd, terraform_data.applications_gone]
+}
+
+# Destroy order. Deleting the ApplicationSets deletes their Applications, and each Application carries Argo CD's
+# resources-finalizer: Argo CD deletes what it deployed, then lets the Application go. That needs Argo CD running, so
+# on destroy this waits for the Applications to be gone (destroy runs it after the release above, before Argo CD's
+# own). Without it the argocd namespace hung in Terminating (CI's platform check, 2026-11-24).
+resource "terraform_data" "applications_gone" {
+  input = var.repo_root
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "python3 ${self.input}/scripts/k8s.py wait-argo-gone --timeout 600"
+  }
   depends_on = [helm_release.argo_cd]
 }

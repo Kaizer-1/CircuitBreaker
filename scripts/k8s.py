@@ -406,13 +406,16 @@ def argo_manages(namespace: str) -> bool:
 
 
 def argo_not_settled(env: str) -> list[str]:
-    """Applications of env that are not Synced and Healthy yet."""
+    """Applications of env that are not Synced and Healthy yet, or whose sync is still running:
+    an Application is Synced and Healthy while its PostSync smoke test runs (CI, 2026-11-24)."""
     waiting = []
     for app in argo_applications(env):
         status = app.get("status", {})
         sync = status.get("sync", {}).get("status", "?")
         health = status.get("health", {}).get("status", "?")
-        if sync != "Synced" or health != "Healthy":
+        if status.get("operationState", {}).get("phase") == "Running":
+            waiting.append(f"{app['metadata']['name']} (sync running)")
+        elif sync != "Synced" or health != "Healthy":
             waiting.append(f"{app['metadata']['name']} ({sync}/{health})")
     return waiting
 
@@ -1165,6 +1168,18 @@ def cmd_wait_argo(args: argparse.Namespace) -> None:
         sys.exit(f"last sync not Succeeded: {', '.join(failed) or '-'}; smoke Jobs: {passed}")
 
 
+def cmd_wait_argo_gone(args: argparse.Namespace) -> None:
+    """Terraform's destroy: wait until Argo CD has deleted its Applications. Each carries Argo CD's
+    resources-finalizer (Argo CD deletes what it deployed, then lets the Application go), so Argo
+    CD must still be running; uninstalled first, the argocd namespace hangs in Terminating."""
+    start = time.monotonic()
+    while apps := argo_applications():
+        if time.monotonic() - start > args.timeout:
+            sys.exit(f"Argo CD: {len(apps)} Applications still there after {args.timeout:.0f} s")
+        time.sleep(5)
+    print(f"Argo CD: no Applications left after {time.monotonic() - start:.0f} s")
+
+
 def cmd_charts(_: argparse.Namespace) -> None:
     cache_charts()
     print(f"charts in {CHART_CACHE.relative_to(ROOT)}: {', '.join(c for c, _, _ in CHARTS)}")
@@ -1232,6 +1247,9 @@ def main() -> None:
     wait.add_argument("--timeout", type=float, default=900)
     wait.add_argument("--smoke", action="store_true", help="fail if no smoke Job ran")
     wait.set_defaults(func=cmd_wait_argo)
+    gone = sub.add_parser("wait-argo-gone", help="Terraform destroy: wait for Argo CD's cleanup")
+    gone.add_argument("--timeout", type=float, default=600)
+    gone.set_defaults(func=cmd_wait_argo_gone)
     sub.add_parser("prepull", help="put every image the demo needs on the node").set_defaults(
         func=cmd_prepull
     )
