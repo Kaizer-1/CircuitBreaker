@@ -469,6 +469,7 @@ def check_scale(args: argparse.Namespace) -> bool:
     load is the traffic spike as a panic sell (chaos scenarios section 3.3: 90% MARKET sells from
     the bots' accounts), so the bot fleet is stopped while it runs and started again after.
     """
+    require_mains_power("this measurement")
     low, high = 2, args.to
     heading(
         f"Capacity: {args.rate:.0f} req/s ({args.mix}), {low} then {high} order-service replicas"
@@ -623,6 +624,7 @@ def cassandra_pauses(env: str, start: float, end: float) -> dict[str, float]:
 
 def check_profile(args: argparse.Namespace) -> bool:
     """The same load at each replica count; for each, where a placement's time went."""
+    require_mains_power("this measurement")
     heading(f"Profile '{args.label}': {args.rate:.0f} req/s ({args.mix}), replicas {args.replicas}")
     bots_were_on = args.mix == "panic" and bots_enabled(args.env)
     if bots_were_on:
@@ -1586,6 +1588,65 @@ def check_offline(args: argparse.Namespace) -> bool:
     return ok
 
 
+# --------------------------------------------------------------------------- the host (runbook 0)
+
+
+def on_mains_power() -> bool:
+    command = ["pmset", "-g", "batt"]  # macOS: "Now drawing from 'AC Power'"
+    out = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603, S607
+    return "AC Power" in out.stdout
+
+
+def require_mains_power(what: str) -> None:
+    """Measurements on battery are invalid: macOS slows the CPU (a soak on battery measured order
+    p95 615 ms against 281 on mains). Stop instead of measuring (owner's rule, 2026-11-25)."""
+    if not on_mains_power():
+        sys.exit(
+            f"{RED}STOPPED{RESET} before {what}: the laptop is on battery."
+            " Plug it in; nothing was measured."
+        )
+
+
+class HostWatch:
+    """The Mac's 1-minute load and its power source every 10 s while measurements run, saved next
+    to the results (as the calibration did): a busy or unplugged Mac explains a slow run."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.samples: list[tuple[float, float, bool]] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self.samples.append((time.time(), os.getloadavg()[0], on_mains_power()))
+            self._stop.wait(10)
+
+    def __enter__(self) -> HostWatch:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=15)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lines = ["time\tload1\tpower"]
+        lines += [
+            f"{t:.0f}\t{load:.2f}\t{'AC' if ac else 'battery'}" for t, load, ac in self.samples
+        ]
+        self.path.write_text("\n".join(lines) + "\n")
+
+    def summary(self, since: float) -> dict[str, Any]:
+        loads = sorted(load for t, load, _ in self.samples if t >= since)
+        battery = sum(1 for t, _, ac in self.samples if t >= since and not ac)
+        median = loads[len(loads) // 2] if loads else os.getloadavg()[0]
+        return {
+            "host_load_median": round(median, 1),
+            "host_load_max": round(max(loads, default=median), 1),
+            "battery_samples": battery,
+        }
+
+
 # --------------------------------------------------------------------------- chaos (Phase 7a)
 
 # For each scenario: the alert it must make fire, a PromQL that is true once its condition began (to
@@ -1761,11 +1822,22 @@ def check_chaos(args: argparse.Namespace) -> bool:
 
     bots_on(env)
     runs: list[dict[str, Any]] = []
+    out = ROOT / "build" / "chaos" / f"{args.label}.json"
+    with HostWatch(out.with_suffix(".hostload.tsv")) as host:
+        ok &= chaos_runs(args, runs, host)
+    out.write_text(json.dumps(runs, indent=2))
+    print(f"  {DIM}saved {out.relative_to(ROOT)} and its host load{RESET}")
+    return ok
+
+
+def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostWatch) -> bool:
+    env, ok = args.env, True
     for name in args.only:
         scenario, alerts, condition, timeout = CHAOS[name]
         heading(f"{scenario}: {args.runs} runs in a row ({env})")
         for run in range(1, args.runs + 1):
             wait_quiet(env, WATCHED, timeout=300)
+            require_mains_power(f"{scenario} run {run}")
             params = {"rate_mb_per_minute": args.leak_rate} if name == "leak" else None
             body: dict[str, Any] = {"scenario": scenario}
             if params:
@@ -1817,11 +1889,16 @@ def check_chaos(args: argparse.Namespace) -> bool:
                 "whole_run_s": time.monotonic() - started,
                 "reset_after_s": reset_at - started,
             }
+            result |= host.summary(began)
+            print(
+                f"    {DIM}host load median {result['host_load_median']}, max"
+                f" {result['host_load_max']}{RESET}"
+            )
+            if result["battery_samples"]:
+                sys.exit(
+                    f"{RED}STOPPED{RESET}: the laptop went on battery during {scenario} run {run}."
+                )
             runs.append(result)
-    out = ROOT / "build" / "chaos" / f"{args.label}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(runs, indent=2))
-    print(f"  {DIM}saved {out.relative_to(ROOT)}{RESET}")
     return ok
 
 
