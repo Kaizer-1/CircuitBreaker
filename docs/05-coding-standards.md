@@ -187,6 +187,9 @@ presenter passcode (A-04), and `make status` signs in with the local placeholder
 
 **Standard metrics** (all services, labelled `service`, plus `route`, `method`, `status` where relevant):
 `http_requests_total`, `http_request_duration_seconds` (histogram), `http_requests_in_flight`,
+`http_problems_total{route,status,code}` (every Problem Details answer by its `code`, so a 5xx can be told apart:
+`INTERNAL_ERROR` from a bug, `OVERLOADED` from overload, `DEPENDENCY_UNAVAILABLE` from an open breaker; added in Phase 7
+for the SRE agent's evidence),
 `events_published_total{topic,event_type}`, `events_consumed_total{topic,event_type}`,
 `event_processing_errors_total`, `events_dead_lettered_total{topic}`, `consumer_lag_messages{topic,partition}`,
 `event_loop_lag_seconds` (histogram: how late the event loop woke from a timer, the time ready work waited for the

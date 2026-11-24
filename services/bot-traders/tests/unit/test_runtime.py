@@ -184,6 +184,36 @@ def test_an_unhandled_exception_becomes_a_problem_details_500(plain_app: FastAPI
     assert response.headers["X-Correlation-Id"] == "cid-500"
 
 
+def test_problems_are_counted_by_error_code_even_from_a_worker_thread(
+    plain_app: FastAPI,
+) -> None:
+    from bot_traders.runtime.problem import problem_response
+
+    async def overloaded() -> Any:
+        return problem_response(503, "OVERLOADED", "Overloaded")
+
+    def from_a_thread() -> Any:  # FastAPI runs a plain def in a worker thread
+        return problem_response(503, "DEPENDENCY_UNAVAILABLE", "Unavailable")
+
+    async def boom() -> None:
+        raise RuntimeError("bug")
+
+    plain_app.add_api_route("/test-only/overloaded", overloaded)
+    plain_app.add_api_route("/test-only/thread", from_a_thread)
+    plain_app.add_api_route("/test-only/boom", boom)
+    with TestClient(plain_app, raise_server_exceptions=False) as c:
+        for path in ("/test-only/overloaded", "/test-only/thread", "/test-only/boom", "/healthz"):
+            c.get(path)
+        text = c.get("/metrics").text
+    problems = sorted(line for line in text.splitlines() if line.startswith("http_problems_total{"))
+    assert [line.split("code=")[1].split('"')[1] for line in problems] == [
+        "DEPENDENCY_UNAVAILABLE",
+        "INTERNAL_ERROR",
+        "OVERLOADED",
+    ]
+    assert all(line.endswith(" 1.0") for line in problems)
+
+
 def test_access_log_is_one_json_line_with_the_correlation_id(
     capsys: pytest.CaptureFixture[str], plain_app: FastAPI, settings: Settings
 ) -> None:

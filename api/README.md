@@ -200,6 +200,8 @@ market-data read its clock, instead of leaving `verification` null (market-data 
 Pre-chaos hardening (2026-11-14): the engine remembers finished orders for one hour of event time (ADR-0017 note "A
 memory of one hour"), so Q-15/Q-16 gain `forget_before`, each `closed` order gains `closed_at`, and the `state_hash`
 rule covers both (matching-engine spec 1.3.0; market-data spec 1.1.2 describes its hash accordingly).
+Phase 7 (chaos): order-service's concurrency limit, documented since Phase 0, was built: `503 OVERLOADED` with
+`Retry-After: 1` beyond 50 requests per pod (order-service spec 1.2.1).
 
 ## Error code catalog
 

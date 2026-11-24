@@ -1,7 +1,8 @@
 """Configuration from environment variables (see .env.example)."""
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 
+from order_service.application.fault_profile import FaultProfileName
 from order_service.runtime.settings import BaseServiceSettings
 
 
@@ -28,3 +29,9 @@ class Settings(BaseServiceSettings):
     publish_delivery_timeout_seconds: float = 10
     relay_interval_seconds: float = 2.0
     start_consumers: bool = True  # False in unit tests: no Cassandra or Kafka at start-up
+
+    # Requests one pod handles at once; beyond it 503 OVERLOADED (chaos scenarios section 3.3).
+    max_in_flight: int = Field(default=50, ge=1)
+    # Set only by chaos-service's bad deploy (chaos scenarios section 3.1); "" = a normal release.
+    fault_profile: FaultProfileName = ""
+    fault_error_rate: float = Field(default=0.4, ge=0.05, le=0.9)

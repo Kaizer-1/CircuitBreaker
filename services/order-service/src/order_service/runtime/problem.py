@@ -1,5 +1,6 @@
 """Error bodies in RFC 9457 Problem Details format (api/shared/common.yaml, schema `Problem`)."""
 
+from contextvars import ContextVar
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -11,6 +12,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from order_service.runtime.jsonlog import correlation_id_var
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
+
+# The middleware puts a fresh one-item list here for each request; problem_response writes its code
+# into it, so http_problems_total can say WHICH error a 5xx was (INTERNAL_ERROR vs OVERLOADED vs
+# DEPENDENCY_UNAVAILABLE). A list, not the code itself: a handler run in a worker thread gets a
+# copy of the context, and only a change to the shared list is seen by the middleware.
+problem_code_var: ContextVar[list[str] | None] = ContextVar("problem_code", default=None)
 
 
 class FieldError(BaseModel):
@@ -48,6 +55,9 @@ def problem_response(
         correlation_id=correlation_id_var.get(),
         errors=errors,
     )
+    holder = problem_code_var.get()
+    if holder is not None:
+        holder[:] = [code]
     return JSONResponse(
         problem.model_dump(exclude_none=True), status_code=status, media_type=PROBLEM_MEDIA_TYPE
     )

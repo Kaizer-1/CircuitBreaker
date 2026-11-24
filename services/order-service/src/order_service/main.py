@@ -19,7 +19,9 @@ from fastapi import FastAPI
 from order_service.adapters.cassandra_store import CassandraOrderStore, connect_cassandra
 from order_service.adapters.portfolio_http import HttpPortfolio
 from order_service.api import orders as orders_api
+from order_service.api.overload import ConcurrencyLimit
 from order_service.application.circuit_breaker import CircuitBreaker
+from order_service.application.fault_profile import FaultProfile
 from order_service.application.orders import Orders
 from order_service.application.outbox_relay import OutboxRelay
 from order_service.business_metrics import register_business_metrics
@@ -199,6 +201,10 @@ def create_app(
     app.state.breaker = breaker
     app.state.orders = orders
     app.state.consumer = None
+    app.state.concurrency_limit = ConcurrencyLimit(settings.max_in_flight)
+    app.state.fault_profile = FaultProfile(settings.fault_profile, settings.fault_error_rate)
+    if settings.fault_profile:
+        logger.info("fault profile %s active (chaos)", settings.fault_profile)
     if readiness_checks is None:
         checks.append(consumer_check(lambda: app.state.consumer))
 

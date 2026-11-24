@@ -10,7 +10,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from sre_agent.runtime.jsonlog import correlation_id_var
 from sre_agent.runtime.metrics import Metrics
-from sre_agent.runtime.problem import problem_response
+from sre_agent.runtime.problem import problem_code_var, problem_response
 
 CORRELATION_HEADER = "X-Correlation-Id"
 _VALID_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")  # rejects anything that could forge a log line
@@ -41,6 +41,8 @@ class ObservabilityMiddleware:
         else:
             correlation_id = incoming
         token = correlation_id_var.set(correlation_id)
+        problem_code: list[str] = []
+        problem_token = problem_code_var.set(problem_code)
 
         method = scope["method"]
         status = 500
@@ -76,6 +78,9 @@ class ObservabilityMiddleware:
             route = getattr(scope.get("route"), "path", None) or "unmatched"
             self.metrics.http_requests_in_flight.labels(self.service).dec()
             self.metrics.http_requests_total.labels(self.service, route, method, str(status)).inc()
+            if problem_code:
+                problems = self.metrics.http_problems_total
+                problems.labels(self.service, route, str(status), problem_code[0]).inc()
             duration = self.metrics.http_request_duration_seconds
             duration.labels(self.service, route, method).observe(elapsed)
             logger.info(
@@ -88,4 +93,5 @@ class ObservabilityMiddleware:
                     "duration_ms": round(elapsed * 1000, 2),
                 },
             )
+            problem_code_var.reset(problem_token)
             correlation_id_var.reset(token)
