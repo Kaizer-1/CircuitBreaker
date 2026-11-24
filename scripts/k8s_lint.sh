@@ -51,12 +51,20 @@ for only in api-gateway order-service matching-engine market-data-service portfo
   # One service's render must contain that service and nothing of the others.
   if ! grep -q "^kind:" "$OUT/only-$only.yaml"; then echo "global.only=$only rendered nothing" >&2; exit 1; fi
 done
+# CI's slim profile (deploy/profiles/ci.yaml after staging's files), as the platform workflow deploys it.
+# shellcheck disable=SC2046
+helm template circuitbreaker charts/circuitbreaker -n staging $(values staging) -f deploy/profiles/ci.yaml \
+  "${CAPS[@]}" > "$OUT/staging-ci.yaml" 2> >(quiet >&2)
 helm template circuitbreaker-observability charts/observability -n observability > "$OUT/observability.yaml" \
   2> >(quiet >&2)
 # What Argo CD deploys: the AppProject, the ApplicationSets, the observability Application.
 helm lint --quiet infra/modules/argo-cd/applications --set repoURL=git@github.com:example/repo.git
 helm template circuitbreaker-applications infra/modules/argo-cd/applications -n argocd \
   --set repoURL=git@github.com:example/repo.git > "$OUT/applications.yaml"
+helm template circuitbreaker-applications infra/modules/argo-cd/applications -n argocd \
+  --set repoURL=https://github.com/example/repo.git --set 'environments={staging}' --set sealedSecrets=false \
+  --set observability=false --set 'skipComponents={ingress}' --set 'extraValueFiles={../../deploy/profiles/ci.yaml}' \
+  > "$OUT/applications-ci.yaml"
 
 # The pinned third-party charts with our values (a typo in a values file fails here, not on the cluster).
 python3 - <<'EOF' > "$OUT/platform.list"
@@ -73,7 +81,8 @@ done < "$OUT/platform.list"
 echo "== kubeconform (Kubernetes $KUBERNETES_VERSION)"
 docker run --rm -v "$PWD/$OUT:/r:ro" "$KUBECONFORM_IMAGE" -strict -summary \
   -kubernetes-version "$KUBERNETES_VERSION" -schema-location default -schema-location "$CRD_SCHEMAS" \
-  /r/prod.yaml /r/staging.yaml /r/observability.yaml /r/applications.yaml \
+  /r/prod.yaml /r/staging.yaml /r/staging-ci.yaml /r/observability.yaml /r/applications.yaml \
+  /r/applications-ci.yaml \
   $(cd "$OUT" && ls only-*.yaml | sed 's|^|/r/|')
 # The third-party charts install CRDs whose own schemas are not in any catalogue: those are skipped, the rest
 # (Deployments, Services, ...) are validated.

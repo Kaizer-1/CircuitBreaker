@@ -1,4 +1,4 @@
-{{- if .Values.environments }}
+{{- if and .Values.environments .Values.observability }}
 # Our dashboards and alert rules (charts/observability), shared by both environments.
 apiVersion: argoproj.io/v1alpha1
 kind: Application

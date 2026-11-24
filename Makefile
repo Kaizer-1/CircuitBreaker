@@ -21,7 +21,7 @@ TRIVY_IMAGE := aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a
 .PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
         k8s-up k8s-down k8s-status k8s-set-url k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade k8s-passcode k8s-test-phone \
         test-alerts test-k8s k8s-check k8s-lint test-phone \
-        platform platform-plan sync argocd seal sealing-cert sealing-key-backup ghcr-token k8s-prepull scan
+        platform platform-plan sync argocd seal sealing-cert sealing-key-backup ghcr-token k8s-prepull scan promote
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -155,6 +155,10 @@ platform: ## Platform: cluster, namespaces, Traefik, monitoring, Sealed Secrets,
 
 sync: ## GitOps: ask Argo CD to look at Git now (it polls every 30 s): make sync [env=staging] [s=<service>] [apply=yes]
 	@python3 scripts/k8s.py sync --env $(if $(env),$(env),staging) $(s) $(if $(filter yes,$(apply)),--apply,)
+
+promote: ## GitOps: a pull request giving prod the images staging runs (merging it is the release): make promote s="<svc> ..."|all [dry=yes]
+	@test -n "$(s)" || { echo 'usage: make promote s="order-service web" (or s=all) [dry=yes]'; exit 2; }
+	@python3 scripts/gitops_images.py promote $(s) $(if $(filter yes,$(dry)),--dry-run,)
 
 argocd: ## GitOps: Argo CD's web UI on http://localhost:8443 (prints the admin password)
 	@python3 scripts/k8s.py argocd

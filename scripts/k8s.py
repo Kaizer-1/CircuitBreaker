@@ -592,7 +592,8 @@ def deploy(env: str, extra: dict[str, dict[str, object]] | None = None) -> None:
         sys.exit("no images built yet: run make k8s-images")
     # This build's images, from the local registry (deploy/envs/ names GHCR for CI's images).
     overrides: dict[str, dict[str, object]] = {
-        "global": {"environment": env, "image": {"pullSecrets": []}},
+        # No PostSync smoke Job: without Argo CD it would be an ordinary Job, run once.
+        "global": {"environment": env, "image": {"pullSecrets": []}, "smoke": {"mode": ""}},
         **{name: {"image": {"registry": REGISTRY, "tag": tag}} for name, tag in tags.items()},
     }
     for key, value in (extra or {}).items():
@@ -1107,6 +1108,63 @@ def cmd_prepull(_: argparse.Namespace) -> None:
     print(f"\nall {len(wanted)} images are on the node; nothing needs the internet to start again")
 
 
+# --------------------------------------------------------------------------- CI's platform check
+
+
+def cmd_ci_secrets(args: argparse.Namespace) -> None:
+    """CI's throwaway cluster (Terraform profile ci): the sealing key never leaves the laptop, so
+    the SealedSecrets in Git cannot be decrypted there. Plain Secrets with the local placeholders
+    instead, and the GHCR login from GHCR_USER / GHCR_TOKEN (the job's token, packages: read)."""
+    import base64
+
+    apply_secrets(args.env)
+    user, token = os.environ.get("GHCR_USER"), os.environ.get("GHCR_TOKEN")
+    if not (user and token):
+        sys.exit("GHCR_USER and GHCR_TOKEN must be set")
+    auth = base64.b64encode(f"{user}:{token}".encode()).decode()
+    config = {"auths": {"ghcr.io": {"username": user, "auth": auth}}}
+    secret = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": "ghcr-pull", "namespace": args.env},
+        "type": "kubernetes.io/dockerconfigjson",
+        "stringData": {".dockerconfigjson": json.dumps(config)},
+    }
+    run(kubectl("apply", "-f", "-"), input_text=json.dumps(secret), capture=True)
+    print(f"{args.env}: placeholder Secrets and the GHCR login created (CI only)")
+
+
+def cmd_wait_argo(args: argparse.Namespace) -> None:
+    """Every Application of env Synced and Healthy, its last sync Succeeded (so its PostSync smoke
+    test passed); then the smoke Jobs' results."""
+    waited = wait_argo(args.env, timeout=args.timeout)
+    failed = [
+        a["metadata"]["name"]
+        for a in argo_applications(args.env)
+        if a.get("status", {}).get("operationState", {}).get("phase") != "Succeeded"
+    ]
+    jobs = json.loads(
+        run(
+            kubectl(
+                "get",
+                "jobs",
+                "-n",
+                args.env,
+                "-l",
+                "app.kubernetes.io/name=smoke-test",
+                "-o",
+                "json",
+            ),
+            capture=True,
+        )  # fmt: skip
+    )["items"]
+    passed = [j["metadata"]["name"] for j in jobs if j.get("status", {}).get("succeeded")]
+    print(f"Argo CD: {args.env} Synced and Healthy after {waited:.0f} s;"
+          f" smoke Jobs passed: {len(passed)} of {len(jobs)}")  # fmt: skip
+    if failed or len(passed) != len(jobs) or (args.smoke and not jobs):
+        sys.exit(f"last sync not Succeeded: {', '.join(failed) or '-'}; smoke Jobs: {passed}")
+
+
 def cmd_charts(_: argparse.Namespace) -> None:
     cache_charts()
     print(f"charts in {CHART_CACHE.relative_to(ROOT)}: {', '.join(c for c, _, _ in CHARTS)}")
@@ -1166,6 +1224,14 @@ def main() -> None:
     secret.add_argument("--key", default="value")
     secret.set_defaults(func=cmd_secret)
     sub.add_parser("charts").set_defaults(func=cmd_charts)
+    ci_secrets = sub.add_parser("ci-secrets", help="CI only: placeholder Secrets + GHCR login")
+    ci_secrets.add_argument("--env", choices=["prod", "staging"], default="staging")
+    ci_secrets.set_defaults(func=cmd_ci_secrets)
+    wait = sub.add_parser("wait-argo", help="wait until Argo CD synced env (and its smoke tests)")
+    wait.add_argument("--env", choices=["prod", "staging"], default="staging")
+    wait.add_argument("--timeout", type=float, default=900)
+    wait.add_argument("--smoke", action="store_true", help="fail if no smoke Job ran")
+    wait.set_defaults(func=cmd_wait_argo)
     sub.add_parser("prepull", help="put every image the demo needs on the node").set_defaults(
         func=cmd_prepull
     )

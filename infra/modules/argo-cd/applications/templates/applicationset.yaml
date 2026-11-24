@@ -19,7 +19,9 @@ spec:
           - list:
               elements:
                 {{- range .Values.components }}
+                {{- if not (has . $.Values.skipComponents) }}
                 - component: {{ . }}
+                {{- end }}
                 {{- end }}
   template:
     metadata:
@@ -32,7 +34,7 @@ spec:
         # commit to the repository re-synced every OutOfSync Application (measured, 2026-11-23): a tag bump for web
         # undid an emergency rollback of order-service by the SRE agent (ADR-0016). /dev holds the data stores'
         # init scripts, linked into their charts.
-        argocd.argoproj.io/manifest-generate-paths: {{`'/charts/circuitbreaker;/dev;/deploy/envs/{{.env}}/global.yaml;/deploy/envs/{{.env}}/{{.component}}.yaml'`}}
+        argocd.argoproj.io/manifest-generate-paths: {{`'/charts/circuitbreaker;/dev;/scripts/smoke.py;/deploy/envs/{{.env}}/global.yaml;/deploy/envs/{{.env}}/{{.component}}.yaml'`}}
     spec:
       project: circuitbreaker
       source:
@@ -45,6 +47,9 @@ spec:
           valueFiles:
             - {{`'../../deploy/envs/{{.env}}/global.yaml'`}}
             - {{`'../../deploy/envs/{{.env}}/{{.component}}.yaml'`}}
+            {{- range .Values.extraValueFiles }}
+            - {{ . | quote }}
+            {{- end }}
           # The ingress has no values file of its own.
           ignoreMissingValueFiles: true
           parameters:

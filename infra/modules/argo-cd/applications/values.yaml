@@ -3,6 +3,12 @@ repoURL: ""
 targetRevision: main
 environments: [staging, prod]
 
+# The ci profile (Terraform var.profile) turns these off and adds deploy/profiles/ci.yaml after each env's files.
+sealedSecrets: true
+observability: true
+skipComponents: []
+extraValueFiles: []
+
 # One Application per component per environment. Each renders the umbrella chart (charts/circuitbreaker) with
 # global.only=<component> and deploy/envs/<env>/{global,<component>}.yaml, so a commit to one service's file
 # syncs that service only.
