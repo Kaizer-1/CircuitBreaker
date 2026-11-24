@@ -39,6 +39,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -318,6 +319,12 @@ CONNECTIONS = [
     ("bot-traders", "order-service", 8000, False),  # around the gateway: trusted headers
     ("chaos-service", "matching-engine", 8000, False),
     ("sre-agent", "portfolio-service", 8000, False),
+    # Phase 7 (ADR-0020): chaos-service reaches the three hooks and never a data store.
+    ("chaos-service", "market-data-service", 8000, True),
+    ("chaos-service", "portfolio-service", 8000, True),
+    ("chaos-service", "bot-traders", 8000, True),
+    ("chaos-service", "postgres", 5432, False),
+    ("chaos-service", "cassandra", 9042, False),
 ]
 
 
@@ -1579,6 +1586,248 @@ def check_offline(args: argparse.Namespace) -> bool:
     return ok
 
 
+# --------------------------------------------------------------------------- chaos (Phase 7a)
+
+# For each scenario: the alert it must make fire, a PromQL that is true once its condition began (to
+# time the alert from the condition, as Phase 5 did), and how long to wait for it.
+CHAOS = {
+    "bad-deploy": (
+        "BAD_DEPLOY",
+        ["OrderServiceHighErrorRate"],
+        'sum(rate(http_problems_total{{namespace="{env}",service="order-service",'
+        'code="INTERNAL_ERROR"}}[30s])) > 0',
+        240,
+    ),
+    "leak": (
+        "MEMORY_LEAK",
+        ["MarketDataMemoryGrowth"],
+        'max(container_memory_working_set_bytes{{namespace="{env}",container="market-data-service"}})'
+        ' / max(container_spec_memory_limit_bytes{{namespace="{env}",'
+        'container="market-data-service"}}'
+        " > 0) > 0.7",
+        900,
+    ),
+    "panic": (
+        "TRAFFIC_SPIKE",
+        ["OrderServiceHighLatency"],
+        "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket"
+        '{{namespace="{env}",service="order-service",route="/v1/orders"}}[30s]))) > 0.5',
+        240,
+    ),
+    "db": (
+        "PORTFOLIO_DB_DEGRADED",
+        ["OrderServiceCircuitOpen"],
+        'max(circuit_breaker_state{{namespace="{env}",dependency="portfolio-service",'
+        'state="open"}}) == 1',
+        180,
+    ),
+}
+WATCHED = [
+    "OrderServiceHighErrorRate",
+    "OrderServiceHighLatency",
+    "OrderServiceCircuitOpen",
+    "MarketDataMemoryGrowth",
+    "GatewayHighErrorRate",
+    "PortfolioHighErrorRate",
+    "PodCrashLooping",
+    "ConsumerLagHigh",
+]
+
+
+def chaos_call(env: str, method: str, path: str, body: Any = None) -> Any:
+    import stack
+
+    stack.GATEWAY = gateway(env)
+    auth = {"Authorization": f"Bearer {stack.admin_token()}"}
+    return stack.http(method, f"{stack.GATEWAY}{path}", body, auth)
+
+
+def normal(env: str) -> tuple[bool, str]:
+    """Orders flow without errors or delay, two order-service replicas, market-data well below its
+    memory limit: the exchange as it is with no chaos."""
+    errors = scalar(
+        f'sum(rate(http_requests_total{{namespace="{env}",service="order-service",status=~"5..",'
+        f'route="/v1/orders"}}[30s])) / sum(rate(http_requests_total{{namespace="{env}",'
+        f'service="order-service",route="/v1/orders"}}[30s]))'
+    )
+    p95 = scalar(
+        "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket"
+        f'{{namespace="{env}",service="order-service",route="/v1/orders"}}[30s])))'
+    )
+    memory = scalar(
+        f'max(container_memory_working_set_bytes{{namespace="{env}",container="market-data-service"}})'
+        f' / max(container_spec_memory_limit_bytes{{namespace="{env}",'
+        f'container="market-data-service"}}'
+        " > 0)"
+    )
+    replicas = deployment(env, "order-service")["spec"]["replicas"]
+    ok = (errors or 0) < 0.01 and (p95 or 0) < 0.5 and (memory or 0) < 0.5 and replicas == 2
+    return ok, (
+        f"errors {100 * (errors or 0):.1f}%, p95 {1000 * (p95 or 0):.0f} ms, market-data memory"
+        f" {100 * (memory or 0):.0f}% of its limit, order-service {replicas} replicas"
+    )
+
+
+def back_to_normal(env: str, timeout: float = 240) -> tuple[float | None, str]:
+    """Seconds until no chaos alert fires and the exchange is normal (or None)."""
+    started = time.monotonic()
+    detail = ""
+    while time.monotonic() - started < timeout:
+        quiet = not set(WATCHED) & set(firing(env))
+        ok, detail = normal(env)
+        if quiet and ok:
+            return time.monotonic() - started, detail
+        time.sleep(5)
+    return None, detail
+
+
+def memory_mib(env: str) -> float:
+    return (
+        scalar(
+            f'max(container_memory_working_set_bytes{{namespace="{env}",'
+            f'container="market-data-service"}})'
+        )
+        or 0
+    ) / 2**20
+
+
+def restart_cures_the_leak(env: str, watch: float = 120) -> bool:
+    """The agent's fix, by hand: restart market-data, then memory must stay flat (the leak lived
+    only in the old process) and the hook must have nothing to clear."""
+    kubectl("rollout", "restart", "-n", env, "deployment/market-data-service")
+    kubectl("rollout", "status", "-n", env, "deployment/market-data-service", "--timeout=240s")
+    time.sleep(45)  # the old pod gone from the metrics (10 s scrapes, 30 s windows)
+    samples = []
+    end = time.monotonic() + watch
+    while time.monotonic() < end:
+        samples.append(memory_mib(env))
+        time.sleep(10)
+    growth = max(samples) - min(samples)
+    return verdict(
+        growth < 25,
+        f"after the restart market-data stays flat for {watch:.0f} s: {min(samples):.0f} to"
+        f" {max(samples):.0f} MiB (the leak lived only in the old process)",
+    )
+
+
+def condition_started(query: str) -> Callable[[], float | None]:
+    return lambda: time.monotonic() if promql(query) else None
+
+
+def check_chaos(args: argparse.Namespace) -> bool:
+    """Each Chaos Panel button, --runs times in a row: it makes its alert fire within its documented
+    time, reset brings the exchange back to normal (chaos scenarios section 5; Phase 7a). No SRE
+    agent acts yet. The bots trade throughout (the error-rate alerts need traffic)."""
+    env = args.env
+    heading(f"chaos-service may change one Deployment, only in {env} ({ADR_0020})")
+    account = f"system:serviceaccount:{env}:chaos-service"
+    other = "prod" if env == "staging" else "staging"
+    can = [
+        ("patch", "deployments/order-service", env, True),
+        ("patch", "deployments/order-service", other, False),
+        ("patch", "deployments/portfolio-service", env, False),
+        ("patch", "statefulsets/postgres", env, False),
+        ("patch", "statefulsets/cassandra", env, False),
+        ("get", "secrets", env, False),
+        ("list", "deployments", env, False),
+    ]
+    ok = True
+    for verb, what, namespace, allowed in can:
+        answer = kubectl(
+            "auth", "can-i", verb, what, "-n", namespace, "--as", account, check=False
+        ).strip()
+        ok &= verdict(
+            (answer == "yes") == allowed, f"{verb} {what} in {namespace}: {answer} as expected"
+        )
+    for source, host, port, allowed in CONNECTIONS[-5:]:
+        opened = connects(env, source, host, port)
+        ok &= verdict(
+            opened == allowed, f"{source} -> {host}:{port} ({'allowed' if allowed else 'refused'})"
+        )
+    status = urllib.request.Request(  # noqa: S310 (local http)
+        f"{gateway(env)}/internal/v1/faults",
+        data=b"{}",
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(status, timeout=10) as response:  # noqa: S310 (local http)
+            code = response.status
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+    ok &= verdict(
+        code != 201, f"a hook is not reachable from outside (POST /internal/... -> {code})"
+    )
+
+    bots_on(env)
+    runs: list[dict[str, Any]] = []
+    for name in args.only:
+        scenario, alerts, condition, timeout = CHAOS[name]
+        heading(f"{scenario}: {args.runs} runs in a row ({env})")
+        for run in range(1, args.runs + 1):
+            wait_quiet(env, WATCHED, timeout=300)
+            params = {"rate_mb_per_minute": args.leak_rate} if name == "leak" else None
+            body: dict[str, Any] = {"scenario": scenario}
+            if params:
+                body["parameters"] = params
+            started = time.monotonic()
+            began = time.time()
+            experiment = chaos_call(env, "POST", "/v1/chaos/experiments", body)
+            query = condition.format(env=env)
+            seen = wait_for(env, alerts, timeout, started, condition_started(query))
+            also = sorted(set(firing(env)) & set(WATCHED) - set(alerts))
+            ok &= report(alerts, seen, f"run {run}")
+            result: dict[str, Any] = {
+                "scenario": scenario,
+                "run": run,
+                "experiment_id": experiment["experiment_id"],
+                "started_at": began,
+                "fired_after_start_s": seen.get(alerts[0], (None, None))[0],
+                "fired_after_condition_s": seen.get(alerts[0], (None, None))[1],
+                "also_firing": also,
+            }
+            if also:
+                print(f"    {DIM}also firing: {', '.join(also)}{RESET}")
+            if name == "leak" and alerts[0] in seen:
+                ok &= restart_cures_the_leak(env)
+            if name == "db" and run == 1 and alerts[0] in seen:
+                # The point of the scenario: none of the agent's tools clears it.
+                kubectl("rollout", "restart", "-n", env, "deployment/portfolio-service")
+                kubectl(
+                    "rollout", "status", "-n", env, "deployment/portfolio-service", "--timeout=240s"
+                )
+                time.sleep(30)
+                still = alerts[0] in firing(env)
+                ok &= verdict(
+                    still,
+                    "restarting portfolio-service does not clear it (the fault is in its database)",
+                )
+            reset_at = time.monotonic()
+            undone = chaos_call(env, "POST", "/v1/chaos/reset")
+            after, detail = back_to_normal(env)
+            ok &= verdict(
+                after is not None,
+                f"reset: back to normal in {after or 0:.0f} s ({detail};"
+                f" undone: {'; '.join(undone['undone']) or 'nothing'})",
+            )
+            result |= {
+                "reset_to_normal_s": after,
+                "normal": detail,
+                "undone": undone["undone"],
+                "whole_run_s": time.monotonic() - started,
+                "reset_after_s": reset_at - started,
+            }
+            runs.append(result)
+    out = ROOT / "build" / "chaos" / f"{args.label}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(runs, indent=2))
+    print(f"  {DIM}saved {out.relative_to(ROOT)}{RESET}")
+    return ok
+
+
+ADR_0020 = "ADR-0020"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
@@ -1616,6 +1865,12 @@ def main() -> int:
     sub.add_parser("sealed").set_defaults(func=check_sealed)
     sub.add_parser("sealed-drill").set_defaults(func=check_sealed_drill)
     sub.add_parser("offline").set_defaults(func=check_offline)
+    chaos = sub.add_parser("chaos")
+    chaos.add_argument("--runs", type=int, default=5)
+    chaos.add_argument("--only", nargs="+", default=list(CHAOS), choices=list(CHAOS))
+    chaos.add_argument("--leak-rate", type=int, default=80, help="MB a minute")
+    chaos.add_argument("--label", default="chaos", help="build/chaos/<label>.json")
+    chaos.set_defaults(func=check_chaos)
     profile = sub.add_parser("profile")
     profile.add_argument("--label", required=True, help="name of the saved result")
     profile.add_argument("--rate", type=float, default=100)
