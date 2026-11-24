@@ -435,20 +435,35 @@ and the plan would simply build again).
 `deploy/envs/<env>/` names its registry next to its tag, so a service moves from the local registry to GHCR in the
 same commit that gives it a GHCR tag (and `make promote` copies both).
 
-**The `main` ruleset and the deploy key.** A **ruleset** is GitHub's set of rules for a branch. On `main`: no
-deletion, no force-push, only merge commits, and every change through a pull request with 0 required approvals: only
-the owner has access to the repository (the owner's decision, 2026-11-24), so the human gate for prod is **merging the
-promotion PR**. A team of several people would add a required code-owner approval on `deploy/envs/prod/` (rulesets
-support it, and `.github/CODEOWNERS` already names the owner). CI's tag bumps are the one exception:
-the `deploy-staging` job pushes with a **deploy key** (an SSH key for this one repository, write access), and deploy
-keys are on the ruleset's bypass list. Three consequences, all deliberate:
+**The `main` ruleset and the deploy key.** A **ruleset** is GitHub's set of rules for a branch. On `main`:
 
-- GitHub's bypass entry covers *every* deploy key of the repository; it cannot name one. Argo CD's deploy key is
-  read-only, so it cannot push anyway. Any future write deploy key would bypass too: add none.
-- The private key lives in the GitHub **environment** `gitops`, which hands it only to workflow runs on `main`. A
-  pull request's run, or a workflow edited on another branch, never sees it.
-- The SRE agent's GitHub App (Phase 7, [ADR-0016](../adr/0016-rollback-reconciles-through-git.md)) is **never** on
-  the bypass list: its revert pull requests always wait for a person to merge them.
+| Rule | Setting | Why |
+|---|---|---|
+| Deletion, force-push | blocked | History in Git is the deploy history; it is never rewritten |
+| Pull request | required, 0 approvals, merge commits only | Only the owner has access to the repository (the owner's decision, 2026-11-24), so the human gate for prod is **merging the promotion PR**. A team of several people would add a required code-owner approval on `deploy/envs/prod/` (rulesets support it; `.github/CODEOWNERS` already names the owner). Merge commits keep a pull request's commits, which "build once" looks up |
+| Restrict updates | only the bypass list below may change `main` at all | With 0 approvals, anyone with write access could merge a pull request through the API. This rule is what makes ADR-0016's promise ("the SRE agent's GitHub App can open revert pull requests but never merge them") GitHub's to enforce, not only the agent's code (it has no merge tool) |
+
+Bypass list:
+
+| Who | Mode | For |
+|---|---|---|
+| The repository's admin role (the owner) | `pull_request`: only by merging a pull request, never by pushing | Merging pull requests, the human gate |
+| Deploy keys | `always` | CI's `deploy-staging` job pushes the tag bumps with a **deploy key** (an SSH key for this one repository, write access) |
+
+The SRE agent's GitHub App (Phase 7, [ADR-0016](../adr/0016-rollback-reconciles-through-git.md)) is **never** on the
+list, so GitHub refuses both its merge and its push to `main`: its revert pull requests always wait for a person.
+Phase 7 adds a test that GitHub refuses the App's attempt to merge or push.
+
+**The known trade-off: a deploy key bypasses `always`.** A leaked CI deploy key could push **anything** to `main`,
+not only tag bumps, and skip the pull request (GitHub's bypass entry cannot limit what a push contains). Three things
+keep that risk small:
+
+- The private key lives only in the GitHub **environment** `gitops`, which hands it to workflow runs on `main` alone.
+  A pull request's run, or a workflow edited on another branch, never sees it.
+- The bypass covers *every* deploy key of the repository (it cannot name one). Argo CD's deploy key is read-only, so
+  it cannot push anyway. Any future write deploy key would bypass too: add none.
+- If it leaks: delete the deploy key on GitHub (pushes stop at once), make a new one, put it in `gitops`, and look at
+  `main`'s history since the leak (every push is a commit in Git).
 
 ### Releasing to prod: `make promote` (Phase 6)
 
@@ -682,6 +697,12 @@ managed Kubernetes service and a GitOps deployment server. A sandbox environment
 A: The gate should block what we can act on. A critical hole with a fixed version means "upgrade before
 deploying", so the build fails and we upgrade (it happened at once: web's nginx base had five). One with no fix
 yet cannot be upgraded away, so failing would block every change for nothing; it stays visible in the report.
+
+**Q: CI's deploy key may push to `main` without a pull request. Isn't that a hole?**
+A: Yes, a known trade-off. A deploy key on the bypass list bypasses always, so a leaked one could push anything, not
+only tag bumps. We keep it in the `gitops` environment, which releases it only to workflow runs on `main`, so a pull
+request or another branch cannot read it; Argo CD's key is read-only; and if it leaks we delete the key on GitHub,
+which stops it at once, and check `main`'s history.
 
 **Q: `main` needs a pull request for every change. How does CI commit tag bumps to it?**
 A: With a deploy key that the ruleset lets bypass. Only CI's job on `main` can read that key (it is in the `gitops`
