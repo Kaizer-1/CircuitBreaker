@@ -20,7 +20,8 @@ from portfolio_service.adapters.order_service_http import HttpOrderService
 from portfolio_service.adapters.partitions import partition_for
 from portfolio_service.adapters.postgres import PostgresPortfolioStore
 from portfolio_service.adapters.postgres_listener import PostgresListener
-from portfolio_service.api import portfolio, stubs
+from portfolio_service.api import faults, portfolio, stubs
+from portfolio_service.application.faults import DatabaseDegraded
 from portfolio_service.application.live import PortfolioHub
 from portfolio_service.application.portfolio import PortfolioService
 from portfolio_service.application.sweeper import OrphanSweeper
@@ -108,13 +109,17 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
                 on_transaction=app.state.business_metrics.transaction,
             )
             await store.migrate()
-            service = PortfolioService(store)
+            degraded = DatabaseDegraded(store)
+            if settings.chaos_hooks_enabled:
+                await degraded.refresh()  # a fault stored before this restart is still on
+            service = PortfolioService(store, database_delay=degraded.delay_seconds)
             await service.seed_accounts()
             break
         except Exception:
             logger.exception("start-up failed, retrying in 3 s")
             await asyncio.sleep(3)
     app.state.service = service
+    app.state.database_degraded = degraded
     business: BusinessMetrics = app.state.business_metrics
     hub = PortfolioHub(service.portfolio)
     business.portfolio_ws_connections.set_function(hub.connections)
@@ -160,6 +165,8 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
             asyncio.create_task(listener.run()),  # Q-10: every replica hears every change
             asyncio.create_task(hub.run()),  # Q-10: re-value on price moves, once a second
         ]
+        if settings.chaos_hooks_enabled:
+            background.append(asyncio.create_task(degraded.watch()))
         try:
             await consumer.run()
         finally:
@@ -207,6 +214,7 @@ def create_app(
     app.state.service = service
     app.state.hub = PortfolioHub(service.portfolio) if service is not None else None
     app.state.consumer = None
+    app.state.database_degraded = None
     if readiness_checks is None:
         checks.append(consumer_check(lambda: app.state.consumer))
 
@@ -220,5 +228,6 @@ def create_app(
     app.include_router(health_router(settings.service_name, checks))
     app.include_router(metrics_router(metrics))
     app.include_router(portfolio.router)
+    app.include_router(faults.router)
     app.include_router(stubs.router)
     return app

@@ -66,13 +66,14 @@ order-service does not answer, it tries again next cycle.
 
 Postgres database `portfolio` (schema: [`src/portfolio_service/migrations/`](src/portfolio_service/migrations/), applied
 at start-up, recorded in `schema_migrations`): `accounts`, `holdings`, `reservations` (with `confirmed` and
-`expiry_requested_at`), `settlements`, `last_prices`, `processed_events`.
+`expiry_requested_at`), `settlements`, `last_prices`, `processed_events`, and `chaos_faults` (chaos's "database
+degraded" switch, below).
 
 ## Events
 
 | | |
 |---|---|
-| **Produces** | — on the bus. Local: `AccountOpened`, `ReservationCreated`, `TradeSettled`, `ReservationReleased`, `ExpiryRequested`. |
+| **Produces** | — on the bus. Local: `AccountOpened`, `ReservationCreated`, `TradeSettled`, `ReservationReleased`, `ExpiryRequested`, `FaultInjected`, `FaultCleared`. |
 | **Consumes** | `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderExpired` ← `matching.v1` (group `portfolio-service.matching.v1`). |
 
 Schemas: [event catalog](../../docs/03-architecture/03-event-catalog.md). `tests/contract/test_events.py` applies the
@@ -84,7 +85,8 @@ then the event goes to `matching.v1.dlq`.
 Q-09 `GET /v1/portfolio` (`X-Trader-Id` from the gateway), WebSocket Q-10 `/v1/ws/portfolio` (messages in
 [api/README.md](../../api/README.md#q-10--v1wsportfolio-portfolio-service-roles-trader-bot); closed with `4401` without
 `X-Trader-Id`, `4404` for an unknown account), internal A-02 `POST /internal/v1/accounts`, A-06
-`POST /internal/v1/reservations`, Q-11 `GET /v1/leaderboard?limit=&include_bots=`. Spec:
+`POST /internal/v1/reservations`, Q-11 `GET /v1/leaderboard?limit=&include_bots=`, and the chaos hook A-21
+`POST /internal/v1/faults` / A-22 `DELETE /internal/v1/faults` (below). Spec:
 [`api/portfolio-service.yaml`](../../api/portfolio-service.yaml). Settlement (A-09) is event-driven.
 
 **The leaderboard (Q-11)** ranks by net worth marked to market exactly as Q-09 values a portfolio (`domain/rules.py`
@@ -108,6 +110,17 @@ cycle). Never on a request path.
 ## Scaling and operations
 
 Default 2 replicas, agent may scale 1–5. Concurrent settlements on the same account are serialised by row locks in Postgres.
+
+**Chaos target for "Portfolio database degraded"** (`PORTFOLIO_DB_DEGRADED`, [chaos scenarios §3.4](../../docs/03-architecture/06-chaos-scenarios.md)):
+A-21 `{"fault": "DB_DEGRADED", "delay_ms": 100..5000}` stores a row in `chaos_faults`; while it is there every
+reservation makes Postgres wait `delay_ms` inside its transaction (`SELECT pg_sleep`), as a struggling database would.
+order-service's 500 ms reservation timeout then opens its circuit breaker (`OrderServiceCircuitOpen`), and orders get
+`503 DEPENDENCY_UNAVAILABLE` at once. The switch lives in the **database**, not in a pod: every replica reads it at
+start and every 2 seconds, so restarting, rolling back or scaling portfolio-service does not clear it. That is the
+point of the scenario: the cause is the data store, which the SRE agent may never touch, so its correct answer is
+`do_nothing` and escalate. Readiness (`SELECT 1`) is not slowed, so the pods stay Ready. A-22 (or a chaos reset)
+removes the row. Only with `CHAOS_HOOKS_ENABLED=true` (staging and the demo prod; otherwise 404); only chaos-service
+may call it (network policy). `application/faults.py`, `api/faults.py`, migration `003_chaos_faults.sql`.
 
 ## Run and test it alone
 

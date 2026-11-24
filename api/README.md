@@ -58,6 +58,11 @@ carries its ID in its description and in an `x-seeds-id` field.
 | A-17 | Execute a remediation | — | agent tool → Kubernetes API | — |
 | A-18 | Deploy a new version | — | GitHub Actions + Helm | — |
 | A-19 | Request expiry of an unconfirmed order | — | `POST /internal/v1/order-expiries` (`requestOrderExpiry`) | order-service |
+| A-20 | Reset all chaos | `POST /v1/chaos/reset` | same (`resetChaos`) | chaos-service |
+| A-21 | Degrade the portfolio database | — | `POST /internal/v1/faults` (`injectDatabaseFault`) | portfolio-service |
+| A-22 | Clear the database fault | — | `DELETE /internal/v1/faults` (`clearDatabaseFault`) | portfolio-service |
+| A-23 | Start a panic sell | — | `POST /internal/v1/faults` (`startPanicSell`) | bot-traders |
+| A-24 | Stop the panic sell | — | `DELETE /internal/v1/faults` (`stopPanicSell`) | bot-traders |
 | Q-01 | Get my session | `GET /v1/session` (`getCurrentSession`) | — (gateway itself) | api-gateway |
 | Q-02 | List instruments | `GET /v1/instruments` | same (`listInstruments`) | market-data-service |
 | Q-03 | Get candles | `GET /v1/market/{ticker}/candles` | same (`getCandles`) | market-data-service |
@@ -203,6 +208,7 @@ rule covers both (matching-engine spec 1.3.0; market-data spec 1.1.2 describes i
 Phase 7 (chaos): order-service's concurrency limit, documented since Phase 0, was built: `503 OVERLOADED` with
 `Retry-After: 1` beyond 50 requests per pod (order-service spec 1.2.1).
 market-data's A-13 now gives back the leaked memory, so a chaos reset needs no restart (market-data spec 1.2.1).
+portfolio-service gained the "database degraded" chaos hook A-21/A-22 (portfolio spec 1.1.0).
 
 ## Error code catalog
 

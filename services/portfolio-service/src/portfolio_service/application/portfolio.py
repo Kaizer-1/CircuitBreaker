@@ -59,10 +59,13 @@ class PortfolioService:
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         new_id: Callable[[], str] = lambda: str(uuid4()),
+        database_delay: Callable[[], float] = lambda: 0.0,
     ) -> None:
         self._store = store
         self._clock = clock
         self._new_id = new_id
+        # Seconds each reservation waits in Postgres: 0 unless chaos's "database degraded" is on.
+        self._database_delay = database_delay
         self.leaderboard = Leaderboard(store, clock=clock)  # Q-11
 
     def _now(self) -> str:
@@ -124,6 +127,8 @@ class PortfolioService:
     async def create_reservation(self, request: ReservationRequest) -> tuple[Reservation, bool]:
         """(reservation, created). A repeat for the same order_id returns the existing one."""
         async with self._store.transaction() as tx:
+            if delay := self._database_delay():
+                await tx.wait_in_database(delay)  # chaos: the database is struggling
             # Locking the account first serialises every reservation of this trader, including a
             # retry of this same order, so the check below cannot race.
             account = await tx.account(request.trader_id, lock=True)

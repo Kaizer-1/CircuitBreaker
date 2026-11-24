@@ -32,14 +32,19 @@ starts its description with one of these IDs. IDs never change meaning; new item
 | A-09 | Settle a trade / release a reservation | portfolio-service | J-32 | `portfolio-service` | Event | consumes `OrderAccepted`, `TradeExecuted`, `OrderCancelled`, `OrderExpired` | — |
 | A-10 | Start a chaos experiment | Admin | J-15 | `chaos-service` | HTTP | `POST /v1/chaos/experiments` | Yes (admin) |
 | A-11 | Stop a chaos experiment | Admin | J-16 | `chaos-service` | HTTP | `POST /v1/chaos/experiments/{experiment_id}/stop` | Yes (admin) |
-| A-12 | Inject a fault into a service | chaos-service | J-35 | `market-data-service` | HTTP | `POST /internal/v1/faults` | Internal |
-| A-13 | Clear an injected fault | chaos-service | J-35 | `market-data-service` | HTTP | `DELETE /internal/v1/faults` | Internal |
+| A-12 | Inject a fault into a service (memory leak) | chaos-service | J-35 | `market-data-service` | HTTP | `POST /internal/v1/faults` | Internal |
+| A-13 | Clear an injected fault (memory leak) | chaos-service | J-35 | `market-data-service` | HTTP | `DELETE /internal/v1/faults` | Internal |
 | A-14 | Update agent settings (approval toggle, pause) | Admin | J-17 | `sre-agent` | HTTP | `PUT /v1/agent/settings` | Yes (admin) |
 | A-15 | Approve or decline a proposed remediation | Admin | J-18, J-23 | `sre-agent` | HTTP | `POST /v1/incidents/{incident_id}/decision` | Yes (admin) |
 | A-16 | Open an incident | SRE Agent | J-21 | `sre-agent` | Event | Prometheus alert detected by the agent loop; emits `IncidentOpened` | — |
 | A-17 | Execute a remediation (`rollback_deployment`, `scale_deployment`, `restart_deployment`, `do_nothing`) | SRE Agent | J-22, J-23 | `sre-agent` | Tool | Kubernetes API calls; emits `RemediationExecuted` | — |
 | A-18 | Deploy a new version (staging, then prod) | Developer | J-26, J-27 | (platform) | CI | GitHub Actions builds and commits the image tag; Argo CD deploys (GitOps) | — |
 | A-19 | Request expiry of an unconfirmed order | portfolio-service | J-36 | `order-service` | HTTP | `POST /internal/v1/order-expiries` | Internal |
+| A-20 | Reset all chaos (end every experiment, undo every fault) | Admin | J-16 | `chaos-service` | HTTP | `POST /v1/chaos/reset` | Yes (admin) |
+| A-21 | Degrade the portfolio database (chaos hook) | chaos-service | J-35 | `portfolio-service` | HTTP | `POST /internal/v1/faults` | Internal |
+| A-22 | Clear the portfolio database fault | chaos-service | J-35 | `portfolio-service` | HTTP | `DELETE /internal/v1/faults` | Internal |
+| A-23 | Start a panic sell (chaos hook) | chaos-service | J-35 | `bot-traders` | HTTP | `POST /internal/v1/faults` | Internal |
+| A-24 | Stop the panic sell | chaos-service | J-35 | `bot-traders` | HTTP | `DELETE /internal/v1/faults` | Internal |
 
 ## Queries
 
@@ -91,7 +96,7 @@ flowchart LR
     subgraph Actions
         A1["A-01..A-04 sessions"]
         A5["A-05..A-09, A-19 orders, matching,<br/>settlement, expiry"]
-        A10["A-10..A-13 chaos"]
+        A10["A-10..A-13, A-20..A-24 chaos"]
         A14["A-14, A-15 agent controls"]
         A16["A-16, A-17 incident handling"]
         A18["A-18 deploy"]

@@ -26,6 +26,7 @@ from portfolio_service.domain.model import (
     ReservationStatus,
     Side,
 )
+from portfolio_service.ports.store import DatabaseFault
 from portfolio_service.runtime.events import format_timestamp, parse_timestamp
 
 logger = logging.getLogger("postgres")
@@ -96,6 +97,7 @@ def _reservation(row: dict[str, Any]) -> Reservation:
 
 
 CHANGES_CHANNEL = "portfolio_changes"  # docs/03-architecture/08-read-side.md section 3
+DB_DEGRADED = "DB_DEGRADED"  # the one fault in chaos_faults (application/faults.py)
 
 
 class PgTx:
@@ -290,6 +292,29 @@ class PgTx:
 
     async def notify(self, payload: str) -> None:
         await self._conn.execute("SELECT pg_notify(%s, %s)", (CHANGES_CHANNEL, payload))
+
+    async def wait_in_database(self, seconds: float) -> None:
+        await self._conn.execute("SELECT pg_sleep(%s)", (seconds,))
+
+    async def database_fault(self) -> DatabaseFault | None:
+        row = await self._one(
+            "SELECT fault, delay_ms, started_at FROM chaos_faults WHERE fault = %s", (DB_DEGRADED,)
+        )
+        return DatabaseFault(row["fault"], row["delay_ms"], row["started_at"]) if row else None
+
+    async def set_database_fault(self, fault: DatabaseFault) -> bool:
+        row = await self._one(
+            "INSERT INTO chaos_faults (fault, delay_ms, started_at) VALUES (%s, %s, %s)"
+            " ON CONFLICT (fault) DO NOTHING RETURNING fault",
+            (fault.fault, fault.delay_ms, fault.started_at),
+        )
+        return row is not None
+
+    async def clear_database_fault(self) -> bool:
+        row = await self._one(
+            "DELETE FROM chaos_faults WHERE fault = %s RETURNING fault", (DB_DEGRADED,)
+        )
+        return row is not None
 
 
 class PostgresPortfolioStore:

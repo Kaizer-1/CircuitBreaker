@@ -2,9 +2,20 @@
 
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from portfolio_service.domain.model import Account, AccountKind, Holding, Reservation
+
+
+@dataclass(frozen=True)
+class DatabaseFault:
+    """chaos's "database degraded" fault, stored in this database (application/faults.py)."""
+
+    fault: str  # DB_DEGRADED
+    delay_ms: int
+    started_at: datetime
 
 
 class Tx(Protocol):
@@ -60,6 +71,17 @@ class Tx(Protocol):
 
     async def mark_processed(self, event_id: str, event_type: str) -> bool:
         """Record the event as processed. False if it already was (a duplicate)."""
+
+    async def wait_in_database(self, seconds: float) -> None:
+        """Make Postgres itself spend `seconds` in this transaction (chaos: database degraded)."""
+
+    async def database_fault(self) -> DatabaseFault | None: ...
+
+    async def set_database_fault(self, fault: DatabaseFault) -> bool:
+        """Store the fault. False if one is already stored."""
+
+    async def clear_database_fault(self) -> bool:
+        """Remove the fault. False if there was none."""
 
     async def notify(self, payload: str) -> None:
         """Tell every replica about a change once this transaction commits (Postgres NOTIFY on

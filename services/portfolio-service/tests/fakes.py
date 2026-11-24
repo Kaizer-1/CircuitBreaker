@@ -15,6 +15,7 @@ from portfolio_service.domain.model import (
     Reservation,
     ReservationStatus,
 )
+from portfolio_service.ports.store import DatabaseFault
 from portfolio_service.runtime.events import parse_timestamp
 
 
@@ -26,6 +27,8 @@ class State:
     last_prices: dict[str, int] = field(default_factory=dict)
     settlements: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     processed: set[str] = field(default_factory=set)
+    database_fault: DatabaseFault | None = None
+    database_waits: list[float] = field(default_factory=list)
 
 
 class InMemoryTx:
@@ -35,6 +38,22 @@ class InMemoryTx:
 
     async def notify(self, payload: str) -> None:
         self.notifications.append(payload)
+
+    async def wait_in_database(self, seconds: float) -> None:
+        self.s.database_waits.append(seconds)
+
+    async def database_fault(self) -> DatabaseFault | None:
+        return self.s.database_fault
+
+    async def set_database_fault(self, fault: DatabaseFault) -> bool:
+        if self.s.database_fault is not None:
+            return False
+        self.s.database_fault = fault
+        return True
+
+    async def clear_database_fault(self) -> bool:
+        cleared, self.s.database_fault = self.s.database_fault is not None, None
+        return cleared
 
     async def account(self, trader_id: str, *, lock: bool = False) -> Account | None:
         a = self.s.accounts.get(trader_id)
