@@ -544,11 +544,12 @@ the full system (the owner's decision, 2026-11-23). Measured on GitHub's runner 
 
 The node used 3.17 GiB once synced. The previous run (`140c95a`) synced in 127 s with the same memory.
 
-Its first runs found three faults, all fixed:
+Its first runs found three faults (and one race in the check itself), all fixed:
 
 - **"Synced and Healthy" came before the smoke tests had finished.** An Application already reports Synced and
   Healthy while its PostSync Job runs, so the check (and `make k8s-up`'s wait) now also waits while a sync is
-  `Running`.
+  `Running`. A later run started the check before the ApplicationSet had generated any Application and found "none
+  unsettled": now no Applications counts as not settled, and settled must hold for 10 s.
 - **`terraform destroy` hung on the `argocd` namespace.** The ApplicationSet controller gives every Application Argo
   CD's `resources-finalizer`: on delete, Argo CD first removes what the Application deployed, then lets it go. It
   does so only while Argo CD runs and the Application's project exists (Argo CD v3.6.2,

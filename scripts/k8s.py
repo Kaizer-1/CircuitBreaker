@@ -407,9 +407,14 @@ def argo_manages(namespace: str) -> bool:
 
 def argo_not_settled(env: str) -> list[str]:
     """Applications of env that are not Synced and Healthy yet, or whose sync is still running:
-    an Application is Synced and Healthy while its PostSync smoke test runs (CI, 2026-11-24)."""
+    an Application is Synced and Healthy while its PostSync smoke test runs (CI, 2026-11-24).
+    None at all counts too: right after Terraform installs Argo CD, the ApplicationSet has not
+    generated them yet."""
+    apps = argo_applications(env)
+    if not apps:
+        return ["no Applications yet"]
     waiting = []
-    for app in argo_applications(env):
+    for app in apps:
         status = app.get("status", {})
         sync = status.get("sync", {}).get("status", "?")
         health = status.get("health", {}).get("status", "?")
@@ -421,17 +426,26 @@ def argo_not_settled(env: str) -> list[str]:
 
 
 def wait_argo(env: str, timeout: float = 900) -> float:
+    """Until every Application of env has been settled for 10 s (one look could catch the
+    ApplicationSet halfway through generating them)."""
     start = time.monotonic()
     last = ""
-    while waiting := argo_not_settled(env):
-        if time.monotonic() - start > timeout:
-            sys.exit(f"Argo CD: not Synced and Healthy after {timeout:.0f} s: {', '.join(waiting)}")
-        line = f"   Argo CD: {len(waiting)} not settled: {', '.join(sorted(waiting))}"
-        if line != last:
-            print(line, flush=True)
-            last = line
+    settled_since: float | None = None
+    while True:
+        now = time.monotonic()
+        if waiting := argo_not_settled(env):
+            settled_since = None
+            if now - start > timeout:
+                sys.exit(f"Argo CD: not settled after {timeout:.0f} s: {', '.join(waiting)}")
+            line = f"   Argo CD: {len(waiting)} not settled: {', '.join(sorted(waiting))}"
+            if line != last:
+                print(line, flush=True)
+                last = line
+        elif settled_since is None:
+            settled_since = now
+        elif now - settled_since >= 10:
+            return settled_since - start
         time.sleep(5)
-    return time.monotonic() - start
 
 
 def local_url(env: str) -> str:
