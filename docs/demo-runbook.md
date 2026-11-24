@@ -85,7 +85,8 @@ takes minutes, not a reset, as long as the data is from the same tickers.
 
 | Tag | Verified | Runs on |
 |---|---|---|
-| **`v0.5.3-demoable`** (preferred) | Cassandra sized for its container, the bounded snapshot tables (`book_snapshots_by_hour`, a 24-hour time-travel horizon), the traffic spike calibrated to 110 requests/s, plus everything in `v0.5.2-demoable`; CI green | Compose **and** Kubernetes |
+| **`v0.6-demoable`** (preferred) | Phase 6: the platform from `make platform` (Terraform), Argo CD deploying both environments from Git, Sealed Secrets, CI images on GHCR (prepulled for the offline hotspot), the first prod release through `make promote` (PR #12, 9 of 9 smoke tests); plus everything in `v0.5.3-demoable`. CI green. Same data as `v0.5.3-demoable` | Compose **and** the GitOps cluster |
+| `v0.5.3-demoable` | Cassandra sized for its container, the bounded snapshot tables (`book_snapshots_by_hour`, a 24-hour time-travel horizon), the traffic spike calibrated to 110 requests/s, plus everything in `v0.5.2-demoable`; CI green. **Before GitOps:** on Kubernetes it runs only on a cluster made by `make k8s-up` (a person resets the GitOps cluster first) | Compose **and** Kubernetes (`make k8s-up`) |
 | `v0.5.2-demoable` | The professional ticker names (CALVERA, KORVIN, ASTRYX, HELIOR, TAVIRA), plus everything in `v0.5.1-demoable`; CI green. **Cannot read the new snapshot tables:** `v0.5.3` moved the engine's snapshots to `book_snapshots_by_hour` and dropped `book_snapshots`, so this version's engine finds no snapshot and rebuilds every book from all its events (correct, but slow on a long history). A person resets first | Compose **and** Kubernetes |
 | `v0.5.1-demoable` | Phones ordering over the hotspot address (`make test-phone` on a LAN IP), the tab bar, the QR address kept on Kubernetes, CI green. **Old ticker names:** it cannot read data made with the new ones, so a person resets first | Compose **and** Kubernetes |
 | `v0.4-demoable` | Phase 4: time travel, leaderboard; phone ordering over the LAN did **not** work yet (only on the laptop). Old ticker names, as above | Compose only (Kubernetes came in Phase 5) |
@@ -94,22 +95,27 @@ takes minutes, not a reset, as long as the data is from the same tickers.
 
 ```bash
 make down                                         # stops the containers; volumes (data) are kept
-git switch -c demo-fallback v0.5.3-demoable       # a branch at the tag (the working tree must be clean)
+git switch -c demo-fallback v0.6-demoable         # a branch at the tag (the working tree must be clean)
 PUBLIC_BASE_URL=http://<LAN IP>:5173 make up      # builds that version's images
 make bots
 ```
 
-**Kubernetes:**
+**Kubernetes (the GitOps cluster):** Argo CD deploys what Git says, so falling back means pointing Argo CD at the tag.
+Nothing is built: the tag's image tags are the GHCR images already on the node (`make k8s-prepull`).
 
 ```bash
-git switch -c demo-fallback v0.5.3-demoable
-PUBLIC_BASE_URL=http://<LAN IP> make k8s-up       # builds and rolls only the images that differ; data kept
-make k8s-bots
+make platform revision=v0.6-demoable              # Terraform: 1 change (the Applications' target revision); answer yes
+make sync env=prod                                # don't wait for the 30-second poll; then make sync (staging)
+make k8s-status                                   # every Application Synced and Healthy at the tag
 ```
 
-Back to the latest: `git switch main`, then `make up` or `make k8s-up` again. If a later version changed how data is
-stored and the old version cannot read it, **a person** runs `CONFIRM=yes make demo-reset` (Compose) or `CONFIRM=yes
-make k8s-reset` (Kubernetes) first; data-wiping commands are never run by a script or an assistant.
+`make k8s-up` cannot be used for this: it refuses to deploy into namespaces Argo CD manages. Bots and the QR address
+are operator settings outside Git and stay as they were.
+
+Back to the latest: `git switch main`, then `make up` (Compose) or `make platform revision=main` (Kubernetes). If a
+later version changed how data is stored and the old version cannot read it, **a person** runs `CONFIRM=yes make
+demo-reset` (Compose) or `CONFIRM=yes make k8s-reset` then `make platform` (Kubernetes) first; data-wiping commands
+are never run by a script or an assistant.
 
 ## 5. The Later list
 
