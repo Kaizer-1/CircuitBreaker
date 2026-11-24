@@ -333,7 +333,14 @@ make k8s-status      # pods, the memory per namespace (the RAM budget's numbers)
 make k8s-set-url url=http://192.168.43.12   # point the QR code at the laptop's hotspot address (data kept)
 make k8s-down        # stop the cluster: data kept, RAM freed; make k8s-up starts it again in seconds
 make k8s-prepull     # every image the demo needs onto the node, so pods restart without the internet
+make promote s=web   # a pull request giving prod the image staging runs (s=all; dry=yes): merging it releases
 ```
+
+**Releasing.** A merged change reaches staging by itself (CI's tag bump, then Argo CD and the PostSync smoke test:
+two load-test accounts trade a share). `make promote s="<service> ..."` (or `s=all`) opens the pull request that gives
+prod the same images; merging it is the release, and prod's smoke test places and cancels a far-from-market order.
+`kubectl get jobs -n <env> -l app.kubernetes.io/name=smoke-test` lists the last smoke test of each service, and
+`kubectl logs -n <env> job/smoke-<service>` shows its result.
 
 The first `make k8s-up` takes about 7 minutes once the images exist (402 s measured: the platform charts, then
 Cassandra's first start), longer when it also builds the 9 images; later ones take seconds to a minute and rebuild only services whose files changed (images are tagged by git SHA, plus a hash of uncommitted
@@ -376,6 +383,7 @@ Port 80 is open to the network (kind maps it on all interfaces); Grafana and Pro
 | `make k8s-check c=gitops-push env=staging` | A commit's way to the cluster, timed: commits and **pushes** a pod annotation on web, waits for `Synced` and `Healthy`, checks an unrelated drifted service is left alone, then `git revert`s and times the way back. Needs a clean tree on the branch Argo CD follows |
 | `make k8s-check c=sealed` | Every SealedSecret decrypted; a secret sealed with the right certificate decrypts; one sealed with another key, for the other namespace, or renamed after sealing, does not |
 | `make k8s-check c=sealed-drill` | The sealing key's restore drill (needs the backup): the key is lost, an old SealedSecret fails, the backup goes back in, it decrypts again |
+| `python3 scripts/k8s.py run --env staging smoke.py --mode trade` | The PostSync smoke test from the laptop (`--mode place-cancel` for prod's; `--account N` picks the load-test accounts) |
 | `make k8s-check c=offline` | The demo without the internet: `k8s-prepull`, then the node is cut off from the internet (LAN and cluster still reachable), every pod of the environment and the platform is deleted, all start again from the node's images with no pull, and a demo trade settles; the internet is restored at the end (about 5 minutes) |
 | `make k8s-test-phone [env=]` | The phone pages from a non-secure origin (below), against the cluster, with that environment's bot secret |
 | `python3 scripts/k8s.py run bots_check.py 120` | Any `scripts/` check against the cluster (port-forwards stand in for Compose's host ports) |

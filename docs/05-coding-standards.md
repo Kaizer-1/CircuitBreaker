@@ -226,7 +226,9 @@ query, so they must not change without updating [06-chaos-scenarios.md](03-archi
 ## 11. Git workflow and commit messages
 
 - **Trunk-based development:** short-lived branches (≤ 2 days) off `main`, merged by pull request.
-- **Code owners:** `.github/CODEOWNERS` maps each `services/<name>/` folder to its owner; the owner must approve.
+- **Code owners:** `.github/CODEOWNERS` names the owner of each path. Only the repository owner has access (the owner's
+  decision, 2026-11-24), so `main`'s ruleset requires a pull request but 0 approvals; a team of several people would
+  make a code owner's approval required, at least on `deploy/envs/prod/`.
 - **Commit messages: Conventional Commits** — `<type>(<scope>): <summary>` in the imperative mood, ≤ 72 characters.
 
 | Type | Use for |

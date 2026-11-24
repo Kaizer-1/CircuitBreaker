@@ -96,7 +96,7 @@ One owner for the UI and the order flow avoids a frontend/backend hand-off for e
 |---|---|
 | Team type | Complicated-subsystem |
 | Size | Textbook: 5–8 · Ours: **Mohammad Oweis** |
-| Responsibilities | Release microservices to `prod`: approve promotion PRs to `deploy/envs/prod/` (CODEOWNERS), run Argo CD sync and `git revert` rollbacks, including reviewing and merging the SRE agent's revert pull requests ([ADR-0014](adr/0014-gitops-with-argo-cd.md), [ADR-0016](adr/0016-rollback-reconciles-through-git.md)); coordinate approvals for releases; own **`chaos-service`** and the chaos rehearsals that gate promotion |
+| Responsibilities | Release microservices to `prod`: merge the promotion PRs to `deploy/envs/prod/` (`make promote`; in this repository the owner, the only person with access, so merging is the human gate; a team of several would add a required code-owner approval), run Argo CD sync and `git revert` rollbacks, including reviewing and merging the SRE agent's revert pull requests ([ADR-0014](adr/0014-gitops-with-argo-cd.md), [ADR-0016](adr/0016-rollback-reconciles-through-git.md)); coordinate approvals for releases; own **`chaos-service`** and the chaos rehearsals that gate promotion |
 | Interactions | **Collaboration** with the stream-aligned teams and the API Team on releases; **collaboration** with the SRE agent role on alerts, RBAC and incident follow-ups |
 
 In the textbook, microservices teams deliver a built and tested container, and the release team deploys it after
