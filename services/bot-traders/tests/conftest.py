@@ -28,5 +28,5 @@ def settings() -> Settings:
 
 @pytest.fixture
 def has_api_spec() -> bool:
-    """False only for a service with no business API (it has no api/<service>.yaml)."""
-    return False
+    """bot-traders' only API is the internal chaos hook A-23/A-24 (api/bot-traders.yaml)."""
+    return True

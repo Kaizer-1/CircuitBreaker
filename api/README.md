@@ -14,9 +14,11 @@ carries its ID in its description and in an `x-seeds-id` field.
 | [`portfolio-service.yaml`](portfolio-service.yaml) | `portfolio-service` | Gateway → service; internal accounts + reservations |
 | [`sre-agent.yaml`](sre-agent.yaml) | `sre-agent` | Gateway → service |
 | [`chaos-service.yaml`](chaos-service.yaml) | `chaos-service` | Gateway → service (admin) |
+| [`bot-traders.yaml`](bot-traders.yaml) | `bot-traders` | Internal only: the panic-sell chaos hook (Phase 7) |
 | [`shared/common.yaml`](shared/common.yaml) | — | Shared schemas (Problem, Ticker, PricePaise, …), parameters and error responses, referenced by all specs so each shape is defined once |
 
-`bot-traders` has no business API (only the standard `/healthz`, `/readyz`, `/metrics`), so it has no spec.
+`bot-traders` has no business API: the bots are clients of the public API. Its spec holds only the internal
+panic-sell chaos hook (A-23, A-24; [ADR-0020](../docs/adr/0020-chaos-triggers-through-each-targets-own-hook.md)).
 
 **Validate:** `npx @redocly/cli lint` (uses [`../redocly.yaml`](../redocly.yaml)). Current status: 0 errors,
 0 warnings.
@@ -208,7 +210,8 @@ rule covers both (matching-engine spec 1.3.0; market-data spec 1.1.2 describes i
 Phase 7 (chaos): order-service's concurrency limit, documented since Phase 0, was built: `503 OVERLOADED` with
 `Retry-After: 1` beyond 50 requests per pod (order-service spec 1.2.1).
 market-data's A-13 now gives back the leaked memory, so a chaos reset needs no restart (market-data spec 1.2.1).
-portfolio-service gained the "database degraded" chaos hook A-21/A-22 (portfolio spec 1.1.0).
+portfolio-service gained the "database degraded" chaos hook A-21/A-22 (portfolio spec 1.1.0), and bot-traders its
+first spec, the panic-sell hook A-23/A-24 (bot-traders spec 1.0.0).
 
 ## Error code catalog
 

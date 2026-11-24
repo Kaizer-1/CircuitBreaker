@@ -46,3 +46,14 @@ class Exchange(Protocol):
     def portfolio_stream(self, session: Session) -> AsyncIterator[dict[str, Any]]:
         """Q-10 messages (`portfolio`, `fill`, `order_closed`) until the connection drops."""
         ...
+
+
+class PanicExchange(Protocol):
+    """What the panic sell needs (application/panic.py): one attempt per request, never retried,
+    answering the HTTP status, or 0 when no answer came (a timeout or a dropped connection)."""
+
+    async def login(self, account: str) -> Session: ...
+
+    async def market_sell(self, session: Session, ticker: str) -> int: ...
+
+    async def list_orders(self, session: Session) -> int: ...

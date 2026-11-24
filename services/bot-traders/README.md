@@ -85,9 +85,21 @@ its orders spread over 1 second instead of 5; a fill during a step on that ticke
 other strategies keep their candle rhythm.
 
 **The strategy interface is the extension point.** A strategy is any object with a `name` and
-`decide(view, rng) -> list[Intent]`. The Phase 7 traffic-spike scenario's bot burst is to be a **panic sell** (bots dump
-shares at market). That is one more strategy class and a different assignment in `roster()`
-([roadmap, Phase 7](../../docs/07-roadmap.md)).
+`decide(view, rng) -> list[Intent]`.
+
+**The panic sell (Phase 7, chaos `TRAFFIC_SPIKE`; `application/panic.py`, [ADR-0020](../../docs/adr/0020-chaos-triggers-through-each-targets-own-hook.md)).**
+chaos-service calls the internal hook A-23 `POST /internal/v1/faults` `{"fault": "PANIC_SELL", "requests_per_second":
+110, "duration_seconds": 300}`; A-24 `DELETE` ends it early. The bots' own accounts then send the calibrated mix through
+api-gateway: request *n* at start + *n* / rate, from bot-01 to bot-20 in turn, 9 MARKET sells of 1 share (random ticker)
+for every `GET /v1/orders` ([chaos scenarios §3.3](../../docs/03-architecture/06-chaos-scenarios.md#33--traffic-spike-traffic_spike)).
+It was first planned as one more strategy, but a strategy decides once per candle and waits for its answers (a
+**closed loop**): under overload it would slow down with order-service and hide the overload. A crowd does not wait,
+so the panic is an **open loop** on its own connections (up to 2,000 unanswered, 10 s timeout, no retries); beyond
+2,000 unanswered a request is counted as `dropped` instead of sent. The normal strategies keep trading: the market
+makers' bids are what the panic sells into, so the price falls on the dashboard. Each bot sends about 5.5 requests/s,
+far under the gateway's 50/s per bot token. The credentials never leave this service. Only with
+`CHAOS_HOOKS_ENABLED=true` (otherwise 404); only chaos-service may call it (network policy); the gateway never forwards
+`/internal/`. `bot_panic_requests_total{kind,result}` counts what was offered and how order-service answered.
 
 Other rules: a repeated `CandleClosed` (same deterministic `event_id`) or a stale one (closed more than two intervals ago:
 the consumer is catching up) is ignored. Market makers quote once at start-up, so the first buyer finds a seller. The
@@ -101,6 +113,7 @@ fleet reads each ticker's best bid and ask (Q-04) once per candle for all bots.
 | `BOT_RANDOM_SEED` | none | A number makes every bot's choices repeat run after run (`make bots seed=42`). The market still depends on timing and on what humans do |
 | `BOT_ACTIVITY` | `1.0` | Scales how often and how much every bot trades (`make bots activity=1.5`) |
 | `GATEWAY_URL`, `BOT_SECRET` | | The public API and the A-03 bot secret (Compose: `http://api-gateway:8000`, the dev placeholder) |
+| `CHAOS_HOOKS_ENABLED` | `false` | The panic-sell hook A-23/A-24 (staging and the demo prod only) |
 
 At the default activity, the simulated hour in the tests gives about 8 orders/s, 2.7 trades/s, spreads of 10–12 basis
 points and prices within a few percent of their reference (the test fails outside ±10%; `scripts/bots_check.py` checks
@@ -129,11 +142,14 @@ Schemas: [event catalog](../../docs/03-architecture/03-event-catalog.md).
 
 ## API
 
-No business API — only `/healthz`, `/readyz`, `/metrics`. Uses public A-03, A-05, A-07, Q-02, Q-04, Q-07, Q-09 and the Q-10 WebSocket through `api-gateway`.
+No business API: the bots use public A-03, A-05, A-07, Q-02, Q-04, Q-07, Q-09 and the Q-10 WebSocket through
+`api-gateway`. Its only operations are the internal chaos hook A-23/A-24 (above; spec
+[`api/bot-traders.yaml`](../../api/bot-traders.yaml)).
 
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
-**Business metrics:** `bot_orders_total{strategy,result}` (`placed`, `cancelled`, `skipped`, `refused`), `bots_active`.
+**Business metrics:** `bot_orders_total{strategy,result}` (`placed`, `cancelled`, `skipped`, `refused`), `bots_active`,
+`bot_panic_requests_total{kind,result}` (the panic sell: HTTP status, `no_answer` or `dropped`).
 **The bots' own timing** (`scripts/bots_check.py` prints both): `bot_quote_gap_seconds{strategy}`, how long a side
 had no resting order of a bot after the exchange filled its last one, until it placed a new one (for a market
 maker: time without a quote); `bot_order_lateness_seconds{strategy}`, how much later than planned an order went out

@@ -1,0 +1,138 @@
+openapi: 3.1.0
+info:
+  title: bot-traders API
+  version: 1.0.0
+  summary: The panic-sell chaos hook.
+  description: |
+    Owned by the **Trading Team** (Kaizer Dewaswala). The 20 bots trade through the public API like any client;
+    they have no business API of their own. The only operations are the internal chaos hook for the traffic
+    spike (docs/03-architecture/06-chaos-scenarios.md section 3.3, ADR-0020): chaos-service asks the bots to
+    panic, and their own accounts dump shares at market. The bots' credentials never leave this service.
+
+    The `/internal/v1/faults` endpoints answer 404 unless `CHAOS_HOOKS_ENABLED=true`, are reachable only from
+    chaos-service (network policy) and are never routed by api-gateway.
+servers:
+  - url: http://localhost:8005
+    description: Local Docker Compose
+  - url: http://bot-traders:8000
+    description: Inside the Kubernetes namespace (staging or prod)
+security: []
+tags:
+  - name: Internal
+    description: Chaos hooks. Never routed by api-gateway.
+paths:
+  /internal/v1/faults:
+    post:
+      tags: [Internal]
+      operationId: startPanicSell
+      summary: Start a panic sell (chaos hook)
+      x-seeds-id: A-23
+      description: |
+        **A-23** — For `duration_seconds`, send `requests_per_second` requests through api-gateway from the bots'
+        accounts (bot-01 to bot-20 in turn): 90% `POST /v1/orders` MARKET SELL of 1 share on a random ticker, 10%
+        `GET /v1/orders`. Open loop: requests go out on schedule whether or not earlier ones were answered, and none
+        is retried. It ends by itself; A-24 ends it early.
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PanicRequest'
+            example:
+              fault: PANIC_SELL
+              requests_per_second: 110
+              duration_seconds: 300
+      responses:
+        '201':
+          description: The panic sell is running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PanicState'
+              example:
+                fault: PANIC_SELL
+                active: true
+                requests_per_second: 110
+                duration_seconds: 300
+                started_at: '2026-11-25T11:50:00.000Z'
+                ends_at: '2026-11-25T11:55:00.000Z'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+        '409':
+          description: A panic sell is already running.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/fault-already-active
+                title: Fault already active
+                status: 409
+                code: FAULT_ALREADY_ACTIVE
+                detail: PANIC_SELL has been active since 11:50:00.
+                correlation_id: req-chaos-5
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [Internal]
+      operationId: stopPanicSell
+      summary: Stop the panic sell (chaos hook)
+      x-seeds-id: A-24
+      description: '**A-24** — End the panic sell now. Requests already sent finish on their own.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Stopped.
+        '404':
+          description: No panic sell is running, or chaos hooks are disabled.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/no-active-fault
+                title: No active fault
+                status: 404
+                code: NO_ACTIVE_FAULT
+                detail: There is no panic sell to stop.
+                correlation_id: req-chaos-6
+components:
+  schemas:
+    PanicRequest:
+      type: object
+      required: [fault, requests_per_second, duration_seconds]
+      properties:
+        fault:
+          type: string
+          enum: [PANIC_SELL]
+        requests_per_second:
+          type: integer
+          minimum: 10
+          maximum: 1000
+        duration_seconds:
+          type: integer
+          minimum: 10
+          maximum: 900
+      additionalProperties: false
+    PanicState:
+      type: object
+      required: [fault, active, requests_per_second, duration_seconds, started_at, ends_at]
+      properties:
+        fault:
+          type: string
+          enum: [PANIC_SELL]
+        active:
+          type: boolean
+        requests_per_second:
+          type: integer
+        duration_seconds:
+          type: integer
+        started_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        ends_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'

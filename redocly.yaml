@@ -10,6 +10,7 @@ apis:
   portfolio-service: { root: api/portfolio-service.yaml }
   sre-agent: { root: api/sre-agent.yaml }
   chaos-service: { root: api/chaos-service.yaml }
+  bot-traders: { root: api/bot-traders.yaml }
 rules:
   # No licence has been chosen for this coursework project yet.
   info-license: off
