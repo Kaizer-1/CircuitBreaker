@@ -379,11 +379,18 @@ flowchart LR
 | Step | What it does | Why |
 |---|---|---|
 | Plan (`scripts/gitops_images.py plan`) | Compares the image's folder (`services/<name>/`, `web/`) at the commit staging runs (its tag) with the new commit, as git trees | The folder *is* the build context: identical trees are identical inputs, so an unchanged image keeps its tag and is neither rebuilt nor redeployed |
-| Build | `docker build --pull`, tagged `ghcr.io/kaizer-1/circuitbreaker/<name>:<12-char SHA>`, labelled with the repository and commit | One image per change, named after the commit it came from |
-| Scan | Trivy (below) | A known, fixable critical hole never reaches a cluster |
+| Build | `docker build --pull` twice, natively: `amd64` on `ubuntu-latest` and `arm64` on `ubuntu-24.04-arm`, tagged `ghcr.io/kaizer-1/circuitbreaker/<name>:<12-char SHA>-<arch>`, labelled with the repository and commit. A last job joins them into one tag, `<12-char SHA>`, an **image index**: one name, one image per architecture, and each node pulls its own | One image per change, named after the commit it came from. The demo laptop is Apple Silicon (`arm64`); GitHub's standard runners are `amd64` (below) |
+| Scan | Trivy (below), on each architecture's image | A known, fixable critical hole never reaches a cluster |
 | Push | To GHCR with the job's own `GITHUB_TOKEN` (`packages: write` for this job only). Pull requests from this repository push too | A pull request's images can be tried on staging before merging. They run nowhere until a commit names their tag |
 | Tag bump (`deploy-staging` job) | Only on `main`, only after **every** job passed: `gitops_images.py bump` writes the registry and tag into `deploy/envs/staging/<name>.yaml`, one commit per image, and pushes | What reaches staging was tested and scanned; one commit per service keeps each `git revert` clean (ADR-0016) |
 | No loop | Pushes to `main` that change only `deploy/envs/**` do not start CI (`paths-ignore`) | The tag bumps and promotions change nothing to test or build |
+
+**Found while testing (2026-11-24): the first images could not run on the laptop.** CI built them on GitHub's
+standard runner (`amd64`); the laptop's kind node is `arm64`, and containerd refused the pull: "no match for platform
+in manifest". It was found on the pull request, before anything reached staging, by pulling a pull request's image
+with the sealed token. Fixed by building each image natively on both architectures (GitHub's `arm64` runners are
+available to private repositories since January 2026), not by emulation, which would make every Python build several
+times slower.
 
 A pull request always builds and scans all nine images, so a Dockerfile change or a new vulnerability in a base image
 shows before merging. On `main` only the changed ones are built. Because our pull requests are merged with merge
