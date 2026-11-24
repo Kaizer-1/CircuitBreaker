@@ -285,7 +285,7 @@ after heavy testing (`make k8s-status` prints these numbers):
 | prod + monitoring after 3 hours: the bots, a 60-minute soak at 40 orders/s and an hour of spike calibration (2026-11-23) | 5,928 MiB (prod 3,237; observability 1,365; kube-system 1,232) | **5.16 GiB** (5,097 + 182 MiB) | 6.4 GiB |
 | + staging with its own bots | 6,452 MiB | **6.5 GiB** | 8.1 GiB |
 | **The full (demo) profile** (Phase 6, measured 2026-11-24): prod and staging (bots off), monitoring, Traefik, Argo CD, Sealed Secrets, after hours of syncs and tests | 6,628 MiB (prod 1,796; staging 1,718; kube-system 1,552, of which the API server 1,030; observability 1,060; Argo CD 432; Sealed Secrets 32; Traefik 46) | **6.3 GiB** (6,175 + 238) | 7.4 GiB of the 10.7 GiB Docker has |
-| The slim **ci** profile on GitHub's runner: staging only, no monitoring, Argo CD | | | RESULT_CI_RAM |
+| The slim **ci** profile on GitHub's runner: staging only (bots off), no monitoring, Argo CD; right after every smoke test passed (2026-11-24, two runs) | not recorded | not recorded | 3.17–3.18 GiB of the runner's 7.75 GiB (`docker stats` on the node) |
 | The local image registry (outside the cluster) | | 0.04 GiB | 0.04 GiB |
 
 **Which number counts, and why Docker's is higher.** The budget counts **process memory** (the working set of what
@@ -531,7 +531,18 @@ The ci profile leaves out what the runner cannot carry or does not need: prod, m
 controller and the ingress. It also lowers the **CPU requests** (`deploy/profiles/ci.yaml`): staging asks for
 0.34 cores instead of about 1.8, because the scheduler adds up requests and the full ones leave pods `Pending` on
 2 CPUs. Images, limits and settings are staging's. It tests the plumbing, not performance; the demo profile stays
-the full system (the owner's decision, 2026-11-23). Measured: RESULT_CI_MEASURED
+the full system (the owner's decision, 2026-11-23). Measured on GitHub's runner (2 CPUs, 7.75 GiB; run on `1a6a3bd`,
+2026-11-24):
+
+| Step | Seconds |
+|---|---:|
+| 1. Cluster and staging namespace (Terraform) | 61 |
+| 3. Argo CD (Terraform) | 38 |
+| 4. All 12 Applications Synced and Healthy, all 9 PostSync smoke tests passed | 130 |
+| 5. Destroy (Terraform), of which Argo CD removing its Applications took 41 | 70 |
+| **The whole job**, with checkout and charts | **308** (5 min 8 s) |
+
+The node used 3.17 GiB once synced. The previous run (`140c95a`) synced in 127 s with the same memory.
 
 Its first runs found three faults, all fixed:
 
