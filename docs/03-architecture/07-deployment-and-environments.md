@@ -542,7 +542,8 @@ the full system (the owner's decision, 2026-11-23). Measured on GitHub's runner 
 | 5. Destroy (Terraform), of which Argo CD removing its Applications took 41 | 70 |
 | **The whole job**, with checkout and charts | **308** (5 min 8 s) |
 
-The node used 3.17 GiB once synced. The previous run (`140c95a`) synced in 127 s with the same memory.
+The node used 3.17 GiB once synced. The previous run (`140c95a`) synced in 127 s with the same memory; the run on
+`a5bc1ea` (with the 10 s settle check) took 179 s for step 4, 77 s to destroy, 6 min 26 s in all.
 
 Its first runs found three faults (and one race in the check itself), all fixed:
 
