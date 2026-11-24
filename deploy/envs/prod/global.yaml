@@ -3,6 +3,10 @@
 global:
   environment: prod
   ingressEntryPoint: web # http://<laptop>/ (port 80)
+  # After every sync of a service, the PostSync smoke test: health, then a load-test account's LIMIT buy far below
+  # the market, placed and cancelled (nothing trades in prod).
+  smoke:
+    mode: place-cancel
   image:
     # The read-only GHCR login (deploy/envs/prod/sealed/ghcr-pull.yaml). Unused for images in the local registry.
     pullSecrets: [ghcr-pull]

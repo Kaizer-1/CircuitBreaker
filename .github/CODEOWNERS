@@ -1,6 +1,7 @@
-# Each path has one owning team (docs/04-team-topology.md). The owner must approve changes to it.
-# Only Kaizer's GitHub handle is known so far. TODO: replace the commented lines with the real handles of
-# MD Asif Ali and Mohammad Oweis and uncomment them (a wrong handle makes GitHub flag the whole file).
+# Who owns each path (docs/04-team-topology.md). Only @Kaizer-1 has repository access (owner's decision,
+# 2026-11-24: no collaborators), so these lines name the owner of record; the ruleset on main requires a pull
+# request but no approval. A team with several people would add a required code-owner approval, at least on
+# deploy/envs/prod/ (deployment doc section 4).
 
 # Trading Team + SRE agent role + System Design: Kaizer Dewaswala
 /services/order-service/    @Kaizer-1
@@ -10,18 +11,3 @@
 /web/                       @Kaizer-1
 /docs/                      @Kaizer-1
 /tools/                     @Kaizer-1
-
-# Market Insights Team + API Team: MD Asif Ali
-# /services/market-data-service/  @<asif-handle>
-# /services/portfolio-service/    @<asif-handle>
-# /services/api-gateway/          @<asif-handle>
-# /api/                           @<asif-handle>
-
-# Cloud Platform + Release & Reliability: Mohammad Oweis
-# /services/chaos-service/        @<oweis-handle>
-# /docker-compose.yml             @<oweis-handle>
-# /dev/                           @<oweis-handle>
-# /.github/                       @<oweis-handle>
-# /infra/                         @<oweis-handle>
-# /charts/                        @<oweis-handle>
-# /deploy/envs/prod/              @<oweis-handle>

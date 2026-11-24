@@ -1,0 +1,105 @@
+# CI's platform check (deployment doc section 4, "The slim ci profile"): on a GitHub runner, Terraform builds a
+# throwaway kind cluster with Argo CD (var.profile = ci), Argo CD deploys staging from this very commit, every
+# service's PostSync smoke test must pass, then Terraform destroys it all. It tests the plumbing (Terraform -> Argo CD
+# -> sync -> smoke), not performance: the slim profile asks for less CPU so it fits 2 CPUs (owner's decision,
+# 2026-11-23). It runs when the platform, the charts or staging's settings change.
+name: Platform
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "charts/**"
+      - "deploy/envs/staging/**"
+      - "deploy/profiles/**"
+      - "scripts/k8s.py"
+      - "scripts/smoke.py"
+      - ".github/workflows/platform.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read # Argo CD reads this repository with the job's token
+  packages: read # and the kubelet pulls our images from GHCR with it
+
+concurrency:
+  group: platform-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: "1.17.2"
+  TF_IN_AUTOMATION: "1"
+  KUBECONFIG: ${{ github.workspace }}/infra/envs/local/circuitbreaker-config
+  TF_VAR_profile: ci
+  TF_VAR_repo_url: https://github.com/${{ github.repository }}.git
+  TF_VAR_target_revision: ${{ github.event.pull_request.head.sha || github.sha }}
+  TF_VAR_repo_https_token: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  platform:
+    name: platform (Terraform, Argo CD, sync, smoke, destroy; slim ci profile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - name: Charts (pinned versions, digests checked)
+        run: python3 scripts/k8s.py charts
+      - name: 1. Cluster and the staging namespace (Terraform, no Argo CD yet)
+        run: |
+          start=$(date +%s)
+          terraform -chdir=infra/envs/local init -input=false -lockfile=readonly
+          terraform -chdir=infra/envs/local apply -input=false -auto-approve -var 'gitops_environments=[]'
+          echo "CLUSTER_S=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+      # The sealing key never leaves the laptop, so the SealedSecrets in Git cannot be decrypted here: throwaway
+      # Secrets instead, and the GHCR login is this job's own short-lived token.
+      - name: 2. Throwaway Secrets
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/k8s.py ci-secrets --env staging
+      - name: 3. Argo CD, which deploys staging from this commit
+        run: |
+          start=$(date +%s)
+          terraform -chdir=infra/envs/local apply -input=false -auto-approve -var 'gitops_environments=["staging"]'
+          echo "ARGO_S=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+      - name: 4. Every Application Synced and Healthy, every PostSync smoke test passed
+        run: |
+          start=$(date +%s)
+          python3 scripts/k8s.py wait-argo --env staging --timeout 1500 --smoke
+          echo "SYNC_S=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+          # The slim profile's memory, as Docker sees the node (the RAM table in deployment doc section 3).
+          echo "NODE_MEM=$(docker stats --no-stream --format '{{.MemUsage}}' circuitbreaker-control-plane)" >> "$GITHUB_ENV"
+          nproc; free -m
+      - name: What went wrong (on failure)
+        if: failure()
+        run: |
+          kubectl --context kind-circuitbreaker get applications.argoproj.io -n argocd -o wide || true
+          kubectl --context kind-circuitbreaker get pods -A -o wide || true
+          kubectl --context kind-circuitbreaker get events -n staging --sort-by=.lastTimestamp | tail -n 40 || true
+          for j in $(kubectl --context kind-circuitbreaker get jobs -n staging -l app.kubernetes.io/name=smoke-test -o name); do
+            echo "== $j"; kubectl --context kind-circuitbreaker logs -n staging "$j" --tail=40 || true
+          done
+      - name: 5. Destroy (always)
+        if: always()
+        run: |
+          start=$(date +%s)
+          terraform -chdir=infra/envs/local destroy -input=false -auto-approve -var 'gitops_environments=["staging"]' || \
+            terraform -chdir=infra/envs/local destroy -input=false -auto-approve -var 'gitops_environments=[]'
+          echo "DESTROY_S=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+      - name: Timings
+        if: always()
+        run: |
+          {
+            echo "| Step | Seconds |"
+            echo "|---|---:|"
+            echo "| 1. cluster + namespace (Terraform) | ${CLUSTER_S:-} |"
+            echo "| 3. Argo CD (Terraform) | ${ARGO_S:-} |"
+            echo "| 4. synced, healthy, smoke tests passed | ${SYNC_S:-} |"
+            echo "| 5. destroy | ${DESTROY_S:-} |"
+            echo "| node memory once synced (Docker) | ${NODE_MEM:-} |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"

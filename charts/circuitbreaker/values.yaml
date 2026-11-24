@@ -18,6 +18,27 @@ global:
     # Secrets with the registry login, for the pods that pull our images (deploy/envs/<env>/global.yaml).
     pullSecrets: []
   ingressNamespace: traefik
+  # The PostSync smoke test after each sync of a service (charts/service/templates/smoke-job.yaml): mode trade
+  # (staging) or place-cancel (prod), set in deploy/envs/<env>/global.yaml; empty = no smoke Job (make k8s-up).
+  smoke:
+    mode: ""
+    # Seconds the test waits for the environment to answer (other services may still be starting).
+    wait: 300
+    # The base image of our Python services, pinned by digest (make k8s-prepull puts it on the node).
+    image: python:3.12-slim@sha256:a0e2dd78cc679ddfffea960fe45ecfcff9ac2f68d67917a0edfcde5c2100151b
+    # Each service's Job has its own load-test accounts (trade uses N and N+1) and, from N, its own ticker; Jobs
+    # that run at the same time can still meet in a book, so smoke.py retries (deployment doc section 4).
+    # load-11 ... load-70 belong to other scripts and tests.
+    accounts:
+      api-gateway: 71
+      order-service: 73
+      matching-engine: 75
+      market-data-service: 77
+      portfolio-service: 79
+      bot-traders: 81
+      sre-agent: 83
+      chaos-service: 85
+      web: 87
   # Traefik entry point (= host port) of this environment: web (80) for prod, staging (8090) for staging.
   ingressEntryPoint: web
   observabilityNamespace: observability
@@ -58,7 +79,8 @@ api-gateway:
     limits: {cpu: 2000m, memory: 256Mi}
   networkPolicy:
     allowIngressController: true # the public API
-    allowFrom: [bot-traders, chaos-service] # bots use the public API; chaos-service's load burst (Phase 7)
+    # bots use the public API; chaos-service's load burst (Phase 7); the PostSync smoke test
+    allowFrom: [bot-traders, chaos-service, smoke-test]
 
 order-service:
   replicas: 2

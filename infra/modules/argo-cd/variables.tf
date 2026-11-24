@@ -19,6 +19,19 @@ variable "repo_ssh_private_key" {
   sensitive   = true
 }
 
+variable "repo_https_token" {
+  description = "Read Git over HTTPS with this token instead of the deploy key (CI's GITHUB_TOKEN). null = SSH."
+  type        = string
+  sensitive   = true
+  default     = null
+}
+
+variable "profile" {
+  description = "full, or ci: no SealedSecrets, observability or ingress Applications, plus deploy/profiles/ci.yaml."
+  type        = string
+  default     = "full"
+}
+
 variable "target_revision" {
   description = "The branch Argo CD follows: main, or a pull request's branch while it is tested."
   type        = string

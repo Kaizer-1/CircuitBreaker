@@ -1,0 +1,54 @@
+# The slim "ci" profile (owner's decision, 2026-11-23): what CI's platform job deploys on a GitHub runner (2 CPUs,
+# about 7 GB). It tests the plumbing, Terraform -> Argo CD -> sync -> PostSync smoke test, not performance: the demo
+# profile is the full system (deploy/envs/ only). Argo CD adds this file after deploy/envs/staging/*.yaml when
+# Terraform's profile is "ci" (infra/envs/local, var.profile). Only CPU requests and replica counts change: the
+# scheduler adds up requests, and the full ones (about 3.1 cores with Kubernetes itself) leave pods Pending on 2 CPUs.
+# Limits, images and settings stay those of staging.
+
+global:
+  smoke:
+    wait: 900 # a cold runner pulls every image and starts Cassandra on 2 CPUs
+api-gateway:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+order-service:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+matching-engine:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+market-data-service:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+portfolio-service:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+bot-traders:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+sre-agent:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+chaos-service:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+web:
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+redpanda:
+  resources:
+    requests: {cpu: 50m, memory: 512Mi}
+cassandra:
+  resources:
+    requests: {cpu: 100m, memory: 1536Mi}
+postgres:
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}

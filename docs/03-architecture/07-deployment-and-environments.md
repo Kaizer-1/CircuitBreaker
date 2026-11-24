@@ -284,7 +284,8 @@ after heavy testing (`make k8s-status` prints these numbers):
 | prod + monitoring + Traefik + Kubernetes itself | 3,994 MiB (prod 2,251; kube-system 958, of which the API server 675; observability 749; Traefik 25) | **4.3 GiB** (4,063 + 357 MiB) | 5.7 GiB |
 | prod + monitoring after 3 hours: the bots, a 60-minute soak at 40 orders/s and an hour of spike calibration (2026-11-23) | 5,928 MiB (prod 3,237; observability 1,365; kube-system 1,232) | **5.16 GiB** (5,097 + 182 MiB) | 6.4 GiB |
 | + staging with its own bots | 6,452 MiB | **6.5 GiB** | 8.1 GiB |
-| + Argo CD (Phase 6, estimate) | | about 7.0 GiB | about 8.6 GiB |
+| **The full (demo) profile** (Phase 6, measured 2026-11-24): prod and staging (bots off), monitoring, Traefik, Argo CD, Sealed Secrets, after hours of syncs and tests | 6,628 MiB (prod 1,796; staging 1,718; kube-system 1,552, of which the API server 1,030; observability 1,060; Argo CD 432; Sealed Secrets 32; Traefik 46) | **6.3 GiB** (6,175 + 238) | 7.4 GiB of the 10.7 GiB Docker has |
+| The slim **ci** profile on GitHub's runner: staging only (bots off), no monitoring, Argo CD; right after every smoke test passed (2026-11-24, two runs) | not recorded | not recorded | 3.17–3.18 GiB of the runner's 7.75 GiB (`docker stats` on the node) |
 | The local image registry (outside the cluster) | | 0.04 GiB | 0.04 GiB |
 
 **Which number counts, and why Docker's is higher.** The budget counts **process memory** (the working set of what
@@ -325,8 +326,8 @@ flowchart LR
     BUMP --> AS["Argo CD syncs staging<br/>+ PostSync smoke-test Job"]
     AS --> CR["Chaos rehearsal in staging<br/>(BAD_DEPLOY must be remediated)"]
     CR --> PP["make promote: PR copies the<br/>SAME tag to deploy/envs/prod/"]
-    PP --> A{"Approval by<br/>Release & Reliability<br/>(CODEOWNERS)"}
-    A --> AP["Merge → Argo CD syncs prod<br/>+ PostSync smoke-test Job"]
+    PP --> A{"A person merges<br/>the promotion PR<br/>(the human gate)"}
+    A --> AP["Argo CD syncs prod<br/>+ PostSync smoke-test Job"]
     AP --> RB["Smoke test fails?<br/>git revert the promotion"]
 ```
 
@@ -338,7 +339,7 @@ flowchart LR
 | **Pull, don't push** | CI never touches the cluster. Argo CD, inside the cluster, pulls from GitHub. The cluster only needs outbound access, which is why this works for a laptop cluster ([ADR-0014](../adr/0014-gitops-with-argo-cd.md)). |
 | **Fast feedback** | Lint and unit tests in under 5 minutes on every pull request. |
 | **Safe release** | Rolling updates, readiness probes and PostSync smoke tests. A bad release is undone with `git revert`. If it degrades at runtime, the SRE agent rolls back at once and then opens the `git revert` pull request itself. |
-| **Approvals by the release team** | The prod promotion PR must be approved by the Release & Reliability Team. This mirrors the textbook's release team, which coordinates approvals and deploys into production (Ch. 2, Ch. 7). |
+| **A human gate for prod** | Prod changes only when a person **merges the promotion PR** (`make promote`). In the textbook's model a release team coordinates approvals and deploys into production (Ch. 2, Ch. 7). Here the team with access is one person (the owner's decision, 2026-11-24), so the gate is the merge itself; a team of several people would also require a code owner's approval on `deploy/envs/prod/`, which GitHub's rulesets support. |
 
 **What CI checks for Kubernetes now (Phase 5).** Every pull request runs `make k8s-lint`: `helm lint`, rendering
 both environments and every service on its own (`global.only`, as Argo CD will), the platform charts with our
@@ -349,7 +350,9 @@ ServiceMonitor and PrometheusRule), and the alert rules' unit tests (promtool). 
 monitoring and Traefik 0.35), so the scheduler leaves Cassandra, Redpanda and the gateway `Pending`. A CI-only
 profile with smaller requests and no monitoring would fit, but would test a different system from the one we demo.
 So `make test-k8s` runs on the laptop, and in CI only when a pull request is labelled `k8s-smoke` (for a larger
-runner).
+runner). **Reversed in Phase 6, the owner's decision (2026-11-23):** a slim profile does run in CI now, because it
+tests something the demo profile cannot test there, the GitOps plumbing (Terraform → Argo CD → sync → smoke test), and
+not performance (see "The slim ci profile" below). The demo profile stays the full system.
 
 **Argo CD settings that matter** (full reasoning in [ADR-0014](../adr/0014-gitops-with-argo-cd.md)):
 
@@ -432,18 +435,133 @@ and the plan would simply build again).
 `deploy/envs/<env>/` names its registry next to its tag, so a service moves from the local registry to GHCR in the
 same commit that gives it a GHCR tag (and `make promote` copies both).
 
-**The `main` ruleset and the deploy key.** A **ruleset** is GitHub's set of rules for a branch. On `main`: no
-deletion, no force-push, and every change through a pull request (0 approvals while the team is one person; CODEOWNERS
-approval for `deploy/envs/prod/` once the teammates' GitHub handles are added). CI's tag bumps are the one exception:
-the `deploy-staging` job pushes with a **deploy key** (an SSH key for this one repository, write access), and deploy
-keys are on the ruleset's bypass list. Three consequences, all deliberate:
+**The `main` ruleset and the deploy key.** A **ruleset** is GitHub's set of rules for a branch. On `main`:
 
-- GitHub's bypass entry covers *every* deploy key of the repository; it cannot name one. Argo CD's deploy key is
-  read-only, so it cannot push anyway. Any future write deploy key would bypass too: add none.
-- The private key lives in the GitHub **environment** `gitops`, which hands it only to workflow runs on `main`. A
-  pull request's run, or a workflow edited on another branch, never sees it.
-- The SRE agent's GitHub App (Phase 7, [ADR-0016](../adr/0016-rollback-reconciles-through-git.md)) is **never** on
-  the bypass list: its revert pull requests always wait for a person to merge them.
+| Rule | Setting | Why |
+|---|---|---|
+| Deletion, force-push | blocked | History in Git is the deploy history; it is never rewritten |
+| Pull request | required, 0 approvals, merge commits only | Only the owner has access to the repository (the owner's decision, 2026-11-24), so the human gate for prod is **merging the promotion PR**. A team of several people would add a required code-owner approval on `deploy/envs/prod/` (rulesets support it; `.github/CODEOWNERS` already names the owner). Merge commits keep a pull request's commits, which "build once" looks up |
+| Restrict updates | only the bypass list below may change `main` at all | With 0 approvals, anyone with write access could merge a pull request through the API. This rule is what makes ADR-0016's promise ("the SRE agent's GitHub App can open revert pull requests but never merge them") GitHub's to enforce, not only the agent's code (it has no merge tool) |
+
+Bypass list:
+
+| Who | Mode | For |
+|---|---|---|
+| The repository's admin role (the owner) | `pull_request`: only by merging a pull request, never by pushing | Merging pull requests, the human gate. Because "restrict updates" applies to everyone not bypassing, the plain merge button stays blocked: the owner merges by choosing the bypass, `gh pr merge <n> --merge --admin` (on the website, "Merge without waiting for requirements to be met"). Found on the first merge after the rule (PR #11, 2026-11-24) |
+| Deploy keys | `always` | CI's `deploy-staging` job pushes the tag bumps with a **deploy key** (an SSH key for this one repository, write access) |
+
+The SRE agent's GitHub App (Phase 7, [ADR-0016](../adr/0016-rollback-reconciles-through-git.md)) is **never** on the
+list, so GitHub refuses both its merge and its push to `main`: its revert pull requests always wait for a person.
+The bypass is a deliberate act each time: a pull request that passes every check still says "blocked" until the owner
+merges it with `--admin`, and even the owner cannot push to `main` directly.
+Phase 7 adds a test that GitHub refuses the App's attempt to merge or push.
+
+**The known trade-off: a deploy key bypasses `always`.** A leaked CI deploy key could push **anything** to `main`,
+not only tag bumps, and skip the pull request (GitHub's bypass entry cannot limit what a push contains). Three things
+keep that risk small:
+
+- The private key lives only in the GitHub **environment** `gitops`, which hands it to workflow runs on `main` alone.
+  A pull request's run, or a workflow edited on another branch, never sees it.
+- The bypass covers *every* deploy key of the repository (it cannot name one). Argo CD's deploy key is read-only, so
+  it cannot push anyway. Any future write deploy key would bypass too: add none.
+- If it leaks: delete the deploy key on GitHub (pushes stop at once), make a new one, put it in `gitops`, and look at
+  `main`'s history since the leak (every push is a commit in Git).
+
+### Releasing to prod: `make promote` (Phase 6)
+
+```bash
+make promote s="order-service web"   # or s=all; dry=yes shows the commits and pushes nothing
+```
+
+It starts a branch from `origin/main` in a temporary worktree, so the checkout you are working in is never touched.
+For each service whose image staging runs differs from prod's, it makes **one commit** that copies the registry and
+the tag from `deploy/envs/staging/<service>.yaml` into `deploy/envs/prod/<service>.yaml`. Then it pushes the branch and
+opens a pull request listing each service with its old and new tag. Nothing is rebuilt: prod gets the exact image
+staging tested ("build once"). **Merging that pull request is the release.** Argo CD syncs prod within 30 s
+(`make sync env=prod` for at once), and each synced service's PostSync smoke test runs. Rolling one service back is
+`git revert <its commit>` in a new pull request; because there is one commit per service, a revert touches nothing
+else. Prod moves from the local registry to GHCR this way too, one service at a time, because the registry is copied
+with the tag.
+
+### PostSync smoke tests (Phase 6)
+
+> **Hook:** a Kubernetes object Argo CD runs at a fixed point of a sync instead of keeping it in sync. A
+> **PostSync** hook runs after every other object of the sync is applied and healthy.
+
+Each service's chart carries a Job, `smoke-<service>`, as Argo CD's PostSync hook (`charts/circuitbreaker/charts/
+service/templates/smoke-job.yaml`). So after Argo CD syncs a service and its rollout is healthy, the Job checks the
+whole environment through the public API, as a client would (`scripts/smoke.py`, carried inside the Job on a
+`python:3.12-slim` image pinned by digest):
+
+| Environment | What the smoke test does | Why |
+|---|---|---|
+| staging | Two load-test accounts trade one share with each other at a price inside the book's gap, then both portfolios must settle exactly (cash by the fill price, shares by one, nothing left reserved). The pair hands the same share back and forth; when neither holds one, it buys one from `bot-20` | The whole write path: gateway, order-service, portfolio's reservation, the engine, settlement |
+| prod | The gateway, the five instruments and every order book answer; then a load-test account places a LIMIT buy at half the last price (far below any seller), sees it rest with exactly that cash reserved, cancels it, and sees the reservation released | Prod is the live demo: nothing may trade, and nothing may reach the leaderboard (load-test accounts are never ranked) |
+
+Each service's Job uses its own accounts (`load-71` … `load-88`) and, from its account number, its own ticker, so at
+most two Jobs share a book. They can still meet: a book matches by price and time, not by account, and when Argo CD
+syncs several services at once (a fresh environment, or CI bumping several tags in one push) their Jobs run
+together. CI's first full run showed it: nine Jobs on one ticker took each other's fills and left orders that closed
+the gap. So an attempt whose two orders do not both fill within 10 s cancels what is still open, waits until both
+have finished, and tries again after a random 1–5 s pause (up to 5 attempts). The check stays exact anyway: an
+account's cash moves only with its own orders, so each side must settle by its own fill price. Nine trade tests at
+once against the laptop's staging, three rounds: 27 of 27 passed (in round 1 two Jobs met on ASTRYX, withdrew and
+passed on the next attempt); nine place-and-cancel tests at once against prod: 9 of 9. A failing smoke test fails
+the sync: Argo CD shows the sync as failed and retries it (up to 5 times), and the
+Job's log stays until the next sync of that service. Only a service that actually syncs runs its test; a commit that
+does not change a service's objects does not. `make k8s-up`, which has no Argo CD, turns the Job off. Measured on the laptop
+(2026-11-24): after a sync of api-gateway in both environments, staging's trade passed in 10 s and prod's
+place-and-cancel in 14 s (each Job from start to end). With portfolio-service stopped in staging, a sync of web
+failed: its smoke test gave up after its 300 s wait and Argo CD marked the sync `Failed`. Restored, the same sync
+succeeded 25 s after it started.
+
+### The slim ci profile: the platform tested in CI (Phase 6)
+
+`.github/workflows/platform.yml` runs on every pull request that changes the platform (`infra/`), the charts or
+staging's settings. On GitHub's runner (2 CPUs, about 7 GB) it builds the same platform from the same Terraform,
+with `profile = "ci"`:
+
+| Step | What happens |
+|---|---|
+| 1 | Terraform: the kind cluster and the `staging` namespace (quota, default-deny policy, the agent's Role) |
+| 2 | Throwaway Secrets: the sealing key never leaves the laptop, so the SealedSecrets in Git cannot be decrypted here; the GHCR login is the job's own short-lived token (`packages: read`) |
+| 3 | Terraform: Argo CD, reading this pull request's commit over HTTPS with the job's token |
+| 4 | Every Application `Synced` and `Healthy`, every sync `Succeeded`, so every service's PostSync smoke test passed |
+| 5 | Terraform destroys it all (always, even after a failure) |
+
+The ci profile leaves out what the runner cannot carry or does not need: prod, monitoring, the Sealed Secrets
+controller and the ingress. It also lowers the **CPU requests** (`deploy/profiles/ci.yaml`): staging asks for
+0.34 cores instead of about 1.8, because the scheduler adds up requests and the full ones leave pods `Pending` on
+2 CPUs. Images, limits and settings are staging's. It tests the plumbing, not performance; the demo profile stays
+the full system (the owner's decision, 2026-11-23). Measured on GitHub's runner (2 CPUs, 7.75 GiB; run on `1a6a3bd`,
+2026-11-24):
+
+| Step | Seconds |
+|---|---:|
+| 1. Cluster and staging namespace (Terraform) | 61 |
+| 3. Argo CD (Terraform) | 38 |
+| 4. All 12 Applications Synced and Healthy, all 9 PostSync smoke tests passed | 130 |
+| 5. Destroy (Terraform), of which Argo CD removing its Applications took 41 | 70 |
+| **The whole job**, with checkout and charts | **308** (5 min 8 s) |
+
+The node used 3.17 GiB once synced. The previous run (`140c95a`) synced in 127 s with the same memory; the run on
+`a5bc1ea` (with the 10 s settle check) took 179 s for step 4, 77 s to destroy, 6 min 26 s in all.
+
+Its first runs found three faults (and one race in the check itself), all fixed:
+
+- **"Synced and Healthy" came before the smoke tests had finished.** An Application already reports Synced and
+  Healthy while its PostSync Job runs, so the check (and `make k8s-up`'s wait) now also waits while a sync is
+  `Running`. A later run started the check before the ApplicationSet had generated any Application and found "none
+  unsettled": now no Applications counts as not settled, and settled must hold for 10 s.
+- **`terraform destroy` hung on the `argocd` namespace.** The ApplicationSet controller gives every Application Argo
+  CD's `resources-finalizer`: on delete, Argo CD first removes what the Application deployed, then lets it go. It
+  does so only while Argo CD runs and the Application's project exists (Argo CD v3.6.2,
+  `finalizeApplicationDeletion`, looks the project up first). Terraform removed the AppProject and the
+  ApplicationSets in one Helm uninstall, then Argo CD, so the Applications never went. The `argo-cd` module now has a
+  destroy-time step that runs first (`k8s.py argo-teardown`): it deletes the ApplicationSets, then the Applications,
+  and waits until Argo CD has removed them and what they deployed.
+- **The smoke tests of services synced together took each other's fills** (all nine traded CALVERA); see "PostSync
+  smoke tests" above for the retry that replaced the wrong "never meet in the book" assumption.
 
 ### GitOps as built (Phase 6)
 
@@ -603,7 +721,7 @@ managed Kubernetes service and a GitOps deployment server. A sandbox environment
 
 | Change type | Process |
 |---|---|
-| Code change in one service | PR → CI builds the image → tag bump in `deploy/envs/staging/` → Argo CD syncs staging → promotion PR → approval → Argo CD syncs prod. Other services are not redeployed. |
+| Code change in one service | PR → CI builds the image → tag bump in `deploy/envs/staging/` → Argo CD syncs staging (+ smoke test) → `make promote` → a person merges the promotion PR → Argo CD syncs prod (+ smoke test). Other services are not redeployed. |
 | Backward-compatible API change (new optional field, new endpoint) | Same as above; the spec is updated in the same PR. |
 | Breaking API change | New version path (`/v2/...`) served alongside `/v1/` until all clients move ([coding standards](../05-coding-standards.md#9-api-versioning-rules)). |
 | Breaking event change | New topic `<stream>.v2` alongside v1 ([event catalog](03-event-catalog.md#versioning-rules)). |
@@ -617,6 +735,12 @@ managed Kubernetes service and a GitOps deployment server. A sandbox environment
 A: The gate should block what we can act on. A critical hole with a fixed version means "upgrade before
 deploying", so the build fails and we upgrade (it happened at once: web's nginx base had five). One with no fix
 yet cannot be upgraded away, so failing would block every change for nothing; it stays visible in the report.
+
+**Q: CI's deploy key may push to `main` without a pull request. Isn't that a hole?**
+A: Yes, a known trade-off. A deploy key on the bypass list bypasses always, so a leaked one could push anything, not
+only tag bumps. We keep it in the `gitops` environment, which releases it only to workflow runs on `main`, so a pull
+request or another branch cannot read it; Argo CD's key is read-only; and if it leaks we delete the key on GitHub,
+which stops it at once, and check `main`'s history.
 
 **Q: `main` needs a pull request for every change. How does CI commit tag bumps to it?**
 A: With a deploy key that the ruleset lets bypass. Only CI's job on `main` can read that key (it is in the `gitops`

@@ -91,6 +91,14 @@ tag bump writes the registry **and** the tag into the service's file, one commit
 passed. It pushes with a deploy key that `main`'s ruleset lets bypass the pull-request rule, and pushes that change
 only `deploy/envs/**` do not start CI again.
 
+**Promotion and the human gate, as built (2026-11-24, owner's decision).** `make promote s=<service ...>` opens the
+promotion pull request: one commit per service copying staging's registry and tag into `deploy/envs/prod/`. Only the
+owner has access to the repository, so step 3's approval by the Release & Reliability Team becomes, in practice, **a
+person merging the promotion pull request**: `main`'s ruleset requires a pull request (0 approvals). A team of several
+people would add a required code-owner approval on `deploy/envs/prod/`, which rulesets support. The PostSync smoke
+test of step 2 runs in both environments, after every sync of a service: staging trades a share between two
+load-test accounts; prod places and cancels a far-from-market order ([deployment doc §4](../03-architecture/07-deployment-and-environments.md#postsync-smoke-tests-phase-6)).
+
 **Found while testing (2026-11-24): too many syncs at once.** A commit that changed every service's pod template made
 Argo CD start 18 syncs together; the application controller ran out of memory (768 MiB) and, resuming them on every
 restart, stayed down for 20 minutes. It now runs at most 2 kubectl processes and 4 sync operations at a time (the

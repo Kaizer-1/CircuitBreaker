@@ -31,10 +31,16 @@ resource "kubernetes_secret_v1" "repository" {
       "argocd.argoproj.io/secret-type" = "repository"
     }
   }
-  data = {
+  # CI's throwaway cluster reads Git over HTTPS with the job's own short-lived token instead.
+  data = var.repo_https_token == null ? {
     type          = "git"
     url           = var.repo_url
     sshPrivateKey = var.repo_ssh_private_key
+    } : {
+    type     = "git"
+    url      = var.repo_url
+    username = "x-access-token"
+    password = var.repo_https_token
   }
 }
 
@@ -67,6 +73,26 @@ resource "helm_release" "applications" {
     targetRevision = var.target_revision
     environments   = var.environments
     checksum       = local.applications_checksum
+    # The ci profile: no Sealed Secrets controller, no monitoring, no Traefik on the runner.
+    sealedSecrets   = var.profile == "full"
+    observability   = var.profile == "full"
+    skipComponents  = var.profile == "full" ? [] : ["ingress"]
+    extraValueFiles = var.profile == "full" ? [] : ["../../deploy/profiles/${var.profile}.yaml"]
   })]
   depends_on = [helm_release.argo_cd]
+}
+
+# Destroy order. Every Application carries Argo CD's resources-finalizer: on delete, Argo CD first removes what the
+# Application deployed, then lets it go. Argo CD does that only while it runs AND the Application's project exists,
+# so the Applications must go before the release above (which holds the AppProject) and before Argo CD itself.
+# Depending on that release, this is destroyed first: it deletes the ApplicationSets and Applications and waits.
+# Found by CI's platform check (2026-11-24): otherwise the argocd namespace hangs in Terminating.
+resource "terraform_data" "teardown" {
+  input = var.repo_root
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "python3 ${self.input}/scripts/k8s.py argo-teardown --timeout 600"
+  }
+  depends_on = [helm_release.applications]
 }

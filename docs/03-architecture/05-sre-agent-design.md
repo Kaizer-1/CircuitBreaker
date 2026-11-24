@@ -206,7 +206,8 @@ permissions.
 The rollback's Git step uses two more credentials. Neither is ever shown to the LLM:
 
 - **GitHub App** (this repository only): *contents: write* to push the `sre-agent/…` revert branch, and *pull
-  requests: write*. A ruleset protects `main` (pull request + CODEOWNERS approval required), and the App is **not** on
+  requests: write*. A ruleset protects `main` (a pull request required, and updates to `main` restricted to its bypass
+  list: the owner, only by merging a pull request, and CI's deploy key), and the App is **not** on
   the bypass list, so it can open pull requests but never merge them.
 - **Argo CD account `sre-agent`:** read-only (`get` on Applications), for the pre-check.
 

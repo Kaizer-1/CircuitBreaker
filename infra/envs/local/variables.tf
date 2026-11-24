@@ -11,6 +11,27 @@ variable "gitops_environments" {
   }
 }
 
+variable "profile" {
+  description = <<-EOT
+    full = the demo platform (both environments, monitoring, Sealed Secrets). ci = CI's slim check on a GitHub runner:
+    staging only, no monitoring, no Sealed Secrets controller and no ingress, the
+    smaller requests of deploy/profiles/ci.yaml, Argo CD reading Git over HTTPS with repo_https_token.
+  EOT
+  type        = string
+  default     = "full"
+  validation {
+    condition     = contains(["full", "ci"], var.profile)
+    error_message = "The profiles are full and ci."
+  }
+}
+
+variable "repo_https_token" {
+  description = "A token for Argo CD to read Git over HTTPS instead of the deploy key (CI: the job's GITHUB_TOKEN)."
+  type        = string
+  sensitive   = true
+  default     = null
+}
+
 variable "repo_url" {
   description = "The Git repository Argo CD pulls from."
   type        = string

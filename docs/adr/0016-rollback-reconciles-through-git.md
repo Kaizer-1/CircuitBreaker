@@ -35,7 +35,7 @@ flowchart TD
 |---|---|
 | Revert commit | Same shape as `git revert <sha>`: message `Revert "<original message>"` + `This reverts commit <sha>.`. It restores `deploy/envs/<env>/<service>.yaml` to its content before that commit. CI writes **one tag-bump commit per service per environment**, so the revert touches nothing else. |
 | Pull request | Title `Revert <service> in <env> to <good tag> (INC-nnnn)`. Labels `sre-agent`, `revert`. The body holds the incident ID, the evidence summary and the agent's explanation (shown as quoted, untrusted text). |
-| Who merges | Always a human. In `prod`, the Release & Reliability Team (CODEOWNERS on `deploy/envs/prod/`); in `staging`, the owning team. |
+| Who merges | Always a human. In `prod`, the Release & Reliability Team (CODEOWNERS on `deploy/envs/prod/`); in `staging`, the owning team. *As built (2026-11-24, owner's decision): the owner, the only person with access to the repository.* |
 | Order of steps | (a) always runs first and does not wait for (b). Mitigation takes seconds; reconciliation goes through review. |
 | If (b) fails | (GitHub unreachable, commit check fails, the file changed since): the rollback **stays**. `git_reconciliation.status = FAILED`, and the incident escalates with "manual `git revert` needed". |
 | Recorded in | `RemediationExecuted.data.git_reconciliation` and the `Remediation` API object: `status` (`PR_OPENED`, `NOT_NEEDED`, `FAILED`), `reverted_commit`, `pull_request_url`, `reason`. |
@@ -43,8 +43,11 @@ flowchart TD
 **Credentials (not visible to the LLM):**
 
 - A **GitHub App** installed on this repository only, with *contents: write* (to push the revert branch) and
-  *pull requests: write*. A repository ruleset protects `main`: changes need a pull request approved by CODEOWNERS,
-  and the App is **not** on the bypass list, so it can open pull requests but never merge them.
+  *pull requests: write*. A repository ruleset protects `main`, and the App is **not** on its bypass list, so it can
+  open pull requests but never merge them. *As built (2026-11-24): the ruleset requires a pull request with 0
+  approvals (only the owner has access) and **restricts updates** to `main` to its bypass list: the admin role, only
+  by merging a pull request, and deploy keys (CI's tag bumps). GitHub itself therefore refuses the App's merge or push;
+  Phase 7 tests that it does ([deployment doc §4](../03-architecture/07-deployment-and-environments.md#4-cicd-pipeline-github-actions--argo-cd-gitops)).*
 - A read-only **Argo CD account** `sre-agent` whose Argo CD RBAC allows `get` on Applications only.
 
 **New guardrail G11 (Git step):**

@@ -406,29 +406,46 @@ def argo_manages(namespace: str) -> bool:
 
 
 def argo_not_settled(env: str) -> list[str]:
-    """Applications of env that are not Synced and Healthy yet."""
+    """Applications of env that are not Synced and Healthy yet, or whose sync is still running:
+    an Application is Synced and Healthy while its PostSync smoke test runs (CI, 2026-11-24).
+    None at all counts too: right after Terraform installs Argo CD, the ApplicationSet has not
+    generated them yet."""
+    apps = argo_applications(env)
+    if not apps:
+        return ["no Applications yet"]
     waiting = []
-    for app in argo_applications(env):
+    for app in apps:
         status = app.get("status", {})
         sync = status.get("sync", {}).get("status", "?")
         health = status.get("health", {}).get("status", "?")
-        if sync != "Synced" or health != "Healthy":
+        if status.get("operationState", {}).get("phase") == "Running":
+            waiting.append(f"{app['metadata']['name']} (sync running)")
+        elif sync != "Synced" or health != "Healthy":
             waiting.append(f"{app['metadata']['name']} ({sync}/{health})")
     return waiting
 
 
 def wait_argo(env: str, timeout: float = 900) -> float:
+    """Until every Application of env has been settled for 10 s (one look could catch the
+    ApplicationSet halfway through generating them)."""
     start = time.monotonic()
     last = ""
-    while waiting := argo_not_settled(env):
-        if time.monotonic() - start > timeout:
-            sys.exit(f"Argo CD: not Synced and Healthy after {timeout:.0f} s: {', '.join(waiting)}")
-        line = f"   Argo CD: {len(waiting)} not settled: {', '.join(sorted(waiting))}"
-        if line != last:
-            print(line, flush=True)
-            last = line
+    settled_since: float | None = None
+    while True:
+        now = time.monotonic()
+        if waiting := argo_not_settled(env):
+            settled_since = None
+            if now - start > timeout:
+                sys.exit(f"Argo CD: not settled after {timeout:.0f} s: {', '.join(waiting)}")
+            line = f"   Argo CD: {len(waiting)} not settled: {', '.join(sorted(waiting))}"
+            if line != last:
+                print(line, flush=True)
+                last = line
+        elif settled_since is None:
+            settled_since = now
+        elif now - settled_since >= 10:
+            return settled_since - start
         time.sleep(5)
-    return time.monotonic() - start
 
 
 def local_url(env: str) -> str:
@@ -592,7 +609,8 @@ def deploy(env: str, extra: dict[str, dict[str, object]] | None = None) -> None:
         sys.exit("no images built yet: run make k8s-images")
     # This build's images, from the local registry (deploy/envs/ names GHCR for CI's images).
     overrides: dict[str, dict[str, object]] = {
-        "global": {"environment": env, "image": {"pullSecrets": []}},
+        # No PostSync smoke Job: without Argo CD it would be an ordinary Job, run once.
+        "global": {"environment": env, "image": {"pullSecrets": []}, "smoke": {"mode": ""}},
         **{name: {"image": {"registry": REGISTRY, "tag": tag}} for name, tag in tags.items()},
     }
     for key, value in (extra or {}).items():
@@ -1107,6 +1125,84 @@ def cmd_prepull(_: argparse.Namespace) -> None:
     print(f"\nall {len(wanted)} images are on the node; nothing needs the internet to start again")
 
 
+# --------------------------------------------------------------------------- CI's platform check
+
+
+def cmd_ci_secrets(args: argparse.Namespace) -> None:
+    """CI's throwaway cluster (Terraform profile ci): the sealing key never leaves the laptop, so
+    the SealedSecrets in Git cannot be decrypted there. Plain Secrets with the local placeholders
+    instead, and the GHCR login from GHCR_USER / GHCR_TOKEN (the job's token, packages: read)."""
+    import base64
+
+    apply_secrets(args.env)
+    user, token = os.environ.get("GHCR_USER"), os.environ.get("GHCR_TOKEN")
+    if not (user and token):
+        sys.exit("GHCR_USER and GHCR_TOKEN must be set")
+    auth = base64.b64encode(f"{user}:{token}".encode()).decode()
+    config = {"auths": {"ghcr.io": {"username": user, "auth": auth}}}
+    secret = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": "ghcr-pull", "namespace": args.env},
+        "type": "kubernetes.io/dockerconfigjson",
+        "stringData": {".dockerconfigjson": json.dumps(config)},
+    }
+    run(kubectl("apply", "-f", "-"), input_text=json.dumps(secret), capture=True)
+    print(f"{args.env}: placeholder Secrets and the GHCR login created (CI only)")
+
+
+def cmd_wait_argo(args: argparse.Namespace) -> None:
+    """Every Application of env Synced and Healthy, its last sync Succeeded (so its PostSync smoke
+    test passed); then the smoke Jobs' results."""
+    waited = wait_argo(args.env, timeout=args.timeout)
+    failed = [
+        a["metadata"]["name"]
+        for a in argo_applications(args.env)
+        if a.get("status", {}).get("operationState", {}).get("phase") != "Succeeded"
+    ]
+    jobs = json.loads(
+        run(
+            kubectl(
+                "get",
+                "jobs",
+                "-n",
+                args.env,
+                "-l",
+                "app.kubernetes.io/name=smoke-test",
+                "-o",
+                "json",
+            ),
+            capture=True,
+        )  # fmt: skip
+    )["items"]
+    passed = [j["metadata"]["name"] for j in jobs if j.get("status", {}).get("succeeded")]
+    print(f"Argo CD: {args.env} Synced and Healthy after {waited:.0f} s;"
+          f" smoke Jobs passed: {len(passed)} of {len(jobs)}")  # fmt: skip
+    if failed or len(passed) != len(jobs) or (args.smoke and not jobs):
+        sys.exit(f"last sync not Succeeded: {', '.join(failed) or '-'}; smoke Jobs: {passed}")
+
+
+def cmd_argo_teardown(args: argparse.Namespace) -> None:
+    """Terraform's destroy, before the AppProject goes: delete Argo CD's ApplicationSets (so nothing
+    re-creates Applications), then its Applications, and wait until they are gone. Each carries
+    Argo CD's resources-finalizer (Argo CD deletes what it deployed, then lets the Application go),
+    and Argo CD processes it only while Argo CD runs and the Application's project still exists:
+    otherwise the Applications, and with them the argocd namespace, never go (CI, 2026-11-24)."""
+    start = time.monotonic()
+    for kind in ("applicationsets.argoproj.io", "applications.argoproj.io"):
+        run(
+            kubectl("delete", kind, "--all", "-n", "argocd", "--wait=false", "--ignore-not-found"),
+            check=False,  # no Argo CD (its CRDs gone): nothing to delete
+        )
+    while apps := argo_applications():
+        if time.monotonic() - start > args.timeout:
+            names = ", ".join(a["metadata"]["name"] for a in apps)
+            sys.exit(f"Argo CD: Applications still there after {args.timeout:.0f} s: {names}")
+        time.sleep(5)
+    print(f"Argo CD: its Applications and what they deployed are gone after"
+          f" {time.monotonic() - start:.0f} s")  # fmt: skip
+
+
 def cmd_charts(_: argparse.Namespace) -> None:
     cache_charts()
     print(f"charts in {CHART_CACHE.relative_to(ROOT)}: {', '.join(c for c, _, _ in CHARTS)}")
@@ -1166,6 +1262,17 @@ def main() -> None:
     secret.add_argument("--key", default="value")
     secret.set_defaults(func=cmd_secret)
     sub.add_parser("charts").set_defaults(func=cmd_charts)
+    ci_secrets = sub.add_parser("ci-secrets", help="CI only: placeholder Secrets + GHCR login")
+    ci_secrets.add_argument("--env", choices=["prod", "staging"], default="staging")
+    ci_secrets.set_defaults(func=cmd_ci_secrets)
+    wait = sub.add_parser("wait-argo", help="wait until Argo CD synced env (and its smoke tests)")
+    wait.add_argument("--env", choices=["prod", "staging"], default="staging")
+    wait.add_argument("--timeout", type=float, default=900)
+    wait.add_argument("--smoke", action="store_true", help="fail if no smoke Job ran")
+    wait.set_defaults(func=cmd_wait_argo)
+    teardown = sub.add_parser("argo-teardown", help="Terraform destroy: Argo CD deletes its apps")
+    teardown.add_argument("--timeout", type=float, default=600)
+    teardown.set_defaults(func=cmd_argo_teardown)
     sub.add_parser("prepull", help="put every image the demo needs on the node").set_defaults(
         func=cmd_prepull
     )

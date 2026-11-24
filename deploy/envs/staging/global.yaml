@@ -3,6 +3,9 @@
 global:
   environment: staging
   ingressEntryPoint: staging # http://<laptop>:8090/
+  # After every sync of a service, the PostSync smoke test: two load-test accounts trade a share.
+  smoke:
+    mode: trade
   image:
     # The read-only GHCR login (deploy/envs/staging/sealed/ghcr-pull.yaml). Unused for images in the local registry.
     pullSecrets: [ghcr-pull]
