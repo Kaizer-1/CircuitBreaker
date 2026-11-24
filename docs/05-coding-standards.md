@@ -19,6 +19,32 @@
 | Kubernetes | kind, kubectl, Helm 3 | |
 | IaC and deployment | Terraform ≥ 1.6 (kind, kubernetes, helm providers), Argo CD; LocalStack optional | |
 
+### Base images: pinned by digest
+
+Every image a Dockerfile builds on is named by **tag and digest**: `FROM python:3.12-slim@sha256:1910…` (the
+services' template, copied to all eight), the `uv` binary's image, `node:24-alpine` and `nginx-unprivileged` (web),
+and the `# syntax=docker/dockerfile:1@sha256:…` build frontend. The digest is the multi-architecture index's
+(`docker buildx imagetools inspect <image> --format '{{json .Manifest}}'`), so the amd64 and arm64 builds both use it.
+
+> **Tag vs digest:** a tag (`3.12-slim`) is a name the publisher can point at different content at any time, and they
+> do (security rebuilds, new patch releases). A digest (`sha256:…`) is the hash of the content itself: it can only
+> ever mean those exact bytes.
+
+**Why** (owner's decision, 2026-11-25): with tags, two builds of the same commit could start from different bases,
+so "build once" would not mean "the same image" across rebuilds; and a quiet base update showed up as a large new
+layer every pod had to pull over a slow connection during Phase 7 testing (the first staging rollout took most of an
+hour at 57 KB/s).
+
+**To update a base image** (deliberately, never as a side effect):
+
+1. In a pull request, change the digest (keep the tag beside it, for people) in the template
+   (`services/order-service/Dockerfile`), then `python3 tools/check_template_drift.py --sync` to copy it to every
+   service; for web, in `web/Dockerfile`.
+2. CI rebuilds every image that changed, and **Trivy scans each one**: the build fails on a CRITICAL vulnerability
+   that has a fix ([deployment §4](03-architecture/07-deployment-and-environments.md)).
+3. CI bumps staging; the PostSync smoke tests and the usual checks run there; `make promote` takes it to prod.
+4. Run `make k8s-prepull` afterwards, so the demo laptop has the new layers before it goes offline.
+
 ## 2. Repository layout (monorepo)
 
 ```text
@@ -282,6 +308,12 @@ if you enable the optional module. `make doctor` checks all of this.
 | `make promote s=<service>` | Open a PR copying the service's staging image tag to `deploy/envs/prod/` |
 
 ## Viva Notes
+
+**Q: Why pin base images by digest rather than by tag?**
+A: A tag is a movable label: `python:3.12-slim` today and next week can be different bytes. A digest is the hash of
+the content, so it can never change. Pinning makes a rebuild of the same commit produce the same base, makes every
+base update a visible, reviewed change (and Trivy-scanned), and stops surprise downloads on demand day. The cost is
+that security updates are no longer automatic: someone must bump the digest on purpose.
 
 **Q: Why the ports-and-adapters layout?**
 A: Business rules (`domain/`) don't depend on databases or frameworks, so they are easy to test with fakes and the
