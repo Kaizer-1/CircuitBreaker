@@ -13,11 +13,14 @@
              Application stays Synced; other drift is reported (OutOfSync), not reverted
     gitops-push  commit + push a change to deploy/envs/<env>/web.yaml, time it to Synced and
              Healthy, then git revert it and time the way back (pushes to the branch Argo CD
-             follows: a pull request's branch, or main through its ruleset)
+             follows: a pull request's branch, never main)
     sealed   SealedSecrets: every one decrypted; a secret sealed with the right certificate
              decrypts; one sealed with another key, for another namespace, or renamed does not
     sealed-drill  restore drill: back up, lose the sealing key, see a SealedSecret fail, restore
              the backup, see it decrypt (needs private/sealed-secrets/sealing-key.json)
+    offline  the demo without the internet: make k8s-prepull, cut the node off from the internet
+             (private addresses still reachable), delete every pod of the environment and the
+             platform, see all of them start again from the node's images and a trade settle
     profile  where a placement's time goes under load, per replica count (a measurement, not a
              pass/fail check): every stage of A-05, Cassandra and Postgres waits, event-loop lag,
              CPU and throttling, Cassandra's GC pauses; saved to build/profile/<label>.json
@@ -29,6 +32,7 @@ running system on purpose (scale, stop, patch); each one puts it back as it foun
 from __future__ import annotations
 
 import argparse
+import calendar
 import json
 import os
 import subprocess
@@ -1185,6 +1189,11 @@ def check_gitops_push(args: argparse.Namespace) -> bool:
     if git("status", "--porcelain"):
         sys.exit("the working tree must be clean (the check commits and pushes)")
     branch = git("rev-parse", "--abbrev-ref", "HEAD")
+    if branch == "main":
+        sys.exit(
+            "never on main (changes reach main only through pull requests): point Argo CD at a"
+            " test branch first, make platform revision=<branch>"
+        )
     target = json.loads(kubectl("get", "applications.argoproj.io", "-n", ARGOCD, app, "-o", "json"))
     if target["spec"]["source"]["targetRevision"] != branch:
         sys.exit(f"Argo CD follows {target['spec']['source']['targetRevision']}, not {branch}")
@@ -1451,6 +1460,125 @@ CASES = [
 ]
 
 
+# --------------------------------------------------------------------------- offline (prepull)
+
+OFFLINE_CHAIN = "CB-OFFLINE"
+LOCAL_NETS = {
+    "iptables": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"],
+    "ip6tables": ["fc00::/7", "fe80::/10", "::1/128"],
+}
+
+
+def node_sh(*cmd: str, check: bool = True) -> bool:
+    import k8s
+
+    result = subprocess.run(  # noqa: S603 (fixed command)
+        ["docker", "exec", k8s.NODE, *cmd], capture_output=True, text=True, check=False
+    )
+    if check and result.returncode != 0:
+        sys.exit(f"failed on the node: {' '.join(cmd)}\n{result.stderr.strip()}")
+    return result.returncode == 0
+
+
+def internet(on: bool) -> None:
+    """Off: everything the node (and every pod on it) sends to a non-private address is refused,
+    as on a hotspot with no uplink. The cluster, the LAN and the local registry stay reachable."""
+    for tool, nets in LOCAL_NETS.items():
+        if on:
+            for hook in ("OUTPUT", "FORWARD"):
+                while node_sh(tool, "-D", hook, "-j", OFFLINE_CHAIN, check=False):
+                    pass
+            node_sh(tool, "-F", OFFLINE_CHAIN, check=False)
+            node_sh(tool, "-X", OFFLINE_CHAIN, check=False)
+            continue
+        node_sh(tool, "-N", OFFLINE_CHAIN)
+        for net in nets:
+            node_sh(tool, "-A", OFFLINE_CHAIN, "-d", net, "-j", "RETURN")
+        node_sh(tool, "-A", OFFLINE_CHAIN, "-j", "REJECT")
+        for hook in ("OUTPUT", "FORWARD"):
+            node_sh(tool, "-I", hook, "1", "-j", OFFLINE_CHAIN)
+
+
+def pull_failures(namespaces: list[str], since: float) -> list[str]:
+    bad = []
+    for ns in namespaces:
+        events = json.loads(kubectl("get", "events", "-n", ns, "-o", "json"))["items"]
+        for e in events:
+            when = e.get("lastTimestamp") or e.get("eventTime") or ""
+            if not when:
+                continue
+            stamp = calendar.timegm(time.strptime(when[:19], "%Y-%m-%dT%H:%M:%S"))
+            pulling = "pull" in e.get("message", "").lower()
+            failed = e.get("reason") in ("Failed", "ErrImagePull", "BackOff")
+            if failed and pulling and stamp >= since:
+                bad.append(f"{ns}/{e['involvedObject']['name']}: {e['message'][:120]}")
+    return bad
+
+
+def check_offline(args: argparse.Namespace) -> bool:
+    import k8s
+
+    env = args.env
+    heading(f"The demo without the internet ({env})")
+    prepull = subprocess.run(  # noqa: S603 (fixed command)
+        [sys.executable, str(ROOT / "scripts" / "k8s.py"), "prepull"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    ok = verdict(prepull.returncode == 0, "make k8s-prepull: every image on the node")
+    if not ok:
+        print(prepull.stdout[-3000:], prepull.stderr[-1000:])
+        return ok
+    namespaces = [env, *PLATFORM_NAMESPACES, ARGOCD]
+    started = time.time()
+    try:
+        internet(False)
+        probe = "docker.io/library/hello-world:latest"
+        node_sh("crictl", "rmi", probe, check=False)
+        ok &= verdict(
+            not node_sh("crictl", "pull", probe, check=False)
+            and not node_sh("curl", "-sS", "-m", "5", "https://ghcr.io", check=False),
+            "the node is offline (a registry pull and https://ghcr.io both fail)",
+        )
+        deleted = time.monotonic()
+        for ns in namespaces:
+            kubectl("delete", "pods", "-n", ns, "--all", "--wait=false")
+        kubectl("delete", "pod", "-n", "kube-system", "-l", "app.kubernetes.io/name=sealed-secrets")
+        print(
+            f"  {DIM}deleted every pod in {', '.join(namespaces)} and the Sealed Secrets "
+            f"controller; waiting for them to start again{RESET}"
+        )
+        time.sleep(10)
+        for ns in namespaces:
+            k8s.wait_ready(ns, timeout=900)
+        waited = time.monotonic() - deleted
+        not_ready = [p for ns in namespaces for p in pods_ready(ns)]
+        ok &= verdict(
+            not not_ready,
+            f"every pod started again offline ({waited:.0f} s after they were deleted)"
+            + (f": {', '.join(not_ready)}" if not_ready else ""),
+        )
+        failures = pull_failures([*namespaces, "kube-system"], started)
+        ok &= verdict(not failures, "no image pull was needed (no pull errors in the events)")
+        for line in failures[:10]:
+            print(f"    {line}")
+        demo = k8s_script(env, "run", "demo_trade.py")
+        ok &= verdict(demo.returncode == 0, "a demo trade settles with exact balances, offline")
+        if demo.returncode != 0:
+            print(demo.stdout[-2000:], demo.stderr[-2000:])
+        sync, health, _ = app_status(f"order-service-{env}")
+        print(
+            f"  {DIM}Argo CD while offline: order-service-{env} {sync}/{health} (it cannot "
+            f"reach GitHub; the running system does not need it){RESET}"
+        )
+    finally:
+        internet(True)
+        back = node_sh("curl", "-sS", "-o", "/dev/null", "-m", "10", "https://ghcr.io", check=False)
+        print(f"  {DIM}internet back on the node: {'yes' if back else 'NO, check iptables'}{RESET}")
+    return ok
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
@@ -1487,6 +1615,7 @@ def main() -> int:
     sub.add_parser("gitops-push").set_defaults(func=check_gitops_push)
     sub.add_parser("sealed").set_defaults(func=check_sealed)
     sub.add_parser("sealed-drill").set_defaults(func=check_sealed_drill)
+    sub.add_parser("offline").set_defaults(func=check_offline)
     profile = sub.add_parser("profile")
     profile.add_argument("--label", required=True, help="name of the saved result")
     profile.add_argument("--rate", type=float, default=100)

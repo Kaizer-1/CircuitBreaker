@@ -8,7 +8,12 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:1.30-alpine AS runtime
+# nginx's mainline branch (the one nginx recommends): the 1.30 stable line had CRITICAL CVEs fixed only in mainline
+# (Trivy, deployment doc section 4). apk upgrade takes Alpine's security fixes newer than the base image.
+FROM nginxinc/nginx-unprivileged:1.31.7-alpine3.24 AS runtime
+USER root
+RUN apk upgrade --no-cache
+USER 101
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --chmod=755 docker/config.sh /docker-entrypoint.d/40-circuitbreaker-config.sh
 COPY --from=build /app/dist /usr/share/nginx/html

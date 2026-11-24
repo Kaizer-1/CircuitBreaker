@@ -83,6 +83,21 @@ own values file); a commit outside them updates the Application's revision witho
 stayed through the unrelated commit (`make k8s-check c=gitops-push`). What remains, as ADR-0016 says: a commit to
 the **same** service's file, or to the shared chart, re-applies Git.
 
+**CI's half, as built (2026-11-24, Phase 6).** Step 1 of the flow above is `.github/workflows/ci.yml`; details and
+reasons are in the [deployment doc §4, "CI as built"](../03-architecture/07-deployment-and-environments.md#ci-as-built-phase-6).
+"Each changed service" is decided by comparing the service's folder (its build context) at the commit staging runs
+with the new commit, so an unchanged service keeps its tag. Each image is scanned (Trivy) before it is pushed. The
+tag bump writes the registry **and** the tag into the service's file, one commit per service, only after every CI job
+passed. It pushes with a deploy key that `main`'s ruleset lets bypass the pull-request rule, and pushes that change
+only `deploy/envs/**` do not start CI again.
+
+**Found while testing (2026-11-24): too many syncs at once.** A commit that changed every service's pod template made
+Argo CD start 18 syncs together; the application controller ran out of memory (768 MiB) and, resuming them on every
+restart, stayed down for 20 minutes. It now runs at most 2 kubectl processes and 4 sync operations at a time (the
+defaults are 20 and 10); the same syncs queue and finish in about a minute and a half. Because automated sync never
+retries a revision it has attempted, `make sync apply=yes` starts the sync of Applications left `OutOfSync`, on
+request only (an SRE-agent rollback can be `OutOfSync` on purpose).
+
 ## Alternatives considered
 
 | Alternative | Why rejected |

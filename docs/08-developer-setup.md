@@ -124,13 +124,14 @@ exist, so "healthy" means "can do its job", not just "the process started".
 | `python3 scripts/time_travel_check.py [minutes] [samples]` | With the bots running: seek times over the last N minutes and "hashes match" against the live engine on all five tickers |
 | `make status` | Signs in as admin (`ADMIN_PASSCODE`, default the local placeholder) and prints the gateway's `/v1/system/status` |
 | `make test-alerts` | promtool (in Docker) checks the alert rules and runs their unit tests (`observability/tests/`) |
+| `make scan s=<service\|web>` | CI's image gate on the laptop: builds the image and runs the same Trivy version; fails on a CRITICAL vulnerability that has a fix ([deployment §4](03-architecture/07-deployment-and-environments.md#ci-as-built-phase-6)) |
 | `make k8s-lint` | The charts without a cluster: `helm lint`, render every environment and every service alone, kubeconform against Kubernetes 1.37, then `test-alerts`. CI runs it on every pull request |
 | `make k8s-up` / `k8s-down` / `k8s-status` / `k8s-images` / `k8s-reset` | The Kubernetes deployment: see [§11](#11-kubernetes-kind) |
 | `make k8s-bots`, `k8s-bots-stop`, `k8s-demo-trade`, `test-k8s`, `k8s-check c=…` | The Compose targets' Kubernetes twins, and the cluster checks ([§11](#11-kubernetes-kind)) |
 
 > **Not the same as the Terraform target.** `make infra` means *the Compose infrastructure*. The Terraform platform from
-> [ADR-0015](adr/0015-terraform-local-platform.md) (kind cluster, namespaces, Argo CD) will be `make platform`; it
-> arrives in Phase 6. Until then `make k8s-up` builds the same cluster ([§11](#11-kubernetes-kind)).
+> [ADR-0015](adr/0015-terraform-local-platform.md) (kind cluster, namespaces, Argo CD) is `make platform`
+> ([§11](#11-kubernetes-kind)).
 
 ## 4. Ports
 
@@ -312,11 +313,14 @@ the fast developer loop. Layout and reasoning: [deployment §3–5](03-architect
 
 - **GitOps, the demo platform:** `make platform` (Terraform: the cluster, namespaces, Traefik, monitoring, Sealed
   Secrets, Argo CD), and Argo CD deploys `staging` and `prod` from `deploy/envs/` in Git. To change what runs, commit;
-  `make sync` makes Argo CD look at once instead of within 30 s; `make argocd` opens its UI on
+  `make sync` makes Argo CD look at once instead of within 30 s (`apply=yes` also starts the sync of every
+  Application still `OutOfSync`, see the runbook's troubleshooting); `make argocd` opens its UI on
   <http://localhost:8443>. Before the first run, copy `infra/envs/local/secrets.auto.tfvars.example` to
   `secrets.auto.tfvars` and put Argo CD's read-only deploy key in `private/keys/argocd-deploy-key`; after the first
   run, **back up the sealing key** (`make sealing-key-backup`, then copy it off the laptop). The secrets are random:
-  `make k8s-passcode` prints the presenter's passcode.
+  `make k8s-passcode` prints the presenter's passcode. CI builds the images and pushes them to GHCR (private); the
+  cluster pulls them with a read-only token that a person seals once: `make ghcr-token` (a **classic** token with only
+  `read:packages` and an expiry date), then commit `deploy/envs/*/sealed/ghcr-pull.yaml`.
 - **Developing with local builds:** `make k8s-up` in a namespace Argo CD does not manage (with no cluster, it first
   makes one without Argo CD). In a namespace Argo CD manages it deploys nothing: it starts a stopped cluster and
   waits for Argo CD. The commands below work in both.
@@ -328,6 +332,7 @@ make k8s-demo-trade  # the demo trade, against the cluster
 make k8s-status      # pods, the memory per namespace (the RAM budget's numbers), the QR code's address
 make k8s-set-url url=http://192.168.43.12   # point the QR code at the laptop's hotspot address (data kept)
 make k8s-down        # stop the cluster: data kept, RAM freed; make k8s-up starts it again in seconds
+make k8s-prepull     # every image the demo needs onto the node, so pods restart without the internet
 ```
 
 The first `make k8s-up` takes about 7 minutes once the images exist (402 s measured: the platform charts, then
@@ -371,6 +376,7 @@ Port 80 is open to the network (kind maps it on all interfaces); Grafana and Pro
 | `make k8s-check c=gitops-push env=staging` | A commit's way to the cluster, timed: commits and **pushes** a pod annotation on web, waits for `Synced` and `Healthy`, checks an unrelated drifted service is left alone, then `git revert`s and times the way back. Needs a clean tree on the branch Argo CD follows |
 | `make k8s-check c=sealed` | Every SealedSecret decrypted; a secret sealed with the right certificate decrypts; one sealed with another key, for the other namespace, or renamed after sealing, does not |
 | `make k8s-check c=sealed-drill` | The sealing key's restore drill (needs the backup): the key is lost, an old SealedSecret fails, the backup goes back in, it decrypts again |
+| `make k8s-check c=offline` | The demo without the internet: `k8s-prepull`, then the node is cut off from the internet (LAN and cluster still reachable), every pod of the environment and the platform is deleted, all start again from the node's images with no pull, and a demo trade settles; the internet is restored at the end (about 5 minutes) |
 | `make k8s-test-phone [env=]` | The phone pages from a non-secure origin (below), against the cluster, with that environment's bot secret |
 | `python3 scripts/k8s.py run bots_check.py 120` | Any `scripts/` check against the cluster (port-forwards stand in for Compose's host ports) |
 

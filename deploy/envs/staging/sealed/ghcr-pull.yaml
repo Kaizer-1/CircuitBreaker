@@ -1,0 +1,17 @@
+# ghcr-pull in staging: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as staging/ghcr-pull. make seal env=staging
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: ghcr-pull
+  namespace: staging
+spec:
+  encryptedData:
+    .dockerconfigjson: AgALy/urH2nWu7Land+mx1IhlcCkaQav1UAVdafSWy8Q/Kspu2Qa2VP2qCLG6kgKCMRM/NIfi8PW0DL0sWbiTJt58mWkzrYul093GNNBkjlrcoMtAaZ4745Rnd9zTAMAxUZsXGLEirrlnmgQh7FdNxloQEWup1XL0cVA2hObCnv4uA2MQi5qedMKM95OEKS76Pig/blJVeyclz6AX55Y+GP7VxhiDuZknPhm0cuG5G9lU8tnr+7vQWQwEty/ft3TLSF/A4TgVNK+0fO7fR9PAKB0LgPELFwRjlWqqpeSVqczkJuXcZFETLFGohde6QmobcuoQ8BP9LtPu7QNwADm9mKDYyneBz3FNLNJhHeIUjf4FIiT3eJ6n9GF2pRbKyidk3dpzN0atOrDe0pQMVDJnSvYxiE6I7P+IWLi//JFFmrc/YwST9oifSZ2E44/8Xkdj1AMelBmJP0tprpa+EjilPtCmzUATYQPPdWzxkigEmL21fgca7lDduLxSDeygaz/D4ERpFKZIpvnbmU29J2JZvZPvQ/9ujspIybgDn0UVuHepQ9hv5sU4mZDyYrx5W5sLJ/5EbF0hfiZTRbPOeHYwPN7lWu4r4JyTEcKs0eewxNiMh1FqJvoVHS656dsj71jjz2LtaFvvuy2qYsrlVheEs6nEJjAmYWrXJfPtvLhPj+O0lhYJvkHh9Qscq3lnIqQRxuSKyYObpab90+pWy1eZcjo++Rcj/4Wqzg17DuumzG2qzGdVy1LWSTFKvIl4NFxfgAxpwouuXcb4Pzbdh30VOY9HNZIkrwcCDuf2AhpD56JVdlVMN8Go6kMhHV/vxerI/cIyCU6wPTbwkVx/rjn6Vj7cTzwOCnhCpy/ni9BQM+7TA==
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: ghcr-pull
+      namespace: staging
+    type: kubernetes.io/dockerconfigjson
