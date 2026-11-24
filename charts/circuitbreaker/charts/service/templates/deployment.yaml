@@ -36,7 +36,7 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "service.name" . }}
-      automountServiceAccountToken: false
+      automountServiceAccountToken: {{ .Values.kubernetesApi }}
       {{- with .Values.global.image.pullSecrets }}
       # The registry login (the SealedSecret ghcr-pull: a read-only GHCR token).
       imagePullSecrets:

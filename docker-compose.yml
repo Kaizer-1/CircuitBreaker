@@ -203,6 +203,7 @@ services:
       CASSANDRA_USERNAME: market_data_role
       CASSANDRA_PASSWORD: cb_dev_market_data
       MATCHING_ENGINE_URL: http://matching-engine:8000 # Q-14/Q-15: catch-up and gap filling
+      CHAOS_HOOKS_ENABLED: "true" # A-12/A-13, the memory-leak hook (ADR-0020)
     depends_on:
       redpanda-init:
         condition: service_completed_successfully
@@ -224,6 +225,7 @@ services:
       POSTGRES_USER: portfolio_service
       POSTGRES_PASSWORD: cb_dev_portfolio
       ORDER_SERVICE_URL: http://order-service:8000 # A-19, the fail-closed orphan sweeper (ADR-0017)
+      CHAOS_HOOKS_ENABLED: "true" # A-21/A-22, the "database degraded" hook (ADR-0020)
     depends_on:
       redpanda-init:
         condition: service_completed_successfully
@@ -244,6 +246,7 @@ services:
       BOT_SECRET: cb-dev-bot-secret
       # Off unless `make bots` (BOTS_ENABLED=true); `make bots seed=42 activity=1.5` for a rehearsal.
       BOTS_ENABLED: ${BOTS_ENABLED:-false}
+      CHAOS_HOOKS_ENABLED: "true" # A-23/A-24, the panic-sell hook (ADR-0020)
       BOT_RANDOM_SEED: ${BOT_RANDOM_SEED:-}
       BOT_ACTIVITY: ${BOT_ACTIVITY:-1.0}
     depends_on:
@@ -280,6 +283,10 @@ services:
       - "8007:8000"
     environment:
       <<: [*python-env, *kafka-env]
+      # The chaos hooks (ADR-0020). No Kubernetes here: BAD_DEPLOY and the replica reset answer 503.
+      MARKET_DATA_URL: http://market-data-service:8000
+      PORTFOLIO_URL: http://portfolio-service:8000
+      BOT_TRADERS_URL: http://bot-traders:8000
     depends_on:
       redpanda-init:
         condition: service_completed_successfully

@@ -131,11 +131,13 @@ market-data-service:
     CASSANDRA_KEYSPACE: market_data
     CASSANDRA_USERNAME: market_data_role
     MATCHING_ENGINE_URL: http://matching-engine:8000
+    # A-12/A-13, the memory-leak hook: both environments are demo environments (ADR-0020).
+    CHAOS_HOOKS_ENABLED: "true"
   secretEnv:
     CASSANDRA_PASSWORD: {secret: market-data-service-db, key: password}
   resources:
     requests: {cpu: 100m, memory: 96Mi}
-    # The memory-leak scenario (chaos scenarios section 3.2) grows toward this limit at 40 MB/min.
+    # The memory-leak scenario (chaos scenarios section 3.2) grows toward this limit.
     limits: {cpu: 1000m, memory: 512Mi}
   networkPolicy:
     allowFrom: [api-gateway, chaos-service] # chaos-service: A-12/A-13 faults (Phase 7)
@@ -149,10 +151,12 @@ portfolio-service:
     POSTGRES_DB: portfolio
     POSTGRES_USER: portfolio_service
     ORDER_SERVICE_URL: http://order-service:8000 # A-19, the fail-closed orphan sweeper (ADR-0017)
+    CHAOS_HOOKS_ENABLED: "true" # A-21/A-22, the "database degraded" hook (ADR-0020)
   secretEnv:
     POSTGRES_PASSWORD: {secret: portfolio-service-db, key: password}
   networkPolicy:
-    allowFrom: [api-gateway, order-service] # order-service: A-06 reservations
+    # order-service: A-06 reservations; chaos-service: A-21/A-22 (ADR-0020)
+    allowFrom: [api-gateway, order-service, chaos-service]
 
 bot-traders:
   replicas: 1 # one copy of each bot
@@ -164,11 +168,13 @@ bot-traders:
     BOTS_ENABLED: "false" # make k8s-bots turns them on (operator-settings)
     BOT_RANDOM_SEED: ""
     BOT_ACTIVITY: "1.0"
+    CHAOS_HOOKS_ENABLED: "true" # A-23/A-24, the panic-sell hook (ADR-0020)
   secretEnv:
     BOT_SECRET: {secret: bot-secret, key: value}
   operatorEnv: [BOTS_ENABLED, BOT_RANDOM_SEED, BOT_ACTIVITY]
   networkPolicy:
-    allowFrom: [api-gateway] # the status page's readiness check
+    # api-gateway: the status page's readiness check; chaos-service: A-23/A-24, the panic sell (ADR-0020)
+    allowFrom: [api-gateway, chaos-service]
 
 sre-agent:
   replicas: 1 # one decision-maker
@@ -185,10 +191,15 @@ sre-agent:
     allowFrom: [api-gateway]
 
 chaos-service:
-  replicas: 1
+  replicas: 1 # experiments live in its memory
   env:
     LOG_LEVEL: INFO
     KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    MARKET_DATA_URL: http://market-data-service:8000 # the chaos hooks (ADR-0020)
+    PORTFOLIO_URL: http://portfolio-service:8000
+    BOT_TRADERS_URL: http://bot-traders:8000
+  # BAD_DEPLOY and the reset's replicas: its Role (Terraform environment module) names deployments/order-service only.
+  kubernetesApi: true
   networkPolicy:
     allowFrom: [api-gateway]
 

@@ -34,7 +34,10 @@ configs:
 controller:
   resources:
     requests: {cpu: 100m, memory: 256Mi}
-    limits: {cpu: "1", memory: 768Mi}
+    # 1 GiB, not 768 MiB (owner's decision, 2026-11-24): with the limits above it was still OOM-killed at 750 MiB on
+    # 2026-11-24 17:16 UTC, while the first prod release (9 Applications at once, each with a PostSync smoke Job)
+    # synced. A limit is a ceiling, not memory in use: it idles at about 330 MiB.
+    limits: {cpu: "1", memory: 1Gi}
 server:
   resources:
     requests: {cpu: 20m, memory: 64Mi}
