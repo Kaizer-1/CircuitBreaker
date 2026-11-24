@@ -313,7 +313,8 @@ the fast developer loop. Layout and reasoning: [deployment §3–5](03-architect
 
 - **GitOps, the demo platform:** `make platform` (Terraform: the cluster, namespaces, Traefik, monitoring, Sealed
   Secrets, Argo CD), and Argo CD deploys `staging` and `prod` from `deploy/envs/` in Git. To change what runs, commit;
-  `make sync` makes Argo CD look at once instead of within 30 s; `make argocd` opens its UI on
+  `make sync` makes Argo CD look at once instead of within 30 s (`apply=yes` also starts the sync of every
+  Application still `OutOfSync`, see the runbook's troubleshooting); `make argocd` opens its UI on
   <http://localhost:8443>. Before the first run, copy `infra/envs/local/secrets.auto.tfvars.example` to
   `secrets.auto.tfvars` and put Argo CD's read-only deploy key in `private/keys/argocd-deploy-key`; after the first
   run, **back up the sealing key** (`make sealing-key-backup`, then copy it off the laptop). The secrets are random:

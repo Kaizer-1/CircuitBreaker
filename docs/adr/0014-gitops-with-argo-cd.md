@@ -91,6 +91,13 @@ tag bump writes the registry **and** the tag into the service's file, one commit
 passed. It pushes with a deploy key that `main`'s ruleset lets bypass the pull-request rule, and pushes that change
 only `deploy/envs/**` do not start CI again.
 
+**Found while testing (2026-11-24): too many syncs at once.** A commit that changed every service's pod template made
+Argo CD start 18 syncs together; the application controller ran out of memory (768 MiB) and, resuming them on every
+restart, stayed down for 20 minutes. It now runs at most 2 kubectl processes and 4 sync operations at a time (the
+defaults are 20 and 10); the same syncs queue and finish in about a minute and a half. Because automated sync never
+retries a revision it has attempted, `make sync apply=yes` starts the sync of Applications left `OutOfSync`, on
+request only (an SRE-agent rollback can be `OutOfSync` on purpose).
+
 ## Alternatives considered
 
 | Alternative | Why rejected |

@@ -23,6 +23,13 @@ configs:
   params:
     # Plain HTTP behind the port-forward (no certificate to accept in the browser).
     server.insecure: true
+    # Memory: each sync runs kubectl, which is memory-hungry, and the defaults allow 20 at once (Argo CD's
+    # high-availability guide). Measured 2026-11-24: a commit that changed every service's pod template started 18
+    # syncs together and the controller went from ~180 MiB to OOM-killed at 768 MiB, again on every restart (it
+    # resumes them all). 2 kubectl runs and 4 sync operations at a time fit one laptop; syncs queue instead.
+    controller.kubectl.parallelism.limit: "2"
+    controller.operation.processors: "4"
+    controller.status.processors: "10"
 
 controller:
   resources:

@@ -51,6 +51,9 @@ If something goes wrong on Kubernetes: `make k8s-status` (pods, Argo CD's Applic
 `kubectl -n prod logs <pod>`; a service misbehaving → `kubectl -n prod rollout restart deployment/<service>` (rolling,
 no downtime: two replicas and a 5 s preStop pause; Argo CD ignores restarts). Never `helm` or `kubectl apply` into
 prod: Argo CD owns it, and a fix goes through Git (a revert of the bad commit; `make sync` to apply it at once).
+Applications still `OutOfSync` long after a commit (Argo CD's controller restarted mid-sync and will not retry that
+revision): `make sync env=prod apply=yes`, unless the SRE agent rolled back a release and its revert pull request is
+still open.
 
 ## 2. During the demo
 

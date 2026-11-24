@@ -923,6 +923,45 @@ def cmd_sync(args: argparse.Namespace) -> None:
             capture=True,
         )
     print(f"asked Argo CD to refresh {len(apps)} Application(s) in {args.env}")
+    if not args.apply:
+        return
+    # Start a sync now, as `argocd app sync` does. Needed when automated sync will not try again:
+    # it never retries a revision it already attempted, e.g. one cut short when the controller
+    # restarted. Not after the SRE agent's rollback of a release from Git: that waits OutOfSync
+    # for its revert pull request (ADR-0016).
+    started = 0
+    for app in apps:
+        status = app.get("status", {})
+        if status.get("sync", {}).get("status") != "OutOfSync" or app.get("operation"):
+            continue
+        policy = app["spec"].get("syncPolicy", {})
+        operation = {
+            "operation": {
+                "initiatedBy": {"username": "make-sync"},
+                "sync": {
+                    "revision": status["sync"]["revision"],
+                    "prune": policy.get("automated", {}).get("prune", False),
+                    "syncOptions": policy.get("syncOptions", []),
+                },
+            }
+        }
+        run(
+            kubectl(
+                "patch",
+                "applications.argoproj.io",
+                "-n",
+                "argocd",
+                app["metadata"]["name"],
+                "--type",
+                "merge",
+                "-p",
+                json.dumps(operation),
+            ),
+            capture=True,
+        )
+        started += 1
+        print(f"   sync started: {app['metadata']['name']} -> {status['sync']['revision'][:12]}")
+    print(f"started {started} sync(s) in {args.env} (OutOfSync, no operation running)")
 
 
 def cmd_argocd(_: argparse.Namespace) -> None:
@@ -1116,6 +1155,9 @@ def main() -> None:
     sync = sub.add_parser("sync", help="ask Argo CD to look at Git now")
     sync.add_argument("--env", choices=["prod", "staging"], default="staging")
     sync.add_argument("services", nargs="*")
+    sync.add_argument(
+        "--apply", action="store_true", help="also start a sync of OutOfSync Applications now"
+    )
     sync.set_defaults(func=cmd_sync)
     sub.add_parser("argocd").set_defaults(func=cmd_argocd)
     secret = sub.add_parser("secret", help="print one value of an environment's Secret")

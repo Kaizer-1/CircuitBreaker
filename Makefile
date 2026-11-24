@@ -153,8 +153,8 @@ platform: ## Platform: cluster, namespaces, Traefik, monitoring, Sealed Secrets,
 	@$(TF) init -input=false >/dev/null
 	@$(TF) apply $(TF_VARS)
 
-sync: ## GitOps: ask Argo CD to look at Git now (it polls every 30 s): make sync [env=staging] [s=<service>]
-	@python3 scripts/k8s.py sync --env $(if $(env),$(env),staging) $(s)
+sync: ## GitOps: ask Argo CD to look at Git now (it polls every 30 s): make sync [env=staging] [s=<service>] [apply=yes]
+	@python3 scripts/k8s.py sync --env $(if $(env),$(env),staging) $(s) $(if $(filter yes,$(apply)),--apply,)
 
 argocd: ## GitOps: Argo CD's web UI on http://localhost:8443 (prints the admin password)
 	@python3 scripts/k8s.py argocd

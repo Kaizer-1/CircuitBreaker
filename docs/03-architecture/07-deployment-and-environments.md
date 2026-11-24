@@ -361,6 +361,14 @@ runner).
   `order-service`. The paths (`manifest-generate-paths`) are what make that true: without them, any commit re-synced
   every drifted Application (measured; [ADR-0014](../adr/0014-gitops-with-argo-cd.md) amendment).
 - **Polls Git every 30 s** (a laptop gets no webhooks); `make sync` asks at once.
+- **At most 2 kubectl runs and 4 sync operations at a time** (Argo CD's defaults: 20 and 10). Found while testing
+  (2026-11-24): a commit that changed every service's pod template started 18 syncs together. The application
+  controller went from about 180 MiB to OOM-killed at its 768 MiB limit, and again on every restart, because it
+  resumes them all; for 20 minutes nothing synced. With the caps, the same 9 syncs queued and finished in 91 s, with
+  the controller at most 224 MiB. Argo CD also never retries an automated sync to a revision it has already
+  attempted, so the Applications whose sync died stayed `OutOfSync`: `make sync env=<env> apply=yes` starts their
+  syncs. It is opt-in, never automatic: after the SRE agent's rollback of a release from Git, an Application waits
+  `OutOfSync` for its revert pull request on purpose (ADR-0016).
 
 ### CI as built (Phase 6)
 
@@ -391,6 +399,13 @@ in manifest". It was found on the pull request, before anything reached staging,
 with the sealed token. Fixed by building each image natively on both architectures (GitHub's `arm64` runners are
 available to private repositories since January 2026), not by emulation, which would make every Python build several
 times slower.
+
+**Measured on PR #10 (2026-11-24).** The 18 builds (9 images × 2 architectures, each with both Trivy steps and the
+push) ran side by side in 35–101 s each (web, with its Node build, the slowest); joining each pair under one tag took
+10–19 s more. The images were in GHCR 2 min 30 s after the run started. The whole run, which waits for the end-to-end
+job, takes about 10 minutes. With staging pointed at those images (one commit per service, as CI's job does), all 12
+staging pods ran them 91 s after the sync started, and a demo trade settled on them. The next run of the pull request
+found every folder unchanged since the tag staging runs, so it built and scanned but pushed nothing.
 
 A pull request always builds and scans all nine images, so a Dockerfile change or a new vulnerability in a base image
 shows before merging. On `main` only the changed ones are built. Because our pull requests are merged with merge
@@ -500,7 +515,8 @@ or any pod, sends to a non-private address is refused, while the LAN and the clu
 registry pull and `https://ghcr.io` now fail. It then deletes every pod of the environment, Traefik, monitoring,
 Argo CD and the Sealed Secrets controller, waits for all of them to start again, checks no image pull was attempted,
 and settles a demo trade. Measured on prod (2026-11-24, images still from the local registry): every pod back and the
-trade settled, with no pull errors. Argo CD cannot reach GitHub while offline. The running system does not need it:
+trade settled, with no pull errors; then on staging, running the images CI pushed to GHCR: every pod back 66 s after they were deleted, no pull, the trade settled.
+Argo CD cannot reach GitHub while offline. The running system does not need it:
 the cluster keeps running what it last synced.
 
 ## 5. Infrastructure as Code (Terraform)
