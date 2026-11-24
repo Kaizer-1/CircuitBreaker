@@ -1,0 +1,17 @@
+# ghcr-pull in prod: a SealedSecret (ADR-0019), encrypted to the cluster's sealing key.
+# Only the controller can decrypt it, and only as prod/ghcr-pull. make seal env=prod
+apiVersion: bitnami.com/v1alpha1
+kind: SealedSecret
+metadata:
+  name: ghcr-pull
+  namespace: prod
+spec:
+  encryptedData:
+    .dockerconfigjson: AgBlGpUDkCeK3cA7DDnIUJ12LzZb0ZjHHDizA62FqxZjGViFQx1TJ08btIYXZ26MO9Su1CZMWYqbstBZMC7BngyhB6FwIh0aGCiqqxeaGc0h8jsuNUqH2DqwR5XmkbYcTKc6U8gB/rqoSeSCxbOQHcsjC5MupxYDlr7f1hQlJSXYYYxvFkQREwkZSApdova8lIZhEiUhoNjZ1j3ELOBPpRf+yGV7yzIFXh/X/en0xDrpWFCJnasZ5fc2+JIIKPWTyyx/7ccj+m7f8XSCMD3XHsuEZjVd6vllpc305FibQEavm3leKad1dsNipCWg1Ng0X7yMnyWZdklHkxydQSjwggvPKVhPSW9KxVxueGf9SO/3eVJ7oNKWTZD0PUAw7H2MH6Ivv6JhP+25iT11zNwCauucALT7p8aOO1nd92Azp7eKYCka1rUD4zqVxM847YET6CJ5mVVD3nw3d7euftq0Lod+SCfFulgJRHTqvqOM49VrBFh6awh9gTlKpGGeiAHsaaDL1eYYbkhNB205tPj07oSyED1l6gfWcfdgKq3qtiXSKV90WgDg1cL+PBkDenjguOyMYCV6HhU3qeKjF3IF3b0xsS4ZO31ng4BPDC7ctftdu7Qtxf/hBX2w2Tmp1EegNsA/+On5zJCzydqii16idb6jE5Opv8mczfS7osGOv1PytxbXwujJY7XcwaM7L7Kt0S5X2DyY9fyi7I2VkqougfiPiTYb+uEouBfvOedTpSzxbYTGB3dy29dhATj64Wo0JxSIOpXeQpuizRs8y9jKEdchOe6elnFw/jOHSlUNufxGr96W8CdCBkQxPweMjzgOVJB3YR4LPnmF6Nj+5rOhk6SrWj1Ui+8eZAZm1OVVSQ/ThA==
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: circuitbreaker
+      name: ghcr-pull
+      namespace: prod
+    type: kubernetes.io/dockerconfigjson
