@@ -1168,16 +1168,25 @@ def cmd_wait_argo(args: argparse.Namespace) -> None:
         sys.exit(f"last sync not Succeeded: {', '.join(failed) or '-'}; smoke Jobs: {passed}")
 
 
-def cmd_wait_argo_gone(args: argparse.Namespace) -> None:
-    """Terraform's destroy: wait until Argo CD has deleted its Applications. Each carries Argo CD's
-    resources-finalizer (Argo CD deletes what it deployed, then lets the Application go), so Argo
-    CD must still be running; uninstalled first, the argocd namespace hangs in Terminating."""
+def cmd_argo_teardown(args: argparse.Namespace) -> None:
+    """Terraform's destroy, before the AppProject goes: delete Argo CD's ApplicationSets (so nothing
+    re-creates Applications), then its Applications, and wait until they are gone. Each carries
+    Argo CD's resources-finalizer (Argo CD deletes what it deployed, then lets the Application go),
+    and Argo CD processes it only while Argo CD runs and the Application's project still exists:
+    otherwise the Applications, and with them the argocd namespace, never go (CI, 2026-11-24)."""
     start = time.monotonic()
+    for kind in ("applicationsets.argoproj.io", "applications.argoproj.io"):
+        run(
+            kubectl("delete", kind, "--all", "-n", "argocd", "--wait=false", "--ignore-not-found"),
+            check=False,  # no Argo CD (its CRDs gone): nothing to delete
+        )
     while apps := argo_applications():
         if time.monotonic() - start > args.timeout:
-            sys.exit(f"Argo CD: {len(apps)} Applications still there after {args.timeout:.0f} s")
+            names = ", ".join(a["metadata"]["name"] for a in apps)
+            sys.exit(f"Argo CD: Applications still there after {args.timeout:.0f} s: {names}")
         time.sleep(5)
-    print(f"Argo CD: no Applications left after {time.monotonic() - start:.0f} s")
+    print(f"Argo CD: its Applications and what they deployed are gone after"
+          f" {time.monotonic() - start:.0f} s")  # fmt: skip
 
 
 def cmd_charts(_: argparse.Namespace) -> None:
@@ -1247,9 +1256,9 @@ def main() -> None:
     wait.add_argument("--timeout", type=float, default=900)
     wait.add_argument("--smoke", action="store_true", help="fail if no smoke Job ran")
     wait.set_defaults(func=cmd_wait_argo)
-    gone = sub.add_parser("wait-argo-gone", help="Terraform destroy: wait for Argo CD's cleanup")
-    gone.add_argument("--timeout", type=float, default=600)
-    gone.set_defaults(func=cmd_wait_argo_gone)
+    teardown = sub.add_parser("argo-teardown", help="Terraform destroy: Argo CD deletes its apps")
+    teardown.add_argument("--timeout", type=float, default=600)
+    teardown.set_defaults(func=cmd_argo_teardown)
     sub.add_parser("prepull", help="put every image the demo needs on the node").set_defaults(
         func=cmd_prepull
     )

@@ -538,11 +538,13 @@ Its first runs found three faults, all fixed:
 - **"Synced and Healthy" came before the smoke tests had finished.** An Application already reports Synced and
   Healthy while its PostSync Job runs, so the check (and `make k8s-up`'s wait) now also waits while a sync is
   `Running`.
-- **`terraform destroy` hung for 10 minutes on the `argocd` namespace.** The ApplicationSet controller gives every
-  Application Argo CD's `resources-finalizer`: on delete, Argo CD first removes what the Application deployed, then
-  lets it go. Terraform uninstalled Argo CD 6 s after the ApplicationSets, so nothing was left to clear the
-  finalizers. The `argo-cd` module now has a destroy-time step between the two (`k8s.py wait-argo-gone`) that waits
-  until every Application is gone while Argo CD still runs.
+- **`terraform destroy` hung on the `argocd` namespace.** The ApplicationSet controller gives every Application Argo
+  CD's `resources-finalizer`: on delete, Argo CD first removes what the Application deployed, then lets it go. It
+  does so only while Argo CD runs and the Application's project exists (Argo CD v3.6.2,
+  `finalizeApplicationDeletion`, looks the project up first). Terraform removed the AppProject and the
+  ApplicationSets in one Helm uninstall, then Argo CD, so the Applications never went. The `argo-cd` module now has a
+  destroy-time step that runs first (`k8s.py argo-teardown`): it deletes the ApplicationSets, then the Applications,
+  and waits until Argo CD has removed them and what they deployed.
 - **The smoke tests of services synced together took each other's fills** (all nine traded CALVERA); see "PostSync
   smoke tests" above for the retry that replaced the wrong "never meet in the book" assumption.
 
