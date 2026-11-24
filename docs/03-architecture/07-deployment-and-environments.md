@@ -493,11 +493,19 @@ whole environment through the public API, as a client would (`scripts/smoke.py`,
 
 | Environment | What the smoke test does | Why |
 |---|---|---|
-| staging | Two load-test accounts trade one CALVERA share with each other at a price inside the book's gap, then both portfolios must settle exactly (cash, shares, nothing left reserved). The pair hands the same share back and forth; the first run buys it from `bot-20` | The whole write path: gateway, order-service, portfolio's reservation, the engine, settlement |
+| staging | Two load-test accounts trade one share with each other at a price inside the book's gap, then both portfolios must settle exactly (cash by the fill price, shares by one, nothing left reserved). The pair hands the same share back and forth; when neither holds one, it buys one from `bot-20` | The whole write path: gateway, order-service, portfolio's reservation, the engine, settlement |
 | prod | The gateway, the five instruments and every order book answer; then a load-test account places a LIMIT buy at half the last price (far below any seller), sees it rest with exactly that cash reserved, cancels it, and sees the reservation released | Prod is the live demo: nothing may trade, and nothing may reach the leaderboard (load-test accounts are never ranked) |
 
-Each service's Job uses its own accounts (`load-71` … `load-88`), so Jobs running at the same time never meet in the
-book. A failing smoke test fails the sync: Argo CD shows the sync as failed and retries it (up to 5 times), and the
+Each service's Job uses its own accounts (`load-71` … `load-88`) and, from its account number, its own ticker, so at
+most two Jobs share a book. They can still meet: a book matches by price and time, not by account, and when Argo CD
+syncs several services at once (a fresh environment, or CI bumping several tags in one push) their Jobs run
+together. CI's first full run showed it: nine Jobs on one ticker took each other's fills and left orders that closed
+the gap. So an attempt whose two orders do not both fill within 10 s cancels what is still open, waits until both
+have finished, and tries again after a random 1–5 s pause (up to 5 attempts). The check stays exact anyway: an
+account's cash moves only with its own orders, so each side must settle by its own fill price. Nine trade tests at
+once against the laptop's staging, three rounds: 27 of 27 passed (in round 1 two Jobs met on ASTRYX, withdrew and
+passed on the next attempt); nine place-and-cancel tests at once against prod: 9 of 9. A failing smoke test fails
+the sync: Argo CD shows the sync as failed and retries it (up to 5 times), and the
 Job's log stays until the next sync of that service. Only a service that actually syncs runs its test; a commit that
 does not change a service's objects does not. `make k8s-up`, which has no Argo CD, turns the Job off. Measured on the laptop
 (2026-11-24): after a sync of api-gateway in both environments, staging's trade passed in 10 s and prod's
@@ -525,7 +533,7 @@ controller and the ingress. It also lowers the **CPU requests** (`deploy/profile
 2 CPUs. Images, limits and settings are staging's. It tests the plumbing, not performance; the demo profile stays
 the full system (the owner's decision, 2026-11-23). Measured: RESULT_CI_MEASURED
 
-Its first run found two faults, both fixed:
+Its first runs found three faults, all fixed:
 
 - **"Synced and Healthy" came before the smoke tests had finished.** An Application already reports Synced and
   Healthy while its PostSync Job runs, so the check (and `make k8s-up`'s wait) now also waits while a sync is
@@ -535,6 +543,8 @@ Its first run found two faults, both fixed:
   lets it go. Terraform uninstalled Argo CD 6 s after the ApplicationSets, so nothing was left to clear the
   finalizers. The `argo-cd` module now has a destroy-time step between the two (`k8s.py wait-argo-gone`) that waits
   until every Application is gone while Argo CD still runs.
+- **The smoke tests of services synced together took each other's fills** (all nine traded CALVERA); see "PostSync
+  smoke tests" above for the retry that replaced the wrong "never meet in the book" assumption.
 
 ### GitOps as built (Phase 6)
 
