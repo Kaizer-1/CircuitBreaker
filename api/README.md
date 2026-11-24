@@ -202,6 +202,7 @@ memory of one hour"), so Q-15/Q-16 gain `forget_before`, each `closed` order gai
 rule covers both (matching-engine spec 1.3.0; market-data spec 1.1.2 describes its hash accordingly).
 Phase 7 (chaos): order-service's concurrency limit, documented since Phase 0, was built: `503 OVERLOADED` with
 `Retry-After: 1` beyond 50 requests per pod (order-service spec 1.2.1).
+market-data's A-13 now gives back the leaked memory, so a chaos reset needs no restart (market-data spec 1.2.1).
 
 ## Error code catalog
 

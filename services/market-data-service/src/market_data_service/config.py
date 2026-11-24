@@ -30,3 +30,7 @@ class Settings(BaseServiceSettings):
     ws_ping_seconds: float = 15.0  # api/README.md heartbeat
     ws_pong_timeout_seconds: float = 45.0
     start_consumers: bool = True  # False in unit tests: no Cassandra or Kafka at start-up
+
+    # A-12/A-13, chaos-service's memory-leak hook: on in staging and the demo prod only; off (404)
+    # in any real deployment (chaos scenarios section 3.2).
+    chaos_hooks_enabled: bool = False

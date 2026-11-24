@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: market-data-service API
-  version: 1.2.0
+  version: 1.2.1
   summary: Instruments, candles, order-book depth, trades and time travel.
   description: |
     Owned by the **Market Insights Team** (MD Asif Ali). A CQRS read side: builds its models from `matching.v1`
@@ -323,8 +323,10 @@ paths:
       summary: Inject a fault (chaos hook)
       x-seeds-id: A-12
       description: |
-        **A-12** — Switch on a fault inside this process. Only `MEMORY_LEAK` is supported. Only available when
-        `CHAOS_HOOKS_ENABLED=true`; only chaos-service may call it (network policy).
+        **A-12** — Switch on a fault inside this process. Only `MEMORY_LEAK` is supported: every second the process
+        keeps another `rate_mb_per_minute / 60` MiB (a cache that never evicts), so memory climbs in a straight line
+        toward the pod's limit. Only available when `CHAOS_HOOKS_ENABLED=true` (otherwise 404); only chaos-service
+        may call it (network policy).
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
       requestBody:
@@ -368,7 +370,7 @@ paths:
       operationId: clearFault
       summary: Clear the active fault (chaos hook)
       x-seeds-id: A-13
-      description: '**A-13** — Switch off the active fault. Memory already leaked is only freed by a restart.'
+      description: '**A-13** — Switch off the active fault and give back the memory it held, so the service is back to normal without a restart.'
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
       responses:
