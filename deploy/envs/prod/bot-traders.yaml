@@ -3,4 +3,5 @@
 # make k8s-up (developing, without Argo CD) deploys its own build's tag instead.
 bot-traders:
   image:
-    tag: "6e58e94ff899"
+    registry: ghcr.io/kaizer-1
+    tag: "a3e1a35f85c2"
