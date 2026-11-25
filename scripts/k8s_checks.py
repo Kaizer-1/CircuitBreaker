@@ -1753,9 +1753,8 @@ def memory_mib(env: str) -> float:
 
 
 def restart_cures_the_leak(env: str, watch: float = 120) -> bool:
-    """The agent's fix, by hand: restart market-data, then memory must stay flat (the leak lived
-    only in the old process) and the hook must have nothing to clear."""
-    kubectl("rollout", "restart", "-n", env, "deployment/market-data-service")
+    """After the agent's restart (the fix step): memory must stay flat (the leak lived only in the
+    old process)."""
     kubectl("rollout", "status", "-n", env, "deployment/market-data-service", "--timeout=240s")
     time.sleep(45)  # the old pod gone from the metrics (10 s scrapes, 30 s windows)
     samples = []
@@ -1769,6 +1768,39 @@ def restart_cures_the_leak(env: str, watch: float = 120) -> bool:
         f"after the restart market-data stays flat for {watch:.0f} s: {min(samples):.0f} to"
         f" {max(samples):.0f} MiB (the leak lived only in the old process)",
     )
+
+
+# What the SRE agent will do for each scenario (chaos scenarios section 2), applied by hand the
+# moment the alert fires, so "click -> recovered" measures the demo's timeline minus the agent's own
+# decision time (Phase 7b adds that: detect <= 10 s, mitigate <= 30 s). The database fault has no
+# agent fix (it declines); a person fixes it, here with the presenter's reset.
+AGENT_FIX = {
+    "bad-deploy": "roll order-service back (kubectl rollout undo, what rollback_deployment does)",
+    "leak": "restart market-data-service (what restart_deployment does)",
+    "panic": "scale order-service 2 -> 5 under the load (what scale_deployment does)",
+    "db": "the presenter's reset (the agent declines; a person fixes the database)",
+}
+
+
+def apply_fix(env: str, name: str) -> None:
+    if name == "bad-deploy":
+        kubectl("rollout", "undo", "-n", env, "deployment/order-service")
+    elif name == "leak":
+        kubectl("rollout", "restart", "-n", env, "deployment/market-data-service")
+    elif name == "panic":
+        kubectl("scale", "-n", env, "deployment/order-service", "--replicas=5")
+    else:
+        chaos_call(env, "POST", "/v1/chaos/reset")
+
+
+def wait_cleared(env: str, alert: str, timeout: float = 360) -> float | None:
+    """Seconds until the alert is no longer firing (its condition false at an evaluation)."""
+    started = time.monotonic()
+    while time.monotonic() - started < timeout:
+        if alert not in firing(env):
+            return time.monotonic() - started
+        time.sleep(2)
+    return None
 
 
 def condition_started(query: str) -> Callable[[], float | None]:
@@ -1860,8 +1892,6 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
             }
             if also:
                 print(f"    {DIM}also firing: {', '.join(also)}{RESET}")
-            if name == "leak" and alerts[0] in seen:
-                ok &= restart_cures_the_leak(env)
             if name == "db" and run == 1 and alerts[0] in seen:
                 # The point of the scenario: none of the agent's tools clears it.
                 kubectl("rollout", "restart", "-n", env, "deployment/portfolio-service")
@@ -1874,6 +1904,23 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
                     still,
                     "restarting portfolio-service does not clear it (the fault is in its database)",
                 )
+            if alerts[0] in seen:
+                fixed_at = time.monotonic()
+                apply_fix(env, name)
+                cleared = wait_cleared(env, alerts[0])
+                click = (fixed_at - started + cleared) if cleared is not None else None
+                ok &= verdict(
+                    cleared is not None,
+                    f"fix: {AGENT_FIX[name]} at {fixed_at - started:.0f} s; {alerts[0]} cleared"
+                    f" {cleared or 0:.0f} s later: click -> recovered {click or 0:.0f} s",
+                )
+                result |= {
+                    "fix_at_s": fixed_at - started,
+                    "cleared_after_fix_s": cleared,
+                    "click_to_recovered_s": click,
+                }
+                if name == "leak":
+                    ok &= restart_cures_the_leak(env)
             reset_at = time.monotonic()
             undone = chaos_call(env, "POST", "/v1/chaos/reset")
             after, detail = back_to_normal(env)
