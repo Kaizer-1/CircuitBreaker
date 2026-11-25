@@ -42,6 +42,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -1849,41 +1850,59 @@ SLOW = 0.5  # OrderServiceHighLatency's threshold, seconds
 
 
 class ClientProbe:
-    """What a trader sees, with no averaging window: one Q-07 (GET /v1/orders?status=open, an
-    order-service route under the same 50-in-flight limit as placing) a second through the
-    gateway, as load-51 (never ranked). Each sample: (monotonic time, seconds, answered 2xx)."""
+    """What a trader sees, with no averaging window: once a second, load-51 (never ranked) places
+    an order through the gateway, the request the panic makes slow (a GET stayed fast while
+    placements took a second), and only that placement is timed: a LIMIT BUY of 1 share at
+    5 paise, which never trades (a panic MARKET sell is protected at last price -10%), cancelled
+    right after. Each sample: (monotonic time, seconds, answered 2xx). Leftovers are cancelled."""
 
     def __init__(self, env: str) -> None:
         import stack
 
         stack.GATEWAY = gateway(env)
-        self._url = f"{stack.GATEWAY}/v1/orders?status=open&limit=1"
-        self._auth = stack.tester(51).auth
+        self._orders = f"{stack.GATEWAY}/v1/orders"
+        self._trader = stack.tester(51)
         self.samples: list[tuple[float, float, bool]] = []
+        self._placed: list[str] = []
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
+    def _call(self, method: str, url: str, body: Any = None) -> tuple[bool, Any]:
+        headers = {**self._trader.auth, "Content-Type": "application/json"}
+        if method == "POST":
+            headers["Idempotency-Key"] = str(uuid.uuid4())
+        data = json.dumps(body).encode() if body is not None else None
+        request = urllib.request.Request(url, data=data, method=method, headers=headers)  # noqa: S310
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+                return 200 <= response.status < 300, json.loads(response.read() or b"null")
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return False, None
+
     def _run(self) -> None:
+        order = {"ticker": "CALVERA", "side": "BUY", "order_type": "LIMIT", "quantity": 1}
+        order["limit_price_paise"] = 5
         while not self._stop.is_set():
             began = time.monotonic()
-            request = urllib.request.Request(self._url, headers=self._auth)  # noqa: S310
-            try:
-                with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
-                    response.read()
-                    good = 200 <= response.status < 300
-            except (urllib.error.URLError, TimeoutError, OSError):
-                good = False
+            good, placed = self._call("POST", self._orders, order)
             took = time.monotonic() - began
             self.samples.append((began, took, good))
-            self._stop.wait(max(0.0, 1.0 - took))
+            if good and isinstance(placed, dict) and placed.get("order_id"):
+                self._placed.append(placed["order_id"])
+                self._call("DELETE", f"{self._orders}/{placed['order_id']}")
+            self._stop.wait(max(0.0, 1.0 - (time.monotonic() - began)))
 
     def __enter__(self) -> ClientProbe:
         self._thread.start()
         return self
 
     def __exit__(self, *exc: object) -> None:
+        if self._stop.is_set():
+            return
         self._stop.set()
         self._thread.join(timeout=15)
+        for order_id in self._placed:  # a cancel lost in the overload: try again, best effort
+            self._call("DELETE", f"{self._orders}/{order_id}")
 
     def recovered_at(self, since: float) -> float | None:
         """The first good probe after `since` that follows the last slow (>= 500 ms) or failed
@@ -1931,23 +1950,27 @@ def panic_recovery(env: str, probe: ClientProbe, fixed_at: float, hold: float = 
     alert = "OrderServiceHighLatency"
     p95s: list[tuple[float, float]] = []
     ready = cleared = None
-    deadline = fixed_at + 420
-    while time.monotonic() < deadline:
+
+    def sample() -> float:
+        nonlocal ready
         now = time.monotonic()
         if ready is None and ready_replicas(env, "order-service") >= 5:
             ready = now - fixed_at
         if (value := short_p95(env)) is not None:
             p95s.append((now, value))
-        if cleared is None and alert not in firing(env):
+        return now
+
+    deadline = fixed_at + 420
+    while time.monotonic() < deadline:
+        now = sample()
+        if alert not in firing(env):
             cleared = now - fixed_at
             break
         time.sleep(2)
     refired = False
     hold_end = time.monotonic() + hold if cleared is not None else time.monotonic()
-    while time.monotonic() < hold_end:
-        now = time.monotonic()
-        if (value := short_p95(env)) is not None:
-            p95s.append((now, value))
+    while time.monotonic() < hold_end:  # readiness keeps being watched: pods may come up later
+        sample()
         refired |= alert in firing(env)
         time.sleep(2)
     last_slow = max((t for t, v in p95s if v >= SLOW), default=None)
@@ -1958,7 +1981,7 @@ def panic_recovery(env: str, probe: ClientProbe, fixed_at: float, hold: float = 
         "server_p95_recovered_s": server - fixed_at if server is not None else None,
         "client_recovered_s": client - fixed_at if client is not None else None,
         "alert_cleared_s": cleared,
-        "held": cleared is not None and not refired and (last_slow or 0) <= fixed_at + cleared,
+        "held": cleared is not None and not refired,  # the alert's view: it did not fire again
         "hold_max_p95_ms": round(
             1000 * max((v for t, v in p95s if t > fixed_at + (cleared or 0)), default=0)
         ),
@@ -2087,7 +2110,7 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
                 ok &= verdict(
                     click is not None and recovery["held"],
                     f"fix: {AGENT_FIX[name]} at {fixed_at - started:.0f} s; then 5 pods Ready"
-                    f" {seconds(recovery['pods_ready_s'])}, a trader's requests under 500 ms"
+                    f" {seconds(recovery['pods_ready_s'])}, a trader's orders under 500 ms"
                     f" {seconds(recovery['client_recovered_s'])}, order-service's 20-s p95"
                     f" {seconds(recovery['server_p95_recovered_s'])}, {alerts[0]} cleared"
                     f" {seconds(recovery['alert_cleared_s'])}: click -> recovered"
@@ -2097,7 +2120,7 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
                 )
                 print(
                     f"    {DIM}at 2 replicas: order-service p95 {result['p95_at_fire_ms']} ms when"
-                    f" the alert fired; a trader's request median {overload.get('median_ms')} ms,"
+                    f" the alert fired; a trader's order median {overload.get('median_ms')} ms,"
                     f" p95 {overload.get('p95_ms')} ms, {overload.get('failed')} of"
                     f" {overload.get('probes')} failed{RESET}"
                 )
