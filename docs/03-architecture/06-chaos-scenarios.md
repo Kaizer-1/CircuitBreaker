@@ -215,12 +215,32 @@ the gateway every second, no averaging window) and when the alert cleared:
   it stays.
 - **Real recovery took 20–24 s in 3 runs and 76–106 s in 2.** In those 2, all pods were Ready after 35–41 s; our
   explanation, not yet proven, is the requests already queued when the scale happened.
-- **A new pod is held out of service for 20–50 s by its readiness.** It takes over a `matching.v1` partition with
-  the backlog the overload built, and is Ready only once it has caught up (coding standards §7), although
-  order-service's answers to orders do not depend on its own consumer. Recorded from every new pod's `/readyz`: the
-  consumer was the only check failing.
-- **The measured bound, documented as it is** (owner's decision: no tuning toward 60 s): **click → recovered
-  90–110 s, at worst 170 s**. Recovery held for 60 s at 5 replicas in every run.
+- **A new pod was held out of service for 20–50 s by its readiness.** It takes over a `matching.v1` partition with
+  the backlog the overload built, and was Ready only once it had caught up, although order-service's answers do not
+  depend on its own consumer (recorded from every new pod's `/readyz`: the consumer was the only check failing).
+- **The measured bound at first** (2026-11-25): **click → recovered 90–110 s, at worst 170 s**. Recovery held for
+  60 s at 5 replicas in every run.
+
+**Two changes after measuring (2026-11-26).** (1) order-service and portfolio-service are ready once they can answer
+correctly, without waiting for their consumer ([coding standards §7](../05-coding-standards.md#7-standard-operational-endpoints),
+amended). That alone made recovery *slower*: the new pods were ready in 7 s but got almost no orders, because a
+Kubernetes Service balances connections, not requests, and the gateway's busy keep-alive connections stayed with the
+old pods. (2) So a request turned away with `503 OVERLOADED` now also closes its connection, and the gateway's next one
+may land on a new pod ([deployment, load balancing per
+connection](07-deployment-and-environments.md#load-balancing-per-connection)). 5 runs each at 110 requests/s:
+
+| After the scale from 2 to 5 | Waits for the consumer | Ready at once | **Ready at once + close on overload** |
+|---|---|---|---|
+| All 5 pods Ready | 11–61 s | 4–7 s | **7–9 s** |
+| Orders on the 3 new pods at +60 s (a fair share is 60%) | 23–46% | 7–38% | **16–45%** (median 38%) |
+| A trader's orders under 500 ms again | 9–48 s | 0–232 s | **1–120 s** (median 7 s) |
+| **Click → recovered** | 77–122 s (median 90) | 83–235 s (median 132) | **69–182 s (median 81)** |
+
+The overload itself is unchanged: the alert fired 38–44 s after the click, the old pods' p95 was about 2.3 s and
+10–28% of their orders got a 5xx (without the change: 42–48 s, 2.1 s, 4–22%). One run in five still recovered slowly
+(182 s; its new pods got 9–27% of the orders): only turned-away requests reconnect, so moving the load is likely, not
+certain. Two of the five runs were noisy (the Mac's load reached 18–22). **The measured bound for the demo:
+click → recovered 69–113 s in 4 runs of 5, at worst 182 s.**
 
 **How the panic is triggered (Phase 7, [ADR-0020](../adr/0020-chaos-triggers-through-each-targets-own-hook.md)).**
 chaos-service calls bot-traders' internal hook A-23 (`{"fault": "PANIC_SELL", "requests_per_second": 110,
@@ -318,7 +338,7 @@ order-service replicas and every Argo CD Application `Synced`. Mains power; the 
 |---|---|---|---|---|---|---|---|
 | Bad deploy | `OrderServiceHighErrorRate` | 49–59 s (22–26 s) | roll back | 28–36 s | **79–89 s** | 10–21 s | `GatewayHighErrorRate` (3 of 5) |
 | Memory leak, 80 MB/min | `MarketDataMemoryGrowth` | 266–275 s (30–32 s) | restart | 16–18 s | **286–294 s** | already normal | none |
-| Panic sell, 110 req/s | `OrderServiceHighLatency` | 40–62 s (30–32 s) | scale 2 → 5 | 47–48 s; twice 98–128 s | **90–110 s; twice 162–170 s** | 0–83 s | `OrderServiceHighErrorRate` + `GatewayHighErrorRate` (`OVERLOADED`, 3 of 5) |
+| Panic sell, 110 req/s | `OrderServiceHighLatency` | 40–62 s (30–32 s) | scale 2 → 5 | 47–48 s; twice 98–128 s | **90–110 s; twice 162–170 s** (since 2026-11-26: 69–113 s in 4 of 5, once 182 s; §3.3) | 0–83 s | `OrderServiceHighErrorRate` + `GatewayHighErrorRate` (`OVERLOADED`, 3 of 5) |
 | Portfolio database degraded | `OrderServiceCircuitOpen` | 8–10 s (2 s) | none: the presenter's reset | 28–58 s | **38–70 s** (100 s with the restart test) | already normal | none |
 
 - **`OrderServiceCircuitOpen` is information, not a call to act.** An open breaker means portfolio-service is failing
