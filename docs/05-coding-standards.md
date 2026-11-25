@@ -211,14 +211,15 @@ order statuses lagged for about 20 s. Measuring the traffic spike in Phase 7 sho
 order-service pod takes over a `matching.v1` partition with the backlog the overload built and stayed out of service
 for 20–50 s, although none of its answers depend on its own consumer (orders, their status, idempotency keys and the
 outbox are all in Cassandra, shared by every replica). Holding it back does not make statuses fresher either: other
-pods serve the same data. So readiness means **"this pod can answer requests correctly"**, not "its consumer has
-joined":
+pods serve the same data. portfolio-service has the same shape (Postgres). So readiness means **"this pod can answer
+requests correctly"**, not "its consumer has joined":
 
 | Service | Waits for its consumer? | Why |
 |---|---|---|
 | order-service | **No** (since 2026-11-25): ready once its store is migrated and its publisher connected | Every answer comes from Cassandra |
+| portfolio-service | **No** (since 2026-11-25): ready once its database is migrated and seeded and Q-10's change listener runs | Every answer comes from Postgres; the listener, not the consumer, feeds the live WebSocket |
 | matching-engine | Yes | It answers from the in-memory order book its consumer builds |
-| portfolio-service, chaos-service | Yes, unchanged for now | Same shape as order-service; changed only if needed |
+| chaos-service | Yes, unchanged | One replica (`Recreate`), never scaled; its answers come from its own memory |
 
 A consumer's health stays visible where it belongs: `consumer_lag_messages` and the `ConsumerLagHigh` alert (which also
 reads the broker's own lag for the group, so a consumer that never started still shows).
@@ -328,10 +329,11 @@ if you enable the optional module. `make doctor` checks all of this.
 ## Viva Notes
 
 **Q: Why doesn't order-service's readiness wait for its Kafka consumer?**
-A: Readiness answers "can this pod serve requests correctly?". order-service reads and writes orders in Cassandra,
-shared by every replica, so a pod whose consumer is still catching up gives the same answers as any other. Waiting kept
-new pods out of service for 20–50 s right when a traffic spike needed them; the consumer's lag is still watched, by a
-metric and an alert. The matching engine still waits: its answers come from the book its consumer builds in memory.
+A: Readiness answers "can this pod serve requests correctly?". order-service reads and writes orders in Cassandra
+(portfolio-service: Postgres), shared by every replica, so a pod whose consumer is still catching up gives the same
+answers as any other. Waiting kept new pods out of service for 20–50 s right when a traffic spike needed them; the
+consumer's lag is still watched, by a metric and an alert. The matching engine still waits: its answers come from the
+book its consumer builds in memory.
 
 **Q: Why pin base images by digest rather than by tag?**
 A: A tag is a movable label: `python:3.12-slim` today and next week can be different bytes. A digest is the hash of

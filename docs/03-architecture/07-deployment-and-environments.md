@@ -173,7 +173,7 @@ flowchart LR
 | Setting | Value | Why |
 |---|---|---|
 | Liveness probe | `GET /healthz` every 10 s, fail after 3 | Restart truly stuck processes. `/healthz` never checks dependencies, so a database outage cannot cause a restart loop. |
-| Readiness probe | `GET /readyz` every 5 s, fail after 3 | Only route traffic once the pod can answer correctly: its store and broker work, and its consumer has caught up only where an answer depends on it (not order-service; [coding standards §7](../05-coding-standards.md#7-standard-operational-endpoints)). |
+| Readiness probe | `GET /readyz` every 5 s, fail after 3 | Only route traffic once the pod can answer correctly: its store and broker work, and its consumer has caught up only where an answer depends on it (not order-service or portfolio-service; [coding standards §7](../05-coding-standards.md#7-standard-operational-endpoints)). |
 | Startup probe | `GET /healthz` every 2 s, up to 60 s (Cassandra: TCP 9042, up to 5 min) | Liveness waits until a slow start is over. |
 | Rolling update | `maxUnavailable: 0`, `maxSurge: 1`; **Recreate** for matching-engine, bot-traders, sre-agent | No downtime; the three single writers must never run twice, even for seconds. |
 | `preStop` | sleep 5 s | A stopping pod keeps serving until Traefik and the other services drop it: 326 requests during a rolling restart of web and the gateway, none failed. |

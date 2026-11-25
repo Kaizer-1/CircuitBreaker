@@ -36,7 +36,6 @@ from portfolio_service.runtime.kafka import (
     Delivery,
     EventConsumer,
     EventPublisher,
-    consumer_check,
 )
 from portfolio_service.runtime.metrics import Metrics, metrics_router, watch_event_loop
 from portfolio_service.runtime.middleware import ObservabilityMiddleware
@@ -63,6 +62,23 @@ def default_checks(settings: Settings) -> list[ReadinessCheck]:
             settings.postgres_password.get_secret_value(),
         ),
     ]
+
+
+def started_check(app: FastAPI) -> ReadinessCheck:
+    """Ready once the database is migrated and seeded and Q-10's change listener runs (live
+    portfolio pushes start with it): until then the routes answer 503 or a WebSocket would
+    get no updates. Not the matching.v1 consumer: no answer to a request depends on this
+    pod's consumer (accounts, reservations, holdings, last prices and the leaderboard are
+    all in Postgres, shared by every replica), so a new replica takes requests while its
+    consumer joins the group and catches up. The consumer's health shows in
+    consumer_lag_messages and ConsumerLagHigh instead (coding standards section 7, amended
+    2026-11-25)."""
+
+    async def probe() -> None:
+        if not app.state.started:
+            raise RuntimeError("starting: the database and the live updates are not ready yet")
+
+    return ReadinessCheck("started", probe)
 
 
 def transient_errors() -> tuple[type[BaseException], ...]:
@@ -167,6 +183,7 @@ async def run_service(app: FastAPI, settings: Settings, metrics: Metrics) -> Non
         ]
         if settings.chaos_hooks_enabled:
             background.append(asyncio.create_task(degraded.watch()))
+        app.state.started = True  # Q-10's change listener runs: every answer is now complete
         try:
             await consumer.run()
         finally:
@@ -215,8 +232,9 @@ def create_app(
     app.state.hub = PortfolioHub(service.portfolio) if service is not None else None
     app.state.consumer = None
     app.state.database_degraded = None
+    app.state.started = service is not None  # a service given by a test is started already
     if readiness_checks is None:
-        checks.append(consumer_check(lambda: app.state.consumer))
+        checks.append(started_check(app))
 
     app.add_middleware(
         ObservabilityMiddleware,
