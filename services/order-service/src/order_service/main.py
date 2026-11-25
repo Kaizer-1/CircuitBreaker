@@ -35,7 +35,6 @@ from order_service.runtime.kafka import (
     Delivery,
     EventConsumer,
     EventPublisher,
-    consumer_check,
 )
 from order_service.runtime.metrics import Metrics, metrics_router, watch_event_loop
 from order_service.runtime.middleware import ObservabilityMiddleware
@@ -62,6 +61,21 @@ def default_checks(settings: Settings) -> list[ReadinessCheck]:
             settings.cassandra_password.get_secret_value(),
         ),
     ]
+
+
+def started_check(app: FastAPI) -> ReadinessCheck:
+    """Ready once the order store is migrated and the publisher connected: until then every order
+    route answers 503. Not the matching.v1 consumer: no answer to a request depends on this pod's
+    consumer (orders, their status, idempotency keys and the outbox are all in Cassandra, shared by
+    every replica), so a new replica takes requests while its consumer joins the group and catches
+    up. The consumer's health shows in consumer_lag_messages and ConsumerLagHigh instead (coding
+    standards section 7, amended 2026-11-25)."""
+
+    async def probe() -> None:
+        if app.state.orders is None:
+            raise RuntimeError("starting: the order store and the publisher are not ready yet")
+
+    return ReadinessCheck("started", probe)
 
 
 def transient_errors() -> tuple[type[BaseException], ...]:
@@ -206,7 +220,7 @@ def create_app(
     if settings.fault_profile:
         logger.info("fault profile %s active (chaos)", settings.fault_profile)
     if readiness_checks is None:
-        checks.append(consumer_check(lambda: app.state.consumer))
+        checks.append(started_check(app))
 
     app.add_middleware(
         ObservabilityMiddleware,

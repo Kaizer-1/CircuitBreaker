@@ -176,7 +176,10 @@ everything and every request gets slow; with it the requests it takes stay fast 
 traffic spike, [chaos scenarios §3.3](../../docs/03-architecture/06-chaos-scenarios.md#33--traffic-spike-traffic_spike)).
 It is checked after routing, so a turned-away request is counted under its route; `/healthz`, `/readyz` and
 `/metrics` are never turned away. `http_problems_total{code="OVERLOADED"}` counts them, which is how the SRE agent
-tells overload from a bad release (`INTERNAL_ERROR`).
+tells overload from a bad release (`INTERNAL_ERROR`). A turned-away request also closes its connection
+(`Connection: close`): a Kubernetes Service balances connections, not requests, so the gateway's busy keep-alive
+connections would otherwise stay with the overloaded pods and pods added by a scale-up would get almost nothing
+([deployment doc](../../docs/03-architecture/07-deployment-and-environments.md#load-balancing-per-connection)).
 
 **Chaos target** for `BAD_DEPLOY` and `TRAFFIC_SPIKE`. The bad deploy is chaos-service patching this Deployment with
 `FAULT_PROFILE=bad-release` (and `FAULT_ERROR_RATE`, default 0.4): a new rollout revision whose pods fail that share
@@ -202,7 +205,11 @@ curl localhost:8001/readyz         # or `make up` from the repo root to run its 
 
 - Redpanda, and the topic(s) `orders.v1`, `matching.v1` must exist (the init job creates them)
 - Cassandra: logs in with its own role `order_service_role` and uses keyspace `order_service` only
-- `consumer`: group `order-service.matching.v1` has joined and read to the end of its partitions at least once
+- `started`: the order store is migrated and the publisher connected (until then every order route answers `503`)
+- **Not** its `matching.v1` consumer (since 2026-11-25): no answer depends on this pod's consumer, since everything it
+  reads is in Cassandra, shared by every replica, so a replica added under load takes requests at once while its
+  consumer joins and catches up. The consumer's lag shows in `consumer_lag_messages` and `ConsumerLagHigh`
+  ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
 ## Viva Notes
 

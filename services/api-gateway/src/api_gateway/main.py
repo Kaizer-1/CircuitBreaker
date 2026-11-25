@@ -66,6 +66,8 @@ def create_app(
     app.state.settings = settings
     app.state.metrics = metrics
     app.state.business_metrics = register_business_metrics(metrics.registry)
+    for upstream in settings.service_upstreams:  # from 0, so rate() sees the first connection
+        app.state.business_metrics.upstream_connections_opened.labels(upstream)
     app.state.sessions = Sessions(
         settings.jwt_secret.get_secret_value(), hours=settings.session_hours
     )

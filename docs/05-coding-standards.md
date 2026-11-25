@@ -202,8 +202,27 @@ Every service exposes these on port 8000 (not in the OpenAPI specs, not routed b
 | Endpoint | Purpose | Contract |
 |---|---|---|
 | `GET /healthz` | **Liveness**: process is alive | `200 {"status":"ok"}`; never checks dependencies (a DB outage must not cause restart loops) |
-| `GET /readyz` | **Readiness**: ready for traffic | `200` only if its own store and Redpanda are reachable and consumers are caught up; else `503` with details |
+| `GET /readyz` | **Readiness**: can this pod answer requests correctly now? | `200` only if its own store and Redpanda are reachable and the service has started; consumers only where an answer depends on this pod's own consumer (see below); else `503` with details |
 | `GET /metrics` | Prometheus metrics | Standard metrics below + service-specific ones |
+
+**Readiness and consumers (amended 2026-11-25, owner's decision).** Phase 2 made readiness wait until a service's
+consumers had caught up once: a restarted single-replica order-service looked ready while its consumer rejoined, and
+order statuses lagged for about 20 s. Measuring the traffic spike in Phase 7 showed the cost: a scaled-up
+order-service pod takes over a `matching.v1` partition with the backlog the overload built and stayed out of service
+for 20–50 s, although none of its answers depend on its own consumer (orders, their status, idempotency keys and the
+outbox are all in Cassandra, shared by every replica). Holding it back does not make statuses fresher either: other
+pods serve the same data. portfolio-service has the same shape (Postgres). So readiness means **"this pod can answer
+requests correctly"**, not "its consumer has joined":
+
+| Service | Waits for its consumer? | Why |
+|---|---|---|
+| order-service | **No** (since 2026-11-25): ready once its store is migrated and its publisher connected | Every answer comes from Cassandra |
+| portfolio-service | **No** (since 2026-11-25): ready once its database is migrated and seeded and Q-10's change listener runs | Every answer comes from Postgres; the listener, not the consumer, feeds the live WebSocket |
+| matching-engine | Yes | It answers from the in-memory order book its consumer builds |
+| chaos-service | Yes, unchanged | One replica (`Recreate`), never scaled; its answers come from its own memory |
+
+A consumer's health stays visible where it belongs: `consumer_lag_messages` and the `ConsumerLagHigh` alert (which also
+reads the broker's own lag for the group, so a consumer that never started still shows).
 
 The **api-gateway** has one more operational endpoint, `GET /v1/system/status`. It calls every service's `/readyz`
 and returns one combined report (`status`: `healthy` | `unhealthy`; `services`; `dependencies` grouped from the services'
@@ -308,6 +327,13 @@ if you enable the optional module. `make doctor` checks all of this.
 | `make promote s=<service>` | Open a PR copying the service's staging image tag to `deploy/envs/prod/` |
 
 ## Viva Notes
+
+**Q: Why doesn't order-service's readiness wait for its Kafka consumer?**
+A: Readiness answers "can this pod serve requests correctly?". order-service reads and writes orders in Cassandra
+(portfolio-service: Postgres), shared by every replica, so a pod whose consumer is still catching up gives the same
+answers as any other. Waiting kept new pods out of service for 20–50 s right when a traffic spike needed them; the
+consumer's lag is still watched, by a metric and an alert. The matching engine still waits: its answers come from the
+book its consumer builds in memory.
 
 **Q: Why pin base images by digest rather than by tag?**
 A: A tag is a movable label: `python:3.12-slim` today and next week can be different bytes. A digest is the hash of

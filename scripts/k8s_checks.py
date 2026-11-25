@@ -2024,6 +2024,59 @@ def panic_recovery(env: str, probe: ClientProbe, fixed_at: float, hold: float = 
     }
 
 
+def instant(query: str, at: float) -> dict[str, float]:
+    """A PromQL result at a past moment, by pod (or "all"). Instant queries: a range query over
+    these series returned gaps (2026-11-26)."""
+    return {
+        r["metric"].get("pod", "all"): float(r["value"][1])
+        for r in promql(query, at)
+        if r["value"][1] not in ("NaN", "+Inf")
+    }
+
+
+def traffic_after_scale(env: str, scaled_at: float) -> dict[str, Any]:
+    """Where the orders went after the scale to 5 (a Service balances connections, not requests:
+    deployment doc), how the 2 old pods fared during the overload just before it, and how often
+    the gateway opened a new connection to order-service. `scaled_at` is wall-clock time."""
+    orders = f'namespace="{env}",service="order-service",route="/v1/orders"'
+    per_pod = f"sum by (pod) (rate(http_requests_total{{{orders}}}[20s]))"
+    reconnects = (
+        "sum(rate(gateway_upstream_connections_opened_total"
+        f'{{namespace="{env}",upstream="order-service"}}[30s]))'
+    )
+    old = set(instant(per_pod, scaled_at - 5))
+    shares: dict[str, float] = {}
+    reconnecting: dict[str, float] = {}
+    for after in range(20, 181, 20):
+        at = scaled_at + after
+        if at > time.time() - 15:  # not scraped yet
+            break
+        rates = instant(per_pod, at)
+        total = sum(rates.values())
+        if total:
+            shares[str(after)] = round(sum(v for p, v in rates.items() if p not in old) / total, 3)
+        if (value := instant(reconnects, at).get("all")) is not None:  # None: no counter yet
+            reconnecting[str(after)] = round(value, 1)
+    p95 = instant(
+        "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket"
+        f"{{{orders}}}[30s])))",
+        scaled_at,
+    ).get("all")
+    errors = instant(
+        f'sum(rate(http_requests_total{{{orders},status=~"5.."}}[30s]))'
+        f" / sum(rate(http_requests_total{{{orders}}}[30s]))",
+        scaled_at,
+    ).get("all")
+    return {
+        "old_pods": sorted(old),
+        "new_pods_share": shares,
+        "overload_p95_ms": round(1000 * p95) if p95 is not None else None,
+        "overload_error_ratio": round(errors, 3) if errors is not None else None,
+        "reconnects_per_s_overload": instant(reconnects, scaled_at).get("all"),
+        "reconnects_per_s_after": reconnecting,
+    }
+
+
 def seconds(value: float | None) -> str:
     return "never" if value is None else f"{value:.0f} s"
 
@@ -2160,11 +2213,22 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
                     f" p95 {overload.get('p95_ms')} ms, {overload.get('failed')} of"
                     f" {overload.get('probes')} failed{RESET}"
                 )
+                spread = traffic_after_scale(env, began + (fixed_at - started))
+                share = " ".join(f"+{t}s {v:.0%}" for t, v in spread["new_pods_share"].items())
+                print(
+                    f"    {DIM}the 2 old pods during the overload: p95"
+                    f" {spread['overload_p95_ms']} ms, errors {spread['overload_error_ratio']};"
+                    f" gateway reconnects/s"
+                    f" {spread['reconnects_per_s_overload']} (after the scale:"
+                    f" {list(spread['reconnects_per_s_after'].values())}); orders on the new pods:"
+                    f" {share}{RESET}"
+                )
                 result |= {
                     "fix_at_s": fixed_at - started,
                     "click_to_recovered_s": click,
                     "overload_probe": overload,
                     **recovery,
+                    **spread,
                 }
             elif alerts[0] in seen:
                 fixed_at = time.monotonic()
@@ -2217,6 +2281,7 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
                 )
             runs.append(result)
             out = ROOT / "build" / "chaos" / f"{args.label}.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(runs, indent=2))  # after every run: a stopped series keeps it
     return ok
 

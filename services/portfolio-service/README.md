@@ -142,7 +142,13 @@ curl localhost:8004/readyz         # or `make up` from the repo root to run its 
 
 - Redpanda, and the topic(s) `matching.v1` must exist (the init job creates them)
 - Postgres: logs in as `portfolio_service` and uses database `portfolio`
-- `consumer`: group `portfolio-service.matching.v1` has joined and read to the end of its partitions at least once
+- `started`: the database is migrated and seeded and Q-10's change listener runs (until then a route answers `503`
+  and a WebSocket would get no live updates)
+- **Not** its `matching.v1` consumer (since 2026-11-25): no answer depends on this pod's consumer, since accounts,
+  reservations, holdings, last prices and the leaderboard are all in Postgres, shared by every replica, so a replica
+  added under load takes requests at once while its consumer joins and catches up. The consumer's lag shows in
+  `consumer_lag_messages` and `ConsumerLagHigh`; the orphan sweeper still works only on partitions this replica owns
+  and has read to the end ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
 ## Viva Notes
 

@@ -173,7 +173,7 @@ flowchart LR
 | Setting | Value | Why |
 |---|---|---|
 | Liveness probe | `GET /healthz` every 10 s, fail after 3 | Restart truly stuck processes. `/healthz` never checks dependencies, so a database outage cannot cause a restart loop. |
-| Readiness probe | `GET /readyz` every 5 s, fail after 3 | Only route traffic once dependencies (store, broker, consumer caught up) work. |
+| Readiness probe | `GET /readyz` every 5 s, fail after 3 | Only route traffic once the pod can answer correctly: its store and broker work, and its consumer has caught up only where an answer depends on it (not order-service or portfolio-service; [coding standards §7](../05-coding-standards.md#7-standard-operational-endpoints)). |
 | Startup probe | `GET /healthz` every 2 s, up to 60 s (Cassandra: TCP 9042, up to 5 min) | Liveness waits until a slow start is over. |
 | Rolling update | `maxUnavailable: 0`, `maxSurge: 1`; **Recreate** for matching-engine, bot-traders, sre-agent | No downtime; the three single writers must never run twice, even for seconds. |
 | `preStop` | sleep 5 s | A stopping pod keeps serving until Traefik and the other services drop it: 326 requests during a rolling restart of web and the gateway, none failed. |
@@ -223,6 +223,45 @@ Four limits are deliberate, and are not "small for a laptop":
   after building snapshots and answering seeks. A snapshot answer (Q-15, up to 5 MB) is built at most twice at a
   time, to bound that extra. Before the one-hour memory,
   the engine kept every order ever seen and was OOM-killed at 256 MiB after about 600,000.
+
+### Load balancing per connection
+
+A Kubernetes Service spreads **connections**, not requests: when a client opens a TCP connection to the Service's
+address, kube-proxy picks one ready pod for it, and every request on that connection goes to that pod until it closes.
+api-gateway keeps a pool of keep-alive connections to each service (httpx, up to 100, an idle one closed after 2 s).
+Under steady load the connections are never idle, so they are never closed: they stay with the pods they were opened
+to. Measured in the traffic spike (2026-11-26): after scaling order-service from 2 to 5, the three new pods were ready
+within 7 s but got 2–13% of the orders for minutes (their fair share is 60%), while the two old pods stayed at their
+CPU limit with a p95 of about 2.2 s. They got load only when connections happened to be reopened, for example after a
+request timed out.
+
+**What we do:** order-service closes the connection of every request it turns away with `503 OVERLOADED`
+(`Connection: close`). The gateway opens a new connection for its next request, and kube-proxy may place it on any
+ready pod, so an overloaded pod sheds connections exactly while it is overloaded, and only then.
+`gateway_upstream_connections_opened_total{upstream}` counts the connections the gateway opens. Measured
+(2026-11-26, the panic sell at 110 requests/s, 5 runs, order-service ready at once in both columns):
+
+| After the scale from 2 to 5 | Keep-alive only | Close on overload |
+|---|---|---|
+| Orders on the 3 new pods, 60 s after the scale (a fair share is 60%) | 7–38% (median 10%) | 16–45% (median 38%) |
+| A trader's orders under 500 ms again | 0–232 s (median 54 s) | 1–120 s (median 7 s) |
+| Click → recovered | 83–235 s (median 132 s) | 69–182 s (median 81 s) |
+| The 2 old pods during the overload: p95, share of 5xx | 1.1–2.2 s, 4–22% | 1.0–2.3 s, 10–28% |
+| The gateway's new connections to order-service | not counted yet | 13–50 a second during the overload (quiet: 0.3) |
+
+The overload itself is no worse (the alert fired 38–44 s after the click, as before), and a new connection inside
+the node costs a TCP handshake. Moving the load is likely, not certain: only turned-away requests reconnect, and one
+run in five still recovered slowly (182 s, its new pods got 9–27%). Readiness that no longer waits for the consumer
+made it matter ([coding standards §7](../05-coding-standards.md#7-standard-operational-endpoints)): before, the old
+pods got slow enough while the new ones caught up that requests timed out and connections were reopened anyway.
+
+**Alternatives we did not take:**
+
+| Option | What it does | Why not here |
+|---|---|---|
+| A service mesh (Linkerd, Istio) | A proxy container beside every pod balances each **request** (layer 7) across the ready pods | A proxy's memory in each of 20-odd pods plus a control plane on one 16 GB laptop, and a new component to explain and operate: the platform-level answer for a real cluster |
+| The gateway balances itself | It reads the pods' addresses (a headless Service) and picks one per request | Re-implements what a mesh does, in our code |
+| Recycle the gateway's connections on a timer | Every connection is closed after N seconds or N requests | Costs reconnects when nothing is wrong; tuning N trades speed against waste |
 
 ### Cassandra's memory budget
 
@@ -764,6 +803,13 @@ Git. What we tested in staging is byte-for-byte what runs in prod.
 **Q: What is GitOps, and why Argo CD?**
 A: Git holds the desired state; a deployment server in the cluster pulls it in and reports drift. Argo CD is the
 textbook's GitOps deployment server (Ch. 7), and pulling works for a laptop cluster that GitHub cannot reach.
+
+**Q: You scaled order-service from 2 to 5 pods, but the new pods got almost no traffic. Why?**
+A: A Kubernetes Service balances connections, not requests. The gateway reuses keep-alive connections, and under load
+they never close, so they stay with the two old pods. Our fix is in the overloaded service: when it turns a request
+away (`503 OVERLOADED`) it also closes that connection, and the gateway's next connection may land on a new pod. The
+platform-level answer is a service mesh, which balances every request; we did not add one, for the memory and the
+extra moving parts on a single laptop.
 
 **Q: Why not HPA?**
 A: The HorizontalPodAutoscaler sees only CPU and memory. The SRE agent sees error rates, deploy history and business

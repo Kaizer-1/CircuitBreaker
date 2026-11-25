@@ -91,7 +91,10 @@ A-01 `POST /v1/sessions`, A-03 `POST /v1/bot-sessions`, A-04 `POST /v1/admin/ses
 
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
-**Business metrics:** `gateway_ws_connections{channel}` (WebSocket connections proxied right now).
+**Business metrics:** `gateway_ws_connections{channel}` (WebSocket connections proxied right now) and
+`gateway_upstream_connections_opened_total{upstream}` (TCP connections opened to each service: keep-alive reuses
+them, so this shows how often load can move to another pod;
+[deployment doc](../../docs/03-architecture/07-deployment-and-environments.md#load-balancing-per-connection)).
 
 ## Synchronous dependencies
 

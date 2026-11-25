@@ -2,10 +2,14 @@
 
 import asyncio
 import json
+import threading
+import time
 from typing import Any
 
 import httpx
 import pytest
+import uvicorn
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -50,6 +54,59 @@ async def test_beyond_the_limit_a_request_is_turned_away_at_once_but_probes_are_
     [counted] = [line for line in metrics.splitlines() if line.startswith("http_problems_total{")]
     assert 'code="OVERLOADED"' in counted and 'route="/v1/orders"' in counted
     assert counted.endswith(" 1.0")
+
+
+class _RealServer:
+    """The app behind a real uvicorn on a free local port: real TCP connections, as in a pod."""
+
+    def __init__(self, app: FastAPI) -> None:
+        config = uvicorn.Config(app, host="127.0.0.1", port=0, log_config=None)  # logging untouched
+        self.server = uvicorn.Server(config)
+        self.thread = threading.Thread(target=self.server.run, daemon=True)
+
+    def __enter__(self) -> str:
+        self.thread.start()
+        deadline = time.monotonic() + 10
+        while not self.server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        port = self.server.servers[0].sockets[0].getsockname()[1]
+        return f"http://127.0.0.1:{port}"
+
+    def __exit__(self, *exc: object) -> None:
+        self.server.should_exit = True
+        self.thread.join(timeout=10)
+
+
+async def test_a_turned_away_request_closes_its_connection_so_the_next_can_reach_another_pod(
+    settings: Settings,
+) -> None:
+    app = create_app(
+        settings.model_copy(update={"max_in_flight": 1}), readiness_checks=[], orders=World().orders
+    )
+    app.state.concurrency_limit.in_flight = 1  # full: every order request is turned away
+    opened = 0
+
+    async def trace(event: str, info: dict[str, Any]) -> None:
+        nonlocal opened
+        if event == "connection.connect_tcp.complete":
+            opened += 1
+
+    traced = {"trace": trace}
+    with _RealServer(app) as base:
+        async with httpx.AsyncClient(base_url=base) as client:
+            for _ in range(2):
+                assert (await client.get("/healthz", extensions=traced)).status_code == 200
+            assert opened == 1  # keep-alive as usual: both probes on one connection
+            for _ in range(2):
+                turned_away = await client.post(
+                    "/v1/orders", json=LIMIT_BUY, headers=ME, extensions=traced
+                )
+                assert turned_away.status_code == 503
+                assert turned_away.headers["connection"] == "close"
+            assert (await client.get("/healthz", extensions=traced)).status_code == 200
+    # The first refusal closed the probes' connection, the second its own: three in all. Behind a
+    # Kubernetes Service each new connection may land on another pod (deployment doc).
+    assert opened == 3
 
 
 def test_the_bad_release_fails_a_share_of_placements_with_an_unhandled_error(

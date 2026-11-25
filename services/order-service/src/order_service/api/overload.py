@@ -7,6 +7,13 @@ pods mean more capacity (chaos scenarios section 3.3).
 It is checked after routing (a route class on the API's router), so a turned-away request is
 counted under its route (`/v1/orders`) like the ones that got in. Probes and scrapes are on other
 routers and are never turned away: a busy pod must not look dead to Kubernetes.
+
+A turned-away request also closes its connection (`Connection: close`, 2026-11-26). A Kubernetes
+Service balances connections, not requests: the gateway's keep-alive connections, never idle under
+load, stay with the pods they were opened to, so pods added by a scale-up got almost no traffic
+(1-12 of ~110 requests a second each, measured). The gateway opens a new connection for its next
+request, and Kubernetes places it on any ready pod: an overloaded pod sheds connections exactly
+while it is overloaded (deployment doc, "Load balancing per connection").
 """
 
 from collections.abc import Callable, Coroutine
@@ -39,6 +46,7 @@ class LimitedRoute(APIRoute):
                     instance=request.url.path,
                 )
                 response.headers["Retry-After"] = "1"
+                response.headers["Connection"] = "close"  # reconnect: maybe to a less busy pod
                 return response
             limit.in_flight += 1
             try:
