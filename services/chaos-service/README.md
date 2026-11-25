@@ -69,7 +69,8 @@ bot-traders A-23/A-24 (`/internal/v1/faults`; only chaos-service may call them, 
 
 ## Scaling and operations
 
-**Exactly 1 replica** (experiments are in its memory). Never targets data stores: its Role cannot name a
+**Exactly 1 replica** (experiments are in its memory), deployed with `Recreate`: `incidents.v1` has one
+partition, so during a rolling update the new pod would get no partition and never become ready. Never targets data stores: its Role cannot name a
 StatefulSet, and the database fault is portfolio-service's own hook.
 
 ## Run and test it alone

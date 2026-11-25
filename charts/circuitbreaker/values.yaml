@@ -192,6 +192,10 @@ sre-agent:
 
 chaos-service:
   replicas: 1 # experiments live in its memory
+  # Recreate, not a rolling update: incidents.v1 has one partition, so a second pod beside the old one gets no
+  # partition, never counts as caught up and never becomes ready (found in Phase 7 staging: the rollout hung).
+  # Two copies would also split the experiments between their memories.
+  strategy: Recreate
   env:
     LOG_LEVEL: INFO
     KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
