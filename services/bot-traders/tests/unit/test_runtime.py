@@ -432,6 +432,55 @@ async def test_the_consumer_readiness_check_waits_until_it_has_caught_up(
     await consumer_check(lambda: consumer).probe()
 
 
+class _TopicPartition:
+    def __init__(self, topic: str, partition: int) -> None:
+        self.topic, self.partition = topic, partition
+
+
+class _Assigned:
+    """Just enough of aiokafka's consumer for the lag gauge: what is assigned and how far behind."""
+
+    def __init__(self) -> None:
+        self.behind: dict[int, int] = {}
+
+    def assignment(self) -> list[_TopicPartition]:
+        return [_TopicPartition("things.v1", p) for p in self.behind]
+
+    def highwater(self, tp: _TopicPartition) -> int:
+        return 1_000
+
+    async def position(self, tp: _TopicPartition) -> int:
+        return 1_000 - self.behind[tp.partition]
+
+
+async def test_the_lag_of_a_partition_that_moved_to_another_replica_is_no_longer_reported(
+    settings: Settings,
+) -> None:
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        return None
+
+    metrics = Metrics(settings.service_name)
+    consumer = _consumer(settings, handler, _Sink(), metrics)
+    assigned = _Assigned()
+    consumer._consumer = assigned
+
+    def reported(partition: int) -> float | None:
+        return metrics.registry.get_sample_value(
+            "consumer_lag_messages",
+            {"service": settings.service_name, "topic": "things.v1", "partition": str(partition)},
+        )
+
+    assigned.behind = {1: 7_878, 4: 3_017}  # a panic sell: far behind on both
+    await consumer._update_lag()
+    assert (reported(1), reported(4)) == (7_878, 3_017)
+
+    assigned.behind = {4: 0}  # scaled back down: partition 1 went to another replica
+    await consumer._update_lag()
+    assert reported(4) == 0
+    assert reported(1) is None  # not a stale 7,878 that keeps ConsumerLagHigh firing
+    assert consumer.lag() == {("things.v1", 4): 0}
+
+
 async def test_the_event_loop_watcher_records_how_late_the_loop_woke() -> None:
     import asyncio
     import time
