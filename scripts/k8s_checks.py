@@ -1844,6 +1844,131 @@ def condition_started(query: str) -> Callable[[], float | None]:
     return lambda: time.monotonic() if promql(query) else None
 
 
+NOISY_LOAD = 12.0  # a run whose host load went above this is marked noisy (owner, 2026-11-25)
+SLOW = 0.5  # OrderServiceHighLatency's threshold, seconds
+
+
+class ClientProbe:
+    """What a trader sees, with no averaging window: one Q-07 (GET /v1/orders?status=open, an
+    order-service route under the same 50-in-flight limit as placing) a second through the
+    gateway, as load-51 (never ranked). Each sample: (monotonic time, seconds, answered 2xx)."""
+
+    def __init__(self, env: str) -> None:
+        import stack
+
+        stack.GATEWAY = gateway(env)
+        self._url = f"{stack.GATEWAY}/v1/orders?status=open&limit=1"
+        self._auth = stack.tester(51).auth
+        self.samples: list[tuple[float, float, bool]] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            began = time.monotonic()
+            request = urllib.request.Request(self._url, headers=self._auth)  # noqa: S310
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+                    response.read()
+                    good = 200 <= response.status < 300
+            except (urllib.error.URLError, TimeoutError, OSError):
+                good = False
+            took = time.monotonic() - began
+            self.samples.append((began, took, good))
+            self._stop.wait(max(0.0, 1.0 - took))
+
+    def __enter__(self) -> ClientProbe:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=15)
+
+    def recovered_at(self, since: float) -> float | None:
+        """The first good probe after `since` that follows the last slow (>= 500 ms) or failed
+        probe with another one within 10 s of it: a lone slow probe (a GC pause) is not overload."""
+        probes = [(t, took < SLOW and good) for t, took, good in self.samples if t >= since]
+        bad = [t for t, fine in probes if not fine]
+        clustered = [t for t in bad if any(u != t and abs(u - t) < 10 for u in bad)]
+        last = max(clustered, default=None)
+        return next((t for t, fine in probes if fine and (last is None or t > last)), None)
+
+    def summary(self, start: float, end: float) -> dict[str, Any]:
+        """Median and p95 latency and the failed share of the probes in [start, end)."""
+        took = sorted(s for t, s, _ in self.samples if start <= t < end)
+        failed = sum(1 for t, _, good in self.samples if start <= t < end and not good)
+        if not took:
+            return {"probes": 0}
+        return {
+            "probes": len(took),
+            "median_ms": round(1000 * took[len(took) // 2]),
+            "p95_ms": round(1000 * took[min(len(took) - 1, int(len(took) * 0.95))]),
+            "failed": failed,
+        }
+
+
+def short_p95(env: str) -> float | None:
+    """order-service's p95 over the shortest window two 10-s scrapes allow (20 s), with the same
+    routes as OrderServiceHighLatency (30 s window, then `for: 30s`)."""
+    return scalar(
+        "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket"
+        f'{{namespace="{env}",service="order-service",route!~"/healthz|/readyz|/metrics"}}[20s])))'
+    )
+
+
+def ready_replicas(env: str, name: str) -> int:
+    out = kubectl(
+        "get", "deployment", name, "-n", env, "-o", "jsonpath={.status.readyReplicas}", check=False
+    )
+    return int(out.strip() or 0)
+
+
+def panic_recovery(env: str, probe: ClientProbe, fixed_at: float, hold: float = 60) -> dict:
+    """After scaling 2 -> 5: when the new pods were Ready, when latency really recovered (the
+    client probe, no window; order-service's 20-s p95) and when the alert cleared, then a hold at
+    5 replicas: recovery must stick. All times in seconds after the scale."""
+    alert = "OrderServiceHighLatency"
+    p95s: list[tuple[float, float]] = []
+    ready = cleared = None
+    deadline = fixed_at + 420
+    while time.monotonic() < deadline:
+        now = time.monotonic()
+        if ready is None and ready_replicas(env, "order-service") >= 5:
+            ready = now - fixed_at
+        if (value := short_p95(env)) is not None:
+            p95s.append((now, value))
+        if cleared is None and alert not in firing(env):
+            cleared = now - fixed_at
+            break
+        time.sleep(2)
+    refired = False
+    hold_end = time.monotonic() + hold if cleared is not None else time.monotonic()
+    while time.monotonic() < hold_end:
+        now = time.monotonic()
+        if (value := short_p95(env)) is not None:
+            p95s.append((now, value))
+        refired |= alert in firing(env)
+        time.sleep(2)
+    last_slow = max((t for t, v in p95s if v >= SLOW), default=None)
+    server = next((t for t, _ in p95s if last_slow is None or t > last_slow), None)
+    client = probe.recovered_at(fixed_at)
+    return {
+        "pods_ready_s": ready,
+        "server_p95_recovered_s": server - fixed_at if server is not None else None,
+        "client_recovered_s": client - fixed_at if client is not None else None,
+        "alert_cleared_s": cleared,
+        "held": cleared is not None and not refired and (last_slow or 0) <= fixed_at + cleared,
+        "hold_max_p95_ms": round(
+            1000 * max((v for t, v in p95s if t > fixed_at + (cleared or 0)), default=0)
+        ),
+    }
+
+
+def seconds(value: float | None) -> str:
+    return "never" if value is None else f"{value:.0f} s"
+
+
 def check_chaos(args: argparse.Namespace) -> bool:
     """Each Chaos Panel button, --runs times in a row: it makes its alert fire within its documented
     time, reset brings the exchange back to normal (chaos scenarios section 5; Phase 7a). No SRE
@@ -1908,10 +2033,16 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
             wait_quiet(env, WATCHED, timeout=300)
             require_mains_power(f"{scenario} run {run}")
             require_quiet_host(f"{scenario} run {run}")
-            params = {"rate_mb_per_minute": args.leak_rate} if name == "leak" else None
+            params = {
+                "leak": {"rate_mb_per_minute": args.leak_rate},
+                "panic": {"requests_per_second": args.panic_rate},
+            }.get(name)
             body: dict[str, Any] = {"scenario": scenario}
             if params:
                 body["parameters"] = params
+            if name == "panic":  # long enough that it never expires while recovery is measured
+                body["duration_seconds"] = 600
+            probe = ClientProbe(env).__enter__() if name == "panic" else None
             started = time.monotonic()
             began = time.time()
             experiment = chaos_call(env, "POST", "/v1/chaos/experiments", body)
@@ -1927,7 +2058,10 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
                 "fired_after_start_s": seen.get(alerts[0], (None, None))[0],
                 "fired_after_condition_s": seen.get(alerts[0], (None, None))[1],
                 "also_firing": also,
+                "parameters": experiment["parameters"],
             }
+            if name == "panic" and alerts[0] in seen:
+                result["p95_at_fire_ms"] = round(1000 * (short_p95(env) or 0))
             if also:
                 print(f"    {DIM}also firing: {', '.join(also)}{RESET}")
             if name == "db" and run == 1 and alerts[0] in seen:
@@ -1942,7 +2076,38 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
                     still,
                     "restarting portfolio-service does not clear it (the fault is in its database)",
                 )
-            if alerts[0] in seen:
+            if alerts[0] in seen and probe is not None:
+                fixed_at = time.monotonic()
+                overload = probe.summary(started + seen[alerts[0]][0] - 30, fixed_at)
+                apply_fix(env, name)
+                recovery = panic_recovery(env, probe, fixed_at)
+                probe.__exit__()
+                click = recovery["alert_cleared_s"]
+                click = fixed_at - started + click if click is not None else None
+                ok &= verdict(
+                    click is not None and recovery["held"],
+                    f"fix: {AGENT_FIX[name]} at {fixed_at - started:.0f} s; then 5 pods Ready"
+                    f" {seconds(recovery['pods_ready_s'])}, a trader's requests under 500 ms"
+                    f" {seconds(recovery['client_recovered_s'])}, order-service's 20-s p95"
+                    f" {seconds(recovery['server_p95_recovered_s'])}, {alerts[0]} cleared"
+                    f" {seconds(recovery['alert_cleared_s'])}: click -> recovered"
+                    f" {seconds(click)}; held 60 s at 5 replicas:"
+                    f" {'yes' if recovery['held'] else 'NO'} (max p95"
+                    f" {recovery['hold_max_p95_ms']} ms)",
+                )
+                print(
+                    f"    {DIM}at 2 replicas: order-service p95 {result['p95_at_fire_ms']} ms when"
+                    f" the alert fired; a trader's request median {overload.get('median_ms')} ms,"
+                    f" p95 {overload.get('p95_ms')} ms, {overload.get('failed')} of"
+                    f" {overload.get('probes')} failed{RESET}"
+                )
+                result |= {
+                    "fix_at_s": fixed_at - started,
+                    "click_to_recovered_s": click,
+                    "overload_probe": overload,
+                    **recovery,
+                }
+            elif alerts[0] in seen:
                 fixed_at = time.monotonic()
                 apply_fix(env, name)
                 cleared = wait_cleared(env, alerts[0])
@@ -1974,16 +2139,26 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
                 "whole_run_s": time.monotonic() - started,
                 "reset_after_s": reset_at - started,
             }
+            if probe is not None:
+                probe.__exit__()
             result |= host.summary(began)
+            result["noisy"] = result["host_load_max"] > NOISY_LOAD
             print(
                 f"    {DIM}host load median {result['host_load_median']}, max"
                 f" {result['host_load_max']}{RESET}"
+                + (
+                    f"  {RED}NOISY (host load over {NOISY_LOAD:.0f}){RESET}"
+                    if result["noisy"]
+                    else ""
+                )
             )
             if result["battery_samples"]:
                 sys.exit(
                     f"{RED}STOPPED{RESET}: the laptop went on battery during {scenario} run {run}."
                 )
             runs.append(result)
+            out = ROOT / "build" / "chaos" / f"{args.label}.json"
+            out.write_text(json.dumps(runs, indent=2))  # after every run: a stopped series keeps it
     return ok
 
 
@@ -2031,6 +2206,7 @@ def main() -> int:
     chaos.add_argument("--runs", type=int, default=5)
     chaos.add_argument("--only", nargs="+", default=list(CHAOS), choices=list(CHAOS))
     chaos.add_argument("--leak-rate", type=int, default=80, help="MB a minute")
+    chaos.add_argument("--panic-rate", type=int, default=110, help="requests a second")
     chaos.add_argument("--label", default="chaos", help="build/chaos/<label>.json")
     chaos.set_defaults(func=check_chaos)
     profile = sub.add_parser("profile")
