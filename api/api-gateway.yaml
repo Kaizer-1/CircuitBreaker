@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: CircuitBreaker public API (api-gateway)
-  version: 1.1.0
+  version: 1.2.0
   summary: The single public entry point used by the web app and the bots.
   description: |
     Owned by the **API Team** (MD Asif Ali) — the system's boundary API: consumers call it and never call
@@ -802,6 +802,27 @@ paths:
             application/problem+json:
               schema:
                 $ref: './shared/common.yaml#/components/schemas/Problem'
+  /v1/chaos/reset:
+    post:
+      tags: [Chaos]
+      operationId: resetChaos
+      summary: Reset all chaos
+      x-seeds-id: A-20
+      x-upstream: chaos-service
+      description: '**A-20** — Proxied to chaos-service. Role: admin. Ends every experiment and undoes every fault.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: What was undone, and what could not be.
+          content:
+            application/json:
+              schema:
+                $ref: './chaos-service.yaml#/components/schemas/ResetResult'
+        '401':
+          $ref: './shared/common.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
 components:
   securitySchemes:
     bearerAuth:
