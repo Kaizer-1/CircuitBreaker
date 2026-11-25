@@ -65,10 +65,9 @@ CATALOG: dict[str, dict[str, object]] = {
     "jwt-secret": {"value": random_value},
     "bot-secret": {"value": random_value},
     "admin-passcode": {"value": passcode},
-    # The cassandra image's built-in superuser. The init job logs in with it to create each
-    # service's role; changing it means ALTER ROLE on a running cluster, which nothing does yet
-    # (runbook's Later list), so it stays the image's default, sealed like the rest.
-    "cassandra-admin": {"password": lambda: "cassandra"},
+    # Cassandra's superuser. The init job logs in with it to create each service's role, and gives a
+    # cluster that still has the image's default password this one, once (ALTER ROLE; 2026-11-25).
+    "cassandra-admin": {"password": random_value},
     "postgres-admin": {"password": random_value},
     "order-service-db": {"password": random_value},
     "matching-engine-db": {"password": random_value},

@@ -276,7 +276,8 @@ DEV_SECRETS = {
     "jwt-secret": {"value": ("JWT_SECRET", "cb-dev-jwt-secret-for-local-compose-only")},
     "bot-secret": {"value": ("BOT_SECRET", "cb-dev-bot-secret")},
     "admin-passcode": {"value": ("ADMIN_PASSCODE", "cb-dev-admin-passcode")},
-    "cassandra-admin": {"password": ("CASSANDRA_ADMIN_PASSWORD", "cassandra")},
+    # Not the image's default (cassandra): on Kubernetes the init job replaces that (ALTER ROLE).
+    "cassandra-admin": {"password": ("CASSANDRA_ADMIN_PASSWORD", "cb_dev_cassandra_admin")},
     "postgres-admin": {"password": ("POSTGRES_ADMIN_PASSWORD", "postgres")},
     "order-service-db": {"password": ("ORDER_SERVICE_DB_PASSWORD", "cb_dev_order_service")},
     "matching-engine-db": {"password": ("MATCHING_ENGINE_DB_PASSWORD", "cb_dev_matching_engine")},
