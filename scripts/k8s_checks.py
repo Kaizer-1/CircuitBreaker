@@ -839,18 +839,12 @@ def check_alerts(args: argparse.Namespace) -> bool:
             "{0} MODIFY ON KEYSPACE order_service {1} order_service_role; "
             "{0} MODIFY ON TABLE order_service.orders_by_idempotency_key {1} order_service_role;"
         )
-        cqlsh = [
-            "exec",
-            "-n",
-            env,
-            "cassandra-0",
-            "--",
-            "cqlsh",
-            "-u",
-            "cassandra",
-            "-p",
-            "cassandra",
-        ]
+        import k8s
+
+        admin = k8s.secret_value(
+            env, "cassandra-admin", "password"
+        )  # the env's own, never the default
+        cqlsh = ["exec", "-n", env, "cassandra-0", "--", "cqlsh", "-u", "cassandra", "-p", admin]
         ok &= alert_case(
             env,
             "order-service cannot write new orders while the bots trade (still ready)",
@@ -1394,7 +1388,49 @@ def check_sealed(args: argparse.Namespace) -> bool:
         ok &= verdict(got is None, f"renamed after sealing: refused ({message})")
     finally:
         cleanup_sealed(env, *names)
-    return ok
+    return ok & cassandra_superuser(env)
+
+
+def cassandra_superuser(env: str) -> bool:
+    """The superuser's password is the sealed one; the image's default no longer logs in (the init
+    job changed it once with ALTER ROLE, 2026-11-25)."""
+    import k8s
+
+    def logs_in(password: str) -> bool:
+        cql = [
+            "cqlsh",
+            "-u",
+            "cassandra",
+            "-p",
+            password,
+            "-e",
+            "SELECT release_version FROM system.local",
+        ]
+        done = subprocess.run(  # noqa: S603 (fixed command)
+            [
+                "kubectl",
+                "--context",
+                "kind-circuitbreaker",
+                "exec",
+                "-n",
+                env,
+                "cassandra-0",
+                "--",
+                *cql,
+            ],
+            capture_output=True,
+            check=False,
+        )
+        return done.returncode == 0
+
+    sealed = k8s.secret_value(env, "cassandra-admin", "password")
+    ok = verdict(
+        sealed is not None and sealed != "cassandra" and logs_in(sealed),
+        "Cassandra's superuser logs in with the sealed password",
+    )
+    return ok & verdict(
+        not logs_in("cassandra"), "Cassandra refuses the image's default superuser password"
+    )
 
 
 def check_sealed_drill(args: argparse.Namespace) -> bool:

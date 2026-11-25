@@ -84,8 +84,12 @@ rotate="openrouter-api-key"` after editing the plaintext source).
   Both are git-ignored and must be kept off shared machines.
 - ❌ Rotating a value does not restart the pods that read it (environment variables are read at start): after the
   sync, restart them (`kubectl rollout restart`, which Argo CD ignores).
-- ❌ The Cassandra superuser stays the image's default `cassandra`/`cassandra` (sealed, but known): changing it needs
-  an `ALTER ROLE` step in the init job (runbook's Later list).
+- ✅ *Added 2026-11-25:* the Cassandra superuser's password is random and sealed like every other value. Until then
+  it was the image's default (`cassandra`/`cassandra`), sealed but known. The init job gives a cluster that still has
+  the default the Secret's password, once (`ALTER ROLE`), and Cassandra's readiness probe needs no password (it sends
+  a CQL `OPTIONS` request, allowed before login), so the Cassandra pod holds none and changing it never makes the
+  database unready. `make k8s-check c=sealed` proves the default is refused. A later change from one random value to
+  another follows the rotation steps: `ALTER ROLE` first, then re-seal.
 
 ## Viva Notes
 
@@ -107,6 +111,12 @@ from the plaintext source with the new key; without that too, every credential h
 A: Argo CD needs it to read Git, and the SealedSecrets come from Git through Argo CD: a chicken-and-egg problem. It
 is created by Terraform from a git-ignored variable, so it lives in Terraform's state, which is why that state is
 never committed.
+
+**Q: How was the Cassandra superuser's password changed on a running cluster without taking the database down?**
+A: In two parts. Cassandra's readiness probe stopped logging in at all: it asks the server which protocol options it
+supports, which needs no password, so the database pod no longer depends on the password. The init job (re-run by
+Argo CD because its script changed) waits until the Secret holds the new sealed value, logs in with the image's
+default once, runs `ALTER ROLE`, and from then on uses the new password. Re-running it changes nothing.
 
 **Q: Why not SOPS or Vault?**
 A: SOPS needs a plugin in Argo CD and the decryption key inside it; Vault (with External Secrets) is a production

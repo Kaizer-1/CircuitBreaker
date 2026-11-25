@@ -14,28 +14,29 @@ template: any change (script, image, settings) makes a new Job, and Helm removes
       containers:
         - name: init
           image: {{ .Values.image }}
-          command:
-            - bash
-            - -c
-            # Wait for CQL (Compose's depends_on: service_healthy), then create keyspaces and roles.
-            - until cqlsh cassandra -u "$CASSANDRA_ADMIN_USER" -p "$CASSANDRA_ADMIN_PASSWORD"
-              -e 'SELECT release_version FROM system.local' >/dev/null 2>&1; do sleep 5; done;
-              bash /init/init-keyspaces.sh
+          # Waits for CQL, gives a cluster that still has the image's default superuser password the Secret's (once),
+          # then creates keyspaces and roles (dev/cassandra/init-keyspaces.sh).
+          command: [bash, /init/init-keyspaces.sh]
           env:
             - {name: CASSANDRA_HOST, value: cassandra}
             - {name: CASSANDRA_ADMIN_USER, value: cassandra}
-            - name: CASSANDRA_ADMIN_PASSWORD
-              valueFrom: {secretKeyRef: {name: {{ .Values.global.secrets.cassandraAdmin }}, key: password}}
+            # A file, not an environment variable: a mounted Secret updates in place, so the job sees a new value
+            # that Argo CD syncs after it started.
+            - {name: CASSANDRA_ADMIN_PASSWORD_FILE, value: /etc/cassandra-admin/password}
+            - {name: ROTATE_DEFAULT_SUPERUSER, value: "true"}
             {{- range $ks, $secret := .Values.roles }}
             - name: PASSWORD_{{ $ks }}
               valueFrom: {secretKeyRef: {name: {{ $secret }}, key: password}}
             {{- end }}
           volumeMounts:
             - {name: scripts, mountPath: /init}
+            - {name: admin, mountPath: /etc/cassandra-admin, readOnly: true}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 1000m, memory: 256Mi}
       volumes:
         - name: scripts
           configMap: {name: cassandra-scripts}
+        - name: admin
+          secret: {secretName: {{ .Values.global.secrets.cassandraAdmin }}, items: [{key: password, path: password}]}
 {{- end }}

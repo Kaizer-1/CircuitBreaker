@@ -54,9 +54,6 @@ spec:
             # docs/03-architecture/07-deployment-and-environments.md).
             - {name: MAX_HEAP_SIZE, value: 512M}
             - {name: JVM_EXTRA_OPTS, value: "-Dcassandra.ring_delay_ms=1000 -Dcassandra.skip_wait_for_gossip_to_settle=0"}
-            # For the readiness probe's cqlsh. The superuser keeps Cassandra's built-in password, as in Compose.
-            - name: CASSANDRA_ADMIN_PASSWORD
-              valueFrom: {secretKeyRef: {name: {{ .Values.global.secrets.cassandraAdmin }}, key: password}}
           ports:
             - {name: cql, containerPort: 9042}
           volumeMounts:
@@ -69,9 +66,16 @@ spec:
             tcpSocket: {port: cql}
             periodSeconds: 5
             failureThreshold: 60
+          # Ready when Cassandra answers CQL: an OPTIONS request (allowed before logging in) must get SUPPORTED back
+          # (protocol v4 reply header 84 00 0000 06). No password, so the pod holds none: the superuser's lives only
+          # in the init job, and changing it never makes Cassandra unready.
           readinessProbe:
             exec:
-              command: ["bash", "-c", "cqlsh -u cassandra -p \"$CASSANDRA_ADMIN_PASSWORD\" -e 'SELECT release_version FROM system.local' >/dev/null"]
+              command:
+                - bash
+                - -c
+                - exec 3<>/dev/tcp/127.0.0.1/9042 && printf '\x04\x00\x00\x00\x05\x00\x00\x00\x00' >&3
+                  && [ "$(head -c 5 <&3 | od -An -tx1 | tr -d ' \n')" = 8400000006 ]
             periodSeconds: 15
             timeoutSeconds: 20
           livenessProbe:

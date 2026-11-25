@@ -125,9 +125,6 @@ were built instead: an index of each trader's open orders (Q-07 `status=open` re
 Cassandra partition per ticker to 2 GB in 19 hours (profiling PR, 2026-11-23: one partition per ticker per hour,
 thinned, a 24-hour time-travel horizon; [event sourcing](03-architecture/04-event-sourcing-and-cqrs.md#snapshots)).
 
-- **Change the Cassandra superuser's password.** It is still the image's default (`cassandra`/`cassandra`), sealed
-  like every secret since Phase 6 but known. Changing it needs an `ALTER ROLE` step in the init Job on a running
-  cluster (ADR-0019).
 - **LocalStack** (the optional `localstack` Terraform module, ADR-0015): not built; nothing depends on it.
 - **Scan the deployed images on a schedule.** CI scans an image when it is built; a CVE published later for an image
   that has not changed shows only on the next pull request (which scans all nine). A weekly job scanning the tags in
