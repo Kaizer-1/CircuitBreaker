@@ -202,7 +202,11 @@ curl localhost:8001/readyz         # or `make up` from the repo root to run its 
 
 - Redpanda, and the topic(s) `orders.v1`, `matching.v1` must exist (the init job creates them)
 - Cassandra: logs in with its own role `order_service_role` and uses keyspace `order_service` only
-- `consumer`: group `order-service.matching.v1` has joined and read to the end of its partitions at least once
+- `started`: the order store is migrated and the publisher connected (until then every order route answers `503`)
+- **Not** its `matching.v1` consumer (since 2026-11-25): no answer depends on this pod's consumer, since everything it
+  reads is in Cassandra, shared by every replica, so a replica added under load takes requests at once while its
+  consumer joins and catches up. The consumer's lag shows in `consumer_lag_messages` and `ConsumerLagHigh`
+  ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
 ## Viva Notes
 
