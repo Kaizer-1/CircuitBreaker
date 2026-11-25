@@ -454,7 +454,10 @@ found every folder unchanged since the tag staging runs, so it built and scanned
 
 **Documentation-only changes, measured.** Before the rule, PR #15 (the README alone) ran the full pipeline: 46 jobs,
 10 minutes, 29.8 runner-minutes, of which the end-to-end run took 9.9 and the 27 image jobs 10.1. The rule was added at
-the owner's request (2026-11-26): a public repository's Actions minutes are free, but the wait is not.
+the owner's request (2026-11-26): a public repository's Actions minutes are free, but the wait is not. **After:** PR #19
+(a roadmap row alone), the first documentation-only pull request under the rule, ran 14 jobs in **2.3 minutes**, 7.3
+runner-minutes (the longest, matching-engine's unit tests, 2.3 minutes): about a quarter of the time and of the
+runner-minutes.
 
 A pull request that changes code always builds and scans all nine images, so a Dockerfile change or a new
 vulnerability in a base image shows before merging. On `main` only the changed ones are built. Because our pull requests are merged with merge
