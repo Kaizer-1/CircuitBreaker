@@ -199,3 +199,34 @@ async def test_a_transaction_reports_its_wait_for_a_connection_and_its_own_time(
     assert len(times) == 2
     assert all(ran >= 0.2 for _, ran in times)
     assert max(waited for waited, _ in times) >= 0.15  # the second one queued for the connection
+
+
+async def test_database_degraded_slows_reservations_in_postgres_and_survives_a_new_pool(
+    store: PostgresPortfolioStore, conninfo: str
+) -> None:
+    from datetime import UTC, datetime
+    from time import perf_counter
+
+    from portfolio_service.application.faults import DatabaseDegraded
+
+    degraded = DatabaseDegraded(store)
+    service = PortfolioService(store, database_delay=degraded.delay_seconds)
+    raju = (await service.open_account("RajuTrader", AccountKind.HUMAN))[0].trader_id
+    await degraded.start(300, datetime.now(UTC))
+
+    began = perf_counter()
+    await service.create_reservation(buy(1, raju, 1, 24600))
+    assert perf_counter() - began >= 0.3  # the wait happened inside Postgres (pg_sleep)
+
+    other = await PostgresPortfolioStore.open(conninfo, max_size=1)  # another pod, after a restart
+    try:
+        restarted = DatabaseDegraded(other)
+        await restarted.refresh()
+        assert restarted.delay_seconds() == 0.3
+        assert await restarted.stop()
+    finally:
+        await other.close()
+    await degraded.refresh()
+    began = perf_counter()
+    await service.create_reservation(buy(2, raju, 1, 24600))
+    assert perf_counter() - began < 0.3

@@ -29,6 +29,10 @@ secretEnv: {}
 # has them (make k8s-set-url writes PUBLIC_BASE_URL, make k8s-bots BOTS_ENABLED and friends). Git and Argo CD never
 # own that ConfigMap, so a sync does not reset tonight's hotspot address or turn the bots off.
 operatorEnv: []
+# Mount the ServiceAccount's token so the service can call the Kubernetes API. Only for services Terraform's
+# environment module gives a Role (least privilege): chaos-service (the order-service Deployment, by name) and the
+# SRE agent. Every other pod has no token at all.
+kubernetesApi: false
 # Extra pod annotations; a change rolls the pods. make k8s-check c=gitops-push writes one to measure a commit's way
 # to the cluster.
 podAnnotations: {}

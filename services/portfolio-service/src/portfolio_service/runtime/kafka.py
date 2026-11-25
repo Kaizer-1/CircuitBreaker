@@ -260,6 +260,7 @@ class EventConsumer:
                 await self._sleep(1.0)
 
     async def _update_lag(self) -> None:
+        gauge = self._metrics.consumer_lag_messages
         lag: dict[tuple[str, int], int] = {}
         for tp in self._consumer.assignment():
             highwater = self._consumer.highwater(tp)
@@ -267,8 +268,12 @@ class EventConsumer:
                 continue
             behind = max(highwater - await self._consumer.position(tp), 0)
             lag[(tp.topic, tp.partition)] = behind
-            gauge = self._metrics.consumer_lag_messages
             gauge.labels(self._service, tp.topic, str(tp.partition)).set(behind)
+        # A partition that moved to another replica (a rebalance after scaling) is that replica's
+        # to report now: drop its series here, or its last value stays forever and ConsumerLagHigh
+        # keeps firing for a backlog that was long since read.
+        for topic, partition in self._lag.keys() - lag.keys():
+            gauge.remove(self._service, topic, str(partition))
         self._lag = lag
         if lag and all(v == 0 for v in lag.values()):
             self.caught_up_once = True

@@ -286,7 +286,7 @@ The resulting contexts and their relationships are in [02-bounded-contexts.md](0
 | ↳ LLM reasoning inside Reliability Operations | L | S | **Buy** | Buy: hosted models through OpenRouter ([ADR-0013](../adr/0013-openrouter-llm-gateway.md)). |
 | Order Management (`order-service`) | M | L | Judgment call | Build. It is on every trade's critical path and owns the reservation hand-off. |
 | Market Data incl. time travel (`market-data-service`) | L | M | Judgment call | Build. Time travel and live charts are what the audience sees. |
-| Chaos Engineering (`chaos-service`) | M | M | Judgment call | Build a small service. Our 3 scenarios need recovery-time measurement and the Chaos Panel. |
+| Chaos Engineering (`chaos-service`) | M | M | Judgment call | Build a small service. Our chaos scenarios need recovery-time measurement and the Chaos Panel. |
 | Portfolio and Accounts (`portfolio-service`) | M | S | Judgment call | Build simply on Postgres transactions. |
 | Automated Trading (`bot-traders`) | S | M | Judgment call | Build with simple strategies. |
 | Access (`api-gateway`) | S | S | Good work for trainees | Build a thin FastAPI gateway: a good learning task. |

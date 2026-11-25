@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: portfolio-service API
-  version: 1.0.0
+  version: 1.1.0
   summary: Accounts, cash, holdings, reservations and the leaderboard.
   description: |
     Owned by the **Market Insights Team** (MD Asif Ali). Stores data in Postgres (database `portfolio`).
@@ -282,8 +282,115 @@ paths:
                     code: INSUFFICIENT_SHARES
                     detail: You have 20 available CALVERA shares; this order sells 50.
                     correlation_id: req-6a7b8c
+  /internal/v1/faults:
+    post:
+      tags: [Internal]
+      operationId: injectDatabaseFault
+      summary: Degrade the portfolio database (chaos hook)
+      x-seeds-id: A-21
+      description: |
+        **A-21** — chaos-service's "Portfolio database degraded" scenario (docs/03-architecture/06-chaos-scenarios.md
+        section 3.4). While it is on, every reservation (A-06) makes Postgres wait `delay_ms` inside its transaction,
+        as a struggling database would; order-service's 500 ms reservation timeout then opens its circuit breaker.
+        The fault is stored in this service's database, so restarting, rolling back or scaling portfolio-service
+        does not clear it. Only available when `CHAOS_HOOKS_ENABLED=true` (otherwise 404); only chaos-service may
+        call it (network policy).
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DatabaseFaultRequest'
+            example:
+              fault: DB_DEGRADED
+              delay_ms: 1500
+      responses:
+        '201':
+          description: Fault active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseFaultState'
+              example:
+                fault: DB_DEGRADED
+                active: true
+                delay_ms: 1500
+                started_at: '2026-11-25T11:40:00.000Z'
+        '404':
+          $ref: './shared/common.yaml#/components/responses/NotFound'
+        '409':
+          description: The fault is already active.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/fault-already-active
+                title: Fault already active
+                status: 409
+                code: FAULT_ALREADY_ACTIVE
+                detail: DB_DEGRADED has been active since 11:40:00.
+                correlation_id: req-chaos-3
+        '422':
+          $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [Internal]
+      operationId: clearDatabaseFault
+      summary: Clear the database fault (chaos hook)
+      x-seeds-id: A-22
+      description: '**A-22** — Remove the stored fault; every replica stops waiting within 2 seconds.'
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '204':
+          description: Fault cleared.
+        '404':
+          description: No active fault, or chaos hooks are disabled.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/no-active-fault
+                title: No active fault
+                status: 404
+                code: NO_ACTIVE_FAULT
+                detail: There is no fault to clear.
+                correlation_id: req-chaos-4
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
 components:
   schemas:
+    DatabaseFaultRequest:
+      type: object
+      required: [fault, delay_ms]
+      properties:
+        fault:
+          type: string
+          enum: [DB_DEGRADED]
+        delay_ms:
+          type: integer
+          minimum: 100
+          maximum: 5000
+          description: How long each reservation waits inside Postgres.
+      additionalProperties: false
+    DatabaseFaultState:
+      type: object
+      required: [fault, active, delay_ms, started_at]
+      properties:
+        fault:
+          type: string
+          enum: [DB_DEGRADED]
+        active:
+          type: boolean
+        delay_ms:
+          type: integer
+        started_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
     Holding:
       type: object
       required: [ticker, quantity, reserved_quantity, available_quantity, avg_cost_paise, last_price_paise,

@@ -94,7 +94,7 @@ The **reference price** is the starting price used before any trade has happened
 - Event sourcing of the market; time-travel snapshot ("what did the market look like at 10:42:15?")
   and replay ("play the last 5 minutes at 10× speed").
 - CQRS read models: portfolio, leaderboard, candles, order-book depth.
-- Three chaos scenarios and an AI SRE agent with a fixed tool allowlist and a human-approval toggle.
+- Four chaos scenarios (in the fourth the agent must decline) and an AI SRE agent with a fixed tool allowlist and a human-approval toggle.
 - Docker Compose for local development; kind + Helm umbrella chart with `staging` and `prod` namespaces.
 - Prometheus, Grafana and Loki for observability.
 - Terraform for the local platform (kind cluster, namespaces, Argo CD), GitHub Actions CI and Argo CD GitOps

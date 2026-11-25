@@ -372,6 +372,8 @@ not performance (see "The slim ci profile" below). The demo profile stays the fu
   attempted, so the Applications whose sync died stayed `OutOfSync`: `make sync env=<env> apply=yes` starts their
   syncs. It is opt-in, never automatic: after the SRE agent's rollback of a release from Git, an Application waits
   `OutOfSync` for its revert pull request on purpose (ADR-0016).
+  *Phase 7 (2026-11-24): the controller was OOM-killed once more at 750 MiB, during the first prod release (9
+  Applications with a PostSync smoke Job each); its limit is now 1 GiB (owner's decision). It idles at about 330 MiB.*
 
 ### CI as built (Phase 6)
 
@@ -659,7 +661,7 @@ infra/
 ├── sealed-secrets/sealing-cert.pem   # the sealing key's PUBLIC certificate (sealing needs only this)
 ├── modules/
 │   ├── kind-cluster/        # kind provider (tehcyx/kind 0.13.0): the cluster; connects the local registry
-│   ├── environment/         # kubernetes provider: namespace, ResourceQuota, default-deny policy, sre-agent Role
+│   ├── environment/         # kubernetes provider: namespace, ResourceQuota, default-deny policy, sre-agent and chaos-service Roles
 │   ├── platform-charts/     # helm provider: Traefik, kube-prometheus-stack, Loki, Alloy; Grafana's admin Secret
 │   ├── sealed-secrets/      # helm provider: the controller, after restoring the backed-up key
 │   └── argo-cd/             # helm + kubernetes: Argo CD, its repository key, the AppProject and ApplicationSets
@@ -669,7 +671,7 @@ infra/
 | Resource | Module / provider | Purpose |
 |---|---|---|
 | kind cluster `circuitbreaker` (one node, `infra/kind/cluster.yaml`) | `kind-cluster` / kind (community provider, pinned 0.13.0) | The Kubernetes cluster itself, created as code. |
-| Namespaces `staging` and `prod`, each with a ResourceQuota, the default-deny ingress policy, and the `sre-agent` Role + RoleBinding | `environment` / kubernetes 3.5.0 | Two environments with a ceiling on what each may claim (section 3) and the agent's least privilege ([SRE agent design](05-sre-agent-design.md#defence-in-depth-kubernetes-rbac)). The chart creates the `sre-agent` ServiceAccount. |
+| Namespaces `staging` and `prod`, each with a ResourceQuota, the default-deny ingress policy, the `sre-agent` Role + RoleBinding and the `chaos-service` Role + RoleBinding | `environment` / kubernetes 3.5.0 | Two environments with a ceiling on what each may claim (section 3) and least privilege: the agent's ([SRE agent design](05-sre-agent-design.md#defence-in-depth-kubernetes-rbac)), and chaos-service's, which names one object: `get`/`patch` on `deployments/order-service` and its `scale` ([ADR-0020](../adr/0020-chaos-triggers-through-each-targets-own-hook.md)). The chart creates the ServiceAccounts. Only these two pods mount a token (`kubernetesApi: true`); every other pod has none. |
 | Traefik, kube-prometheus-stack, Loki, Alloy (ADR-0018), from the verified chart cache | `platform-charts` / helm 3.3.0 | The Phase 5 platform, now as code. |
 | The Sealed Secrets controller (0.41.2, by digest) | `sealed-secrets` / helm | Decrypts the SealedSecrets in Git ([ADR-0019](../adr/0019-sealed-secrets-for-gitops.md)). |
 | Argo CD (chart 10.18.2 = v3.6.2), its repository key, the AppProject `circuitbreaker`, the ApplicationSets | `argo-cd` / helm + kubernetes | The GitOps deployment server (section 4). |

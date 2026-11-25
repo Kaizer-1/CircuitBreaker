@@ -1,7 +1,7 @@
 [project]
 name = "chaos-service"
 version = "0.1.0"
-description = "CircuitBreaker chaos-service: controlled failure injection (skeleton)."
+description = "CircuitBreaker chaos-service: controlled failure injection."
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.162,<1",
@@ -9,6 +9,7 @@ dependencies = [
   "pydantic-settings>=2.16,<3",
   "prometheus-client>=0.26,<1",
   "aiokafka>=0.15,<1",
+  "httpx>=0.28,<1",
 ]
 
 [dependency-groups]

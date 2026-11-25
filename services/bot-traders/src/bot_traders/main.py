@@ -17,8 +17,10 @@ import httpx
 from fastapi import FastAPI
 
 from bot_traders.adapters.gateway import GatewayExchange
+from bot_traders.api import faults as faults_api
 from bot_traders.api import stubs
-from bot_traders.application.fleet import Fleet
+from bot_traders.application.fleet import Fleet, bot_rng
+from bot_traders.application.panic import PanicSell
 from bot_traders.business_metrics import register_business_metrics
 from bot_traders.config import Settings
 from bot_traders.runtime.checks import redpanda_check
@@ -34,6 +36,7 @@ logger = logging.getLogger("bot-traders")
 # Idle connections are dropped after 2 s, before uvicorn closes them (after 5 s): otherwise a
 # request can be sent on a connection the server is closing (httpx.ReadError, a 503 to the caller).
 KEEP_ALIVE = httpx.Limits(keepalive_expiry=2.0)
+PANIC_LIMITS = httpx.Limits(max_connections=2_000, keepalive_expiry=2.0)
 
 # Topics this service produces or consumes, per the event catalog.
 TOPICS = ("candles.v1",)
@@ -129,7 +132,21 @@ def create_app(
         task = asyncio.create_task(run_bots(app, settings, metrics)) if start else None
         if not settings.bots_enabled:
             logger.info("bots are off (BOTS_ENABLED=false): `make bots` turns them on")
-        yield
+        # The panic sell has its own connections: open loop, up to 2,000 unanswered at once, and
+        # a 10 s wait (application/panic.py). The bots' own client stays as it is.
+        async with httpx.AsyncClient(timeout=10.0, limits=PANIC_LIMITS) as panic_client:
+            panic_exchange = GatewayExchange(
+                settings.gateway_url, settings.bot_secret.get_secret_value(), panic_client
+            )
+            app.state.panic = PanicSell(
+                panic_exchange,
+                rng=bot_rng(settings.bot_random_seed, "panic"),
+                on_sent=lambda kind, result: business_metrics.bot_panic_requests_total.labels(
+                    kind, result
+                ).inc(),
+            )
+            yield
+            await app.state.panic.stop()
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -146,6 +163,7 @@ def create_app(
     app.state.metrics = metrics
     app.state.business_metrics = business_metrics
     app.state.fleet = None
+    app.state.panic = None
     if readiness_checks is None and settings.bots_enabled:
         checks.append(fleet_check(app))
 
@@ -158,5 +176,6 @@ def create_app(
     install_exception_handlers(app)
     app.include_router(health_router(settings.service_name, checks))
     app.include_router(metrics_router(metrics))
+    app.include_router(faults_api.router)
     app.include_router(stubs.router)
     return app

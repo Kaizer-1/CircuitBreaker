@@ -39,6 +39,14 @@ class Metrics:
             buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
             registry=self.registry,
         )
+        # Which error each Problem Details answer was: the SRE agent tells a bad release
+        # (INTERNAL_ERROR) from overload (OVERLOADED) and an open breaker (DEPENDENCY_UNAVAILABLE).
+        self.http_problems_total = Counter(
+            "http_problems_total",
+            "Problem Details responses by error code.",
+            ["service", "route", "status", "code"],
+            registry=self.registry,
+        )
         self.http_requests_in_flight = Gauge(
             "http_requests_in_flight",
             "HTTP requests currently being handled.",

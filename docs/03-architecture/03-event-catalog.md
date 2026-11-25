@@ -930,7 +930,7 @@ notice.
 | `OrderRejected` | `order-service` | Cassandra `order_events` | Order failed validation or reservation; never reached the bus. |
 | `BookSnapshotTaken` | `matching-engine` | Cassandra `book_snapshots_by_hour` | Full book for a ticker saved at a sequence number (kept by policy P-03's retention; the events are never pruned). |
 | `ChaosExperimentStarted` / `ChaosExperimentEnded` | `chaos-service` | memory + Loki | Experiment lifecycle; `ended` carries outcome `REMEDIATED`, `STOPPED` or `EXPIRED`. |
-| `FaultInjected` / `FaultCleared` | `market-data-service` | memory + Loki | Memory-leak fault switched on/off via `/internal/v1/faults`. |
+| `FaultInjected` / `FaultCleared` | `market-data-service`, `portfolio-service`, `bot-traders` | memory (portfolio: its `chaos_faults` table) + Loki | A chaos fault switched on/off via the target's `/internal/v1/faults`: memory leak (market-data), database degraded (portfolio), panic sell (bot-traders). Logged at INFO, never a metric, so the SRE agent never sees them. |
 
 ## Summary matrix
 

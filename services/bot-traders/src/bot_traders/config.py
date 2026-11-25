@@ -25,3 +25,7 @@ class Settings(BaseServiceSettings):
     bot_activity: float = 1.0  # scales how often and how much every bot trades
     candle_interval_seconds: float = 5.0  # the 5s candles drive decisions
     start_consumers: bool = True  # False in unit tests: no Kafka or gateway at start-up
+
+    # A-23/A-24, chaos-service's panic-sell hook: on in staging and the demo prod only; off (404)
+    # in any real deployment (chaos scenarios section 3.3, ADR-0020).
+    chaos_hooks_enabled: bool = False

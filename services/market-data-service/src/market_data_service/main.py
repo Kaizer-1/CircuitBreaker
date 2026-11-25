@@ -15,10 +15,12 @@ from fastapi import FastAPI
 from market_data_service.adapters.cassandra_store import CassandraMarketStore, connect_cassandra
 from market_data_service.adapters.engine_http import HttpEventStore
 from market_data_service.adapters.matching_feed import MatchingFeed
+from market_data_service.api import faults as faults_api
 from market_data_service.api import market as market_api
 from market_data_service.api import replay as replay_api
 from market_data_service.api import stubs
 from market_data_service.api import time_travel as time_travel_api
+from market_data_service.application.faults import MemoryLeak
 from market_data_service.application.hub import MarketHub
 from market_data_service.application.projection import MarketProjection
 from market_data_service.application.slots import Slots
@@ -145,6 +147,7 @@ def create_app(
             else None
         )
         yield
+        await app.state.memory_leak.stop()
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -165,6 +168,7 @@ def create_app(
     app.state.hub = None
     app.state.feed = None
     app.state.time_travel = None
+    app.state.memory_leak = MemoryLeak()
     app.state.rebuild_slots = Slots(settings.rebuild_slots, settings.admin_reserved_slots)
     app.state.replay_slots = Slots(settings.replay_slots, settings.admin_reserved_slots)
     # Read at scrape time from the slots themselves: every path that takes or frees a place counts.
@@ -187,5 +191,6 @@ def create_app(
     app.include_router(market_api.router)
     app.include_router(time_travel_api.router)
     app.include_router(replay_api.router)
+    app.include_router(faults_api.router)
     app.include_router(stubs.router)
     return app

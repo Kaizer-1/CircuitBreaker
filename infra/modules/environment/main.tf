@@ -98,3 +98,37 @@ resource "kubernetes_role_binding_v1" "sre_agent" {
     namespace = kubernetes_namespace_v1.this.metadata[0].name
   }
 }
+
+# chaos-service's least privilege (ADR-0020): it may change exactly one object, the order-service Deployment, by
+# name: get and patch it (the bad deploy's FAULT_PROFILE and its removal) and its scale (the reset puts the replicas
+# back). Every other fault is the target's own hook, over HTTP. No list, no other Deployment, no StatefulSet, no
+# Secret: the data stores are out of reach by permission. The chart creates the ServiceAccount `chaos-service`.
+resource "kubernetes_role_v1" "chaos_service" {
+  metadata {
+    name      = "chaos-service"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+  rule {
+    api_groups     = ["apps"]
+    resources      = ["deployments", "deployments/scale"]
+    resource_names = ["order-service"]
+    verbs          = ["get", "patch"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "chaos_service" {
+  metadata {
+    name      = "chaos-service"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.chaos_service.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "chaos-service"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+}

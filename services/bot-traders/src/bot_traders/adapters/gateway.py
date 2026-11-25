@@ -124,6 +124,25 @@ class GatewayExchange:
         items: list[dict[str, Any]] = response.json()["instruments"]
         return items
 
+    async def market_sell(self, session: Session, ticker: str) -> int:
+        """The panic sell's order: one attempt, no retry (application/panic.py)."""
+        body = {"ticker": ticker, "side": "SELL", "order_type": "MARKET", "quantity": 1}
+        headers = {"Authorization": f"Bearer {session.token}", "Idempotency-Key": str(uuid4())}
+        return await self._once("POST", "/v1/orders", headers, body)
+
+    async def list_orders(self, session: Session) -> int:
+        """The panic's `GET /v1/orders` (traders checking what happened): one attempt, no retry."""
+        return await self._once("GET", "/v1/orders", {"Authorization": f"Bearer {session.token}"})
+
+    async def _once(self, method: str, path: str, headers: dict[str, str], body: Any = None) -> int:
+        try:
+            response = await self._client.request(
+                method, f"{self._base}{path}", json=body, headers=headers
+            )
+        except httpx.HTTPError:
+            return 0
+        return response.status_code
+
     async def portfolio_stream(self, session: Session) -> AsyncIterator[dict[str, Any]]:
         import websockets
 

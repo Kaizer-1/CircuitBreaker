@@ -8,6 +8,7 @@ from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from order_service.api.overload import LimitedRoute
 from order_service.application.orders import (
     NotCancellableError,
     OrderNotFoundError,
@@ -40,7 +41,7 @@ TITLES = {
     RejectionReason.INSUFFICIENT_SHARES: "Not enough shares",
 }
 
-router = APIRouter()
+router = APIRouter(route_class=LimitedRoute)  # at most MAX_IN_FLIGHT at once (api/overload.py)
 
 
 class PlaceOrderBody(BaseModel):
@@ -119,6 +120,7 @@ async def place_order(
     orders = _orders(request)
     if orders is None:
         return _unavailable(request, "order-service is starting.")
+    request.app.state.fault_profile.before_place()  # raises only in chaos's bad release
     order_request = OrderRequest(
         body.ticker, body.side, body.order_type, body.quantity, body.limit_price_paise
     )

@@ -4,4 +4,4 @@
 portfolio-service:
   image:
     registry: ghcr.io/kaizer-1
-    tag: "a3e1a35f85c2"
+    tag: "ab541abe27f0"

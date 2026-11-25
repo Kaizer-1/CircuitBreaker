@@ -268,9 +268,15 @@ def test_roles_are_checked_per_route(settings: Settings) -> None:
         admin_chaos = client.get(
             "/v1/chaos/scenarios", headers=bearer(Role.ADMIN, "presenter", "presenter")
         )
+        trader_reset = client.post("/v1/chaos/reset", headers=bearer())
+        admin_reset = client.post(
+            "/v1/chaos/reset", headers=bearer(Role.ADMIN, "presenter", "presenter")
+        )
     assert (admin_orders.status_code, admin_orders.json()["code"]) == (403, "FORBIDDEN")
     assert (trader_chaos.status_code, trader_chaos.json()["code"]) == (403, "FORBIDDEN")
+    assert (trader_reset.status_code, trader_reset.json()["code"]) == (403, "FORBIDDEN")
     assert bot_orders.status_code == admin_market.status_code == admin_chaos.status_code == 200
+    assert admin_reset.status_code == 200  # A-20 reaches chaos-service (Phase 7)
 
 
 def test_the_admin_proxy_call_carries_no_trader_id(settings: Settings) -> None:

@@ -229,3 +229,13 @@ async def get_chaos_experiment(request: Request, principal: Admin) -> Response:
 )
 async def stop_chaos_experiment(request: Request, principal: Admin) -> Response:
     return await proxy_request(request, "chaos-service", principal)
+
+
+@router.post(
+    "/v1/chaos/reset",
+    operation_id="resetChaos",
+    summary="Reset all chaos",
+    openapi_extra={"x-seeds-id": "A-20"},
+)
+async def reset_chaos(request: Request, principal: Admin) -> Response:
+    return await proxy_request(request, "chaos-service", principal)

@@ -131,6 +131,7 @@ every table can be dropped and rebuilt from the event store ([read side](08-read
 | `last_prices` | `ticker` | Copy of last traded price, used for valuation and market-order protection price |
 | `processed_events` | `event_id` | Idempotency: inserted in the same transaction as the change it caused |
 | `schema_migrations` | `version` | Which migration files have been applied (start-up applies the rest) |
+| `chaos_faults` | `fault` | Phase 7 chaos hook (A-21/A-22): at most one row, `DB_DEGRADED` with `delay_ms`; while it exists every reservation waits that long inside Postgres ([chaos scenarios §3.4](06-chaos-scenarios.md)) |
 
 ## 5. Duplicated data (on purpose)
 

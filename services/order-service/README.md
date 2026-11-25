@@ -67,6 +67,8 @@ Redpanda that is stopped and started again (`PUBLISH_DELIVERY_TIMEOUT_SECONDS`).
 | `422 UNKNOWN_TICKER` / `INVALID_TICK_SIZE` / `VALIDATION_FAILED` | The rules; nothing reserved or stored |
 | `422 INSUFFICIENT_FUNDS` / `INSUFFICIENT_SHARES` | portfolio-service refused; stored as `REJECTED` (local event `OrderRejected`) |
 | `503 DEPENDENCY_UNAVAILABLE` | portfolio-service down or its breaker open; or the order store failed after reserving (that reservation is released later through the fail-closed expiry, [ADR-0017](../../docs/adr/0017-fail-closed-orphan-release.md)) |
+| `503 OVERLOADED` + `Retry-After: 1` | The pod already handles `MAX_IN_FLIGHT` (50) requests: turned away at once, nothing read, reserved or stored |
+| `500 INTERNAL_ERROR` | A bug; in the demo, chaos-service's bad release (`FAULT_PROFILE=bad-release`, below) |
 | `400 BAD_REQUEST` | The body is not JSON |
 
 **Idempotency-Key** (`POST /v1/orders`): the key is bound to a new `order_id` with a Cassandra lightweight transaction
@@ -166,8 +168,20 @@ Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards 
 ## Scaling and operations
 
 Default 2 replicas, agent may scale 1–5 (traffic-spike target). Every replica runs the relay; a row may be published
-twice, and the engine drops the copy by `event_id`. Concurrency limit 50 in-flight requests per pod (Phase 7).
-Chaos target for `BAD_DEPLOY` and `TRAFFIC_SPIKE`.
+twice, and the engine drops the copy by `event_id`.
+
+**Concurrency limit** (`MAX_IN_FLIGHT`, default 50; `api/overload.py`): a pod handles at most 50 API requests at once
+and answers `503 OVERLOADED` with `Retry-After: 1` beyond that, in microseconds. Without it an overloaded pod queues
+everything and every request gets slow; with it the requests it takes stay fast and more pods mean more capacity (the
+traffic spike, [chaos scenarios §3.3](../../docs/03-architecture/06-chaos-scenarios.md#33--traffic-spike-traffic_spike)).
+It is checked after routing, so a turned-away request is counted under its route; `/healthz`, `/readyz` and
+`/metrics` are never turned away. `http_problems_total{code="OVERLOADED"}` counts them, which is how the SRE agent
+tells overload from a bad release (`INTERNAL_ERROR`).
+
+**Chaos target** for `BAD_DEPLOY` and `TRAFFIC_SPIKE`. The bad deploy is chaos-service patching this Deployment with
+`FAULT_PROFILE=bad-release` (and `FAULT_ERROR_RATE`, default 0.4): a new rollout revision whose pods fail that share
+of `POST /v1/orders` with an unhandled `ValueError: price_band not configured` (500), before anything is reserved
+(`application/fault_profile.py`). Rolling back restores the pod template without the variable.
 
 ## Run and test it alone
 

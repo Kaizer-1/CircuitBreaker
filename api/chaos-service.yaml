@@ -1,15 +1,16 @@
 openapi: 3.1.0
 info:
   title: chaos-service API
-  version: 1.0.0
+  version: 1.1.0
   summary: Run controlled chaos experiments.
   description: |
     Owned by the **Release & Reliability Team** (Mohammad Oweis). Admin only (api-gateway enforces the `admin`
     role; the service re-checks `X-Role`).
 
-    One experiment at a time; each has an automatic expiry and an explicit undo. chaos-service consumes
-    `incidents.v1` to record time to detect, the agent's actions and time to recover. It never sends anything to
-    the SRE agent. Scenario details: docs/03-architecture/06-chaos-scenarios.md.
+    Experiments may overlap only if they affect different services (each scenario lists the services whose
+    alerts it makes fire; ADR-0020); each has an automatic expiry and an explicit undo, and A-20 resets
+    everything. chaos-service consumes `incidents.v1` to record time to detect, the agent's actions and time to
+    recover. It never sends anything to the SRE agent. Scenario details: docs/03-architecture/06-chaos-scenarios.md.
 servers:
   - url: http://localhost:8007
     description: Local Docker Compose
@@ -47,18 +48,28 @@ paths:
                     target_service: order-service
                     expected_fix: rollback_deployment
                     default_duration_seconds: 300
+                    default_parameters: {error_rate: 0.4}
                   - scenario: MEMORY_LEAK
                     name: Memory leak
                     description: Makes market-data-service leak memory steadily until it is restarted.
                     target_service: market-data-service
                     expected_fix: restart_deployment
                     default_duration_seconds: 600
+                    default_parameters: {rate_mb_per_minute: 80}
                   - scenario: TRAFFIC_SPIKE
-                    name: Traffic spike
-                    description: Sends about 400 requests per second at order-service through the gateway.
+                    name: Panic sell
+                    description: The bots panic and dump shares at market, 110 requests per second at order-service through the gateway, more than 2 replicas can serve.
                     target_service: order-service
                     expected_fix: scale_deployment
                     default_duration_seconds: 300
+                    default_parameters: {requests_per_second: 110}
+                  - scenario: PORTFOLIO_DB_DEGRADED
+                    name: Portfolio database degraded
+                    description: Makes portfolio-service's database slow, so reservations time out and order-service's circuit breaker opens. The cause is a data store the agent may never touch.
+                    target_service: portfolio-service
+                    expected_fix: do_nothing
+                    default_duration_seconds: 300
+                    default_parameters: {delay_ms: 1500}
         '403':
           $ref: './shared/common.yaml#/components/responses/Forbidden'
   /v1/chaos/experiments:
@@ -67,7 +78,10 @@ paths:
       operationId: startChaosExperiment
       summary: Start a chaos experiment
       x-seeds-id: A-10
-      description: '**A-10** — Start one scenario. Refused with 409 if another experiment is running.'
+      description: |
+        **A-10** — Start one scenario. Refused with 409 if a running experiment affects one of the same services
+        (BAD_DEPLOY, TRAFFIC_SPIKE and PORTFOLIO_DB_DEGRADED all affect order-service; MEMORY_LEAK only
+        market-data-service). Parameters belong to their scenario; another scenario's parameter is a 422.
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
@@ -83,12 +97,12 @@ paths:
                 value:
                   scenario: BAD_DEPLOY
               spike:
-                summary: Bigger traffic spike for 3 minutes
+                summary: A bigger panic sell for 3 minutes
                 value:
                   scenario: TRAFFIC_SPIKE
                   duration_seconds: 180
                   parameters:
-                    requests_per_second: 500
+                    requests_per_second: 150
       responses:
         '201':
           description: Experiment running.
@@ -112,11 +126,11 @@ paths:
                 agent_actions: []
                 timeline:
                   - at: '2026-11-20T11:04:50.000Z'
-                    message: Deployed order-service release 1.4.1 (revision 8).
+                    message: Started by the presenter. Deployed order-service release 1.4.1 (revision 8).
         '403':
           $ref: './shared/common.yaml#/components/responses/Forbidden'
         '409':
-          description: Another experiment is already running.
+          description: A running experiment already affects one of the same services.
           content:
             application/problem+json:
               schema:
@@ -126,16 +140,29 @@ paths:
                 title: Experiment already running
                 status: 409
                 code: EXPERIMENT_ALREADY_RUNNING
-                detail: Stop experiment 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c (BAD_DEPLOY) first.
+                detail: Experiment 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c (BAD_DEPLOY) already affects order-service. Stop it first.
                 correlation_id: req-adm-1
         '422':
           $ref: './shared/common.yaml#/components/responses/ValidationFailed'
+        '503':
+          description: A target did not answer or refused the fault; nothing was started.
+          content:
+            application/problem+json:
+              schema:
+                $ref: './shared/common.yaml#/components/schemas/Problem'
+              example:
+                type: https://circuitbreaker.local/errors/dependency-unavailable
+                title: Target unavailable
+                status: 503
+                code: DEPENDENCY_UNAVAILABLE
+                detail: 'The experiment did not start: BAD_DEPLOY needs Kubernetes (a real rollout revision)'
+                correlation_id: req-adm-4
     get:
       tags: [Experiments]
       operationId: listChaosExperiments
       summary: List chaos experiments
       x-seeds-id: Q-22
-      description: '**Q-22** — Experiments since chaos-service started, newest first.'
+      description: '**Q-22** — Experiments since chaos-service started, newest first, and the presenter''s resets (A-20).'
       parameters:
         - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
         - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
@@ -162,6 +189,10 @@ paths:
                     time_to_recover_seconds: 135
                     agent_actions: [rollback_deployment]
                     timeline: []
+                resets:
+                  - reset_at: '2026-11-20T11:30:00.000Z'
+                    undone: [order-service back to 2 replicas (was 5)]
+                    failed: []
         '403':
           $ref: './shared/common.yaml#/components/responses/Forbidden'
   /v1/chaos/experiments/{experiment_id}:
@@ -198,13 +229,15 @@ paths:
                 agent_actions: [rollback_deployment]
                 timeline:
                   - at: '2026-11-20T11:04:50.000Z'
-                    message: Deployed order-service release 1.4.1 (revision 8).
+                    message: Started by the presenter. Deployed order-service release 1.4.1 (revision 8).
                   - at: '2026-11-20T11:05:31.000Z'
-                    message: SRE agent opened INC-0007 (detected after 41 s).
+                    message: Agent opened INC-0007 (OrderServiceHighErrorRate on order-service). Detected after 41 s.
                   - at: '2026-11-20T11:06:01.398Z'
-                    message: SRE agent executed rollback_deployment on order-service.
+                    message: Agent ran rollback_deployment (SUCCEEDED).
                   - at: '2026-11-20T11:07:05.000Z'
-                    message: INC-0007 resolved. Service recovered 135 s after the fault started.
+                    message: 'Incident INC-0007 resolved: RECOVERED.'
+                  - at: '2026-11-20T11:07:05.000Z'
+                    message: Remediated by the agent. The bad release was already gone.
         '403':
           $ref: './shared/common.yaml#/components/responses/Forbidden'
         '404':
@@ -215,7 +248,7 @@ paths:
       operationId: stopChaosExperiment
       summary: Stop a chaos experiment
       x-seeds-id: A-11
-      description: '**A-11** — Stop a running experiment and undo its fault (roll back, clear fault, or stop load).'
+      description: '**A-11** — Stop a running experiment and undo its fault (remove the bad release, clear the hook, or stop the panic sell).'
       parameters:
         - $ref: '#/components/parameters/ExperimentIdPath'
         - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
@@ -233,7 +266,7 @@ paths:
                 target_service: order-service
                 status: STOPPED
                 parameters:
-                  requests_per_second: 400
+                  requests_per_second: 110
                 started_at: '2026-11-20T11:20:00.000Z'
                 ends_at: '2026-11-20T11:25:00.000Z'
                 ended_at: '2026-11-20T11:22:10.000Z'
@@ -243,7 +276,7 @@ paths:
                 agent_actions: [scale_deployment]
                 timeline:
                   - at: '2026-11-20T11:22:10.000Z'
-                    message: Stopped by admin. Load generator stopped and 212 resting load orders cancelled.
+                    message: Stopped by the presenter. Panic sell stopped.
         '403':
           $ref: './shared/common.yaml#/components/responses/Forbidden'
         '404':
@@ -261,6 +294,39 @@ paths:
                 code: EXPERIMENT_NOT_RUNNING
                 detail: Experiment 6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c already ended (REMEDIATED).
                 correlation_id: req-adm-2
+        '503':
+          $ref: './shared/common.yaml#/components/responses/ServiceUnavailable'
+  /v1/chaos/reset:
+    post:
+      tags: [Experiments]
+      operationId: resetChaos
+      summary: Reset all chaos
+      x-seeds-id: A-20
+      description: |
+        **A-20** — End every running experiment (STOPPED) and undo every fault, judged by what is actually running
+        rather than by chaos-service's memory, so it also works after chaos-service restarted: removes
+        order-service's bad release, clears the memory leak, the database fault and the panic sell, and returns
+        order-service to the replicas it had before the last traffic spike (or 2). The last step can undo the SRE
+        agent's scale-up: it is the presenter's control, and the incident feed shows it as a presenter reset. Each
+        step is tried even if another fails; `failed` lists what could not be undone.
+      parameters:
+        - $ref: './shared/common.yaml#/components/parameters/RoleHeader'
+        - $ref: './shared/common.yaml#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: What was undone, and what could not be.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetResult'
+              example:
+                reset_at: '2026-11-20T11:30:00.000Z'
+                undone:
+                  - market-data-service's leak cleared
+                  - order-service back to 2 replicas (was 5)
+                failed: []
+        '403':
+          $ref: './shared/common.yaml#/components/responses/Forbidden'
 components:
   parameters:
     ExperimentIdPath:
@@ -273,10 +339,11 @@ components:
   schemas:
     ScenarioId:
       type: string
-      enum: [BAD_DEPLOY, MEMORY_LEAK, TRAFFIC_SPIKE]
+      enum: [BAD_DEPLOY, MEMORY_LEAK, TRAFFIC_SPIKE, PORTFOLIO_DB_DEGRADED]
     Scenario:
       type: object
-      required: [scenario, name, description, target_service, expected_fix, default_duration_seconds]
+      required: [scenario, name, description, target_service, expected_fix, default_duration_seconds,
+                 default_parameters]
       properties:
         scenario:
           $ref: '#/components/schemas/ScenarioId'
@@ -290,6 +357,8 @@ components:
           $ref: './shared/common.yaml#/components/schemas/AgentAction'
         default_duration_seconds:
           type: integer
+        default_parameters:
+          $ref: '#/components/schemas/ExperimentParameters'
     ScenarioList:
       type: object
       required: [scenarios]
@@ -311,12 +380,17 @@ components:
           type: integer
           minimum: 1
           maximum: 200
-          description: MEMORY_LEAK only (default 40).
+          description: MEMORY_LEAK only (default 80).
         requests_per_second:
           type: integer
           minimum: 50
           maximum: 1000
-          description: TRAFFIC_SPIKE only (default 400).
+          description: TRAFFIC_SPIKE only (default 110, calibrated on the demo laptop).
+        delay_ms:
+          type: integer
+          minimum: 100
+          maximum: 5000
+          description: PORTFOLIO_DB_DEGRADED only. How long each reservation waits in Postgres (default 1500).
       additionalProperties: false
     StartExperimentRequest:
       type: object
@@ -379,9 +453,28 @@ components:
                 type: string
     ExperimentList:
       type: object
-      required: [items]
+      required: [items, resets]
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/Experiment'
+        resets:
+          type: array
+          description: The presenter's resets (A-20), newest first.
+          items:
+            $ref: '#/components/schemas/ResetResult'
+    ResetResult:
+      type: object
+      required: [reset_at, undone, failed]
+      properties:
+        reset_at:
+          $ref: './shared/common.yaml#/components/schemas/Timestamp'
+        undone:
+          type: array
+          items:
+            type: string
+        failed:
+          type: array
+          items:
+            type: string

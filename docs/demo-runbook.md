@@ -11,7 +11,7 @@
 
 | Step | Command or action | Why |
 |---|---|---|
-| 0 | **Mains power, nothing else running.** `pmset -g batt` says `AC Power`. Quit other apps and dev servers (another project's `npm run dev`, a second IDE, browsers with many tabs) and let a pending macOS update wait. With the stack and the bots running, `uptime` shows a 1-minute load average of about **4–6**; above 8, find what else is busy (`top -o cpu`) before the audience arrives | The exchange shares the laptop's 12 cores with everything else on it. On battery macOS slows the CPU: a 60-minute soak on battery measured order p95 615 ms against 281 ms on mains (2026-11-14). A busy Mac stretched Cassandra's pauses from 150 ms to 640 ms and narrows the traffic spike's window: 110 requests/s is calibrated for a quiet laptop (chaos scenarios §3.3) |
+| 0 | **Restart the Mac on the morning of the demo**, then **mains power, nothing else running.** `pmset -g batt` says `AC Power`; `sysctl vm.swapusage` shows little swap in use (well under 1 GB). Quit other apps and dev servers (another project's `npm run dev`, a second IDE, chat apps, browsers with many tabs) and let a pending macOS update wait. While presenting, keep only **Docker and ONE browser** open: the presenter dashboard and the Grafana tabs in it. With the stack and the bots running, `uptime` shows a 1-minute load average of about **4–6**; above 8, find what else is busy (`top -o cpu`) before the audience arrives | A Mac that has not restarted for long swaps: on 2026-11-25, after 116 days of uptime with two browsers and a chat app open, 9.4 GB of swap was in use and the load stayed at 10–14 with the exchange idle; the Docker VM stalled in bursts and every chaos timing came out longer. A restart brought swap down to 0.4 GB. The exchange shares the laptop's 12 cores with everything else on it. On battery macOS slows the CPU: a 60-minute soak on battery measured order p95 615 ms against 281 ms on mains (2026-11-14). A busy Mac stretched Cassandra's pauses from 150 ms to 640 ms and narrows the traffic spike's window: 110 requests/s is calibrated for a quiet laptop (chaos scenarios §3.3). The measurement checks (`make k8s-check c=chaos`, `scale`, `profile`) refuse to run on battery or above load 8 for the same reason |
 | 1 | Laptop on power; in a spare terminal run **`caffeinate -dims`** and leave it running until the demo ends | macOS then never sleeps (`-d` display, `-i` idle, `-m` disk, `-s` system on power). A sleeping laptop freezes Docker: on waking, market-data has every missed 5-second candle to close (it saves them in chunks since Phase 4) and the bots' 12-hour sessions may have run out (they sign in again since Phase 4); both recover, but the market stalls meanwhile. `Ctrl+C` ends it |
 | 2 | **First** join the phone hotspot, **then** set `PUBLIC_BASE_URL` to the laptop's address on it (`ipconfig getifaddr en0`) | The QR code must point where phones can reach ([developer setup §10](08-developer-setup.md#10-phones-on-a-hotspot-demo-day)); the address belongs to the network, so it is only known once the laptop is on the hotspot |
 | 3 | **A person** runs `CONFIRM=yes make demo-reset` | Wipes all data, starts everything and checks the clean start: five empty books, only the seeded accounts, no humans. Rehearsal traders, test accounts and leftover orders are gone, and the leaderboard starts empty. Data-wiping commands are run by a person, never by a script or an assistant |
@@ -33,7 +33,7 @@ the cluster, not both (`make down` first): together they do not fit in Docker's 
 
 | Step | Command or action | Why |
 |---|---|---|
-| 0 | Step 0 above: mains power, other apps closed, `uptime` about 4–6 with the cluster and bots running | The same reasons; the cluster needs more of the laptop than Compose |
+| 0 | Step 0 above: the morning restart, mains power, only Docker and one browser open, little swap, `uptime` about 4–6 with the cluster and bots running | The same reasons; the cluster needs more of the laptop than Compose |
 | 1 | `caffeinate -dims` as above; **join the hotspot first** and note the laptop's address (`ipconfig getifaddr en0`) | The QR code needs the address on the network the phones are on |
 | 1a | **Days before:** prod runs what was promoted. `make promote s=all` opens the pull request that gives prod staging's tested images (it says "nothing to promote" when they match); merge it with the command it prints (`gh pr merge <n> --merge --admin`), `make sync env=prod`, and check `kubectl get jobs -n prod -l app.kubernetes.io/name=smoke-test` shows every smoke test `Complete` | Prod changes only through a merged promotion pull request; never on demo day itself |
 | 2 | **A person** runs `CONFIRM=yes make k8s-reset`, then `make platform` (Terraform; answer `yes`), then `make k8s-set-url url=http://<laptop LAN IP>` | A clean cluster built from code; Argo CD deploys prod and staging from Git (all Applications `Synced` and `Healthy`: `make k8s-status`). Needs the sealing key's backup in `private/sealed-secrets/` (else the secrets in Git cannot be decrypted) and `secrets.auto.tfvars`. Data-wiping commands are run by a person. Allow about 10 minutes. The address is kept from then on (restarts, syncs, `k8s-bots`) |
@@ -85,7 +85,8 @@ takes minutes, not a reset, as long as the data is from the same tickers.
 
 | Tag | Verified | Runs on |
 |---|---|---|
-| **`v0.5.3-demoable`** (preferred) | Cassandra sized for its container, the bounded snapshot tables (`book_snapshots_by_hour`, a 24-hour time-travel horizon), the traffic spike calibrated to 110 requests/s, plus everything in `v0.5.2-demoable`; CI green | Compose **and** Kubernetes |
+| **`v0.6-demoable`** (preferred) | Phase 6: the platform from `make platform` (Terraform), Argo CD deploying both environments from Git, Sealed Secrets, CI images on GHCR (prepulled for the offline hotspot), the first prod release through `make promote` (PR #12, 9 of 9 smoke tests); plus everything in `v0.5.3-demoable`. CI green. Same data as `v0.5.3-demoable` | Compose **and** the GitOps cluster |
+| `v0.5.3-demoable` | Cassandra sized for its container, the bounded snapshot tables (`book_snapshots_by_hour`, a 24-hour time-travel horizon), the traffic spike calibrated to 110 requests/s, plus everything in `v0.5.2-demoable`; CI green. **Before GitOps:** on Kubernetes it runs only on a cluster made by `make k8s-up` (a person resets the GitOps cluster first) | Compose **and** Kubernetes (`make k8s-up`) |
 | `v0.5.2-demoable` | The professional ticker names (CALVERA, KORVIN, ASTRYX, HELIOR, TAVIRA), plus everything in `v0.5.1-demoable`; CI green. **Cannot read the new snapshot tables:** `v0.5.3` moved the engine's snapshots to `book_snapshots_by_hour` and dropped `book_snapshots`, so this version's engine finds no snapshot and rebuilds every book from all its events (correct, but slow on a long history). A person resets first | Compose **and** Kubernetes |
 | `v0.5.1-demoable` | Phones ordering over the hotspot address (`make test-phone` on a LAN IP), the tab bar, the QR address kept on Kubernetes, CI green. **Old ticker names:** it cannot read data made with the new ones, so a person resets first | Compose **and** Kubernetes |
 | `v0.4-demoable` | Phase 4: time travel, leaderboard; phone ordering over the LAN did **not** work yet (only on the laptop). Old ticker names, as above | Compose only (Kubernetes came in Phase 5) |
@@ -94,22 +95,27 @@ takes minutes, not a reset, as long as the data is from the same tickers.
 
 ```bash
 make down                                         # stops the containers; volumes (data) are kept
-git switch -c demo-fallback v0.5.3-demoable       # a branch at the tag (the working tree must be clean)
+git switch -c demo-fallback v0.6-demoable         # a branch at the tag (the working tree must be clean)
 PUBLIC_BASE_URL=http://<LAN IP>:5173 make up      # builds that version's images
 make bots
 ```
 
-**Kubernetes:**
+**Kubernetes (the GitOps cluster):** Argo CD deploys what Git says, so falling back means pointing Argo CD at the tag.
+Nothing is built: the tag's image tags are the GHCR images already on the node (`make k8s-prepull`).
 
 ```bash
-git switch -c demo-fallback v0.5.3-demoable
-PUBLIC_BASE_URL=http://<LAN IP> make k8s-up       # builds and rolls only the images that differ; data kept
-make k8s-bots
+make platform revision=v0.6-demoable              # Terraform: 1 change (the Applications' target revision); answer yes
+make sync env=prod                                # don't wait for the 30-second poll; then make sync (staging)
+make k8s-status                                   # every Application Synced and Healthy at the tag
 ```
 
-Back to the latest: `git switch main`, then `make up` or `make k8s-up` again. If a later version changed how data is
-stored and the old version cannot read it, **a person** runs `CONFIRM=yes make demo-reset` (Compose) or `CONFIRM=yes
-make k8s-reset` (Kubernetes) first; data-wiping commands are never run by a script or an assistant.
+`make k8s-up` cannot be used for this: it refuses to deploy into namespaces Argo CD manages. Bots and the QR address
+are operator settings outside Git and stay as they were.
+
+Back to the latest: `git switch main`, then `make up` (Compose) or `make platform revision=main` (Kubernetes). If a
+later version changed how data is stored and the old version cannot read it, **a person** runs `CONFIRM=yes make
+demo-reset` (Compose) or `CONFIRM=yes make k8s-reset` then `make platform` (Kubernetes) first; data-wiping commands
+are never run by a script or an assistant.
 
 ## 5. The Later list
 

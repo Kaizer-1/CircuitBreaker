@@ -24,3 +24,7 @@ class Settings(BaseServiceSettings):
     ws_ping_seconds: float = 15.0  # Q-10 heartbeat (api/README.md)
     ws_pong_timeout_seconds: float = 45.0
     start_consumers: bool = True  # False in unit tests: no Postgres or Kafka at start-up
+
+    # A-21/A-22, chaos-service's "database degraded" hook: on in staging and the demo prod only;
+    # off (404) in any real deployment (chaos scenarios section 3.4).
+    chaos_hooks_enabled: bool = False

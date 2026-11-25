@@ -184,6 +184,36 @@ def test_an_unhandled_exception_becomes_a_problem_details_500(plain_app: FastAPI
     assert response.headers["X-Correlation-Id"] == "cid-500"
 
 
+def test_problems_are_counted_by_error_code_even_from_a_worker_thread(
+    plain_app: FastAPI,
+) -> None:
+    from sre_agent.runtime.problem import problem_response
+
+    async def overloaded() -> Any:
+        return problem_response(503, "OVERLOADED", "Overloaded")
+
+    def from_a_thread() -> Any:  # FastAPI runs a plain def in a worker thread
+        return problem_response(503, "DEPENDENCY_UNAVAILABLE", "Unavailable")
+
+    async def boom() -> None:
+        raise RuntimeError("bug")
+
+    plain_app.add_api_route("/test-only/overloaded", overloaded)
+    plain_app.add_api_route("/test-only/thread", from_a_thread)
+    plain_app.add_api_route("/test-only/boom", boom)
+    with TestClient(plain_app, raise_server_exceptions=False) as c:
+        for path in ("/test-only/overloaded", "/test-only/thread", "/test-only/boom", "/healthz"):
+            c.get(path)
+        text = c.get("/metrics").text
+    problems = sorted(line for line in text.splitlines() if line.startswith("http_problems_total{"))
+    assert [line.split("code=")[1].split('"')[1] for line in problems] == [
+        "DEPENDENCY_UNAVAILABLE",
+        "INTERNAL_ERROR",
+        "OVERLOADED",
+    ]
+    assert all(line.endswith(" 1.0") for line in problems)
+
+
 def test_access_log_is_one_json_line_with_the_correlation_id(
     capsys: pytest.CaptureFixture[str], plain_app: FastAPI, settings: Settings
 ) -> None:
@@ -400,6 +430,55 @@ async def test_the_consumer_readiness_check_waits_until_it_has_caught_up(
             await consumer_check(lambda current=current: current).probe()  # type: ignore[misc]
     consumer.caught_up_once = True
     await consumer_check(lambda: consumer).probe()
+
+
+class _TopicPartition:
+    def __init__(self, topic: str, partition: int) -> None:
+        self.topic, self.partition = topic, partition
+
+
+class _Assigned:
+    """Just enough of aiokafka's consumer for the lag gauge: what is assigned and how far behind."""
+
+    def __init__(self) -> None:
+        self.behind: dict[int, int] = {}
+
+    def assignment(self) -> list[_TopicPartition]:
+        return [_TopicPartition("things.v1", p) for p in self.behind]
+
+    def highwater(self, tp: _TopicPartition) -> int:
+        return 1_000
+
+    async def position(self, tp: _TopicPartition) -> int:
+        return 1_000 - self.behind[tp.partition]
+
+
+async def test_the_lag_of_a_partition_that_moved_to_another_replica_is_no_longer_reported(
+    settings: Settings,
+) -> None:
+    async def handler(event: EventEnvelope, delivery: Delivery) -> None:
+        return None
+
+    metrics = Metrics(settings.service_name)
+    consumer = _consumer(settings, handler, _Sink(), metrics)
+    assigned = _Assigned()
+    consumer._consumer = assigned
+
+    def reported(partition: int) -> float | None:
+        return metrics.registry.get_sample_value(
+            "consumer_lag_messages",
+            {"service": settings.service_name, "topic": "things.v1", "partition": str(partition)},
+        )
+
+    assigned.behind = {1: 7_878, 4: 3_017}  # a panic sell: far behind on both
+    await consumer._update_lag()
+    assert (reported(1), reported(4)) == (7_878, 3_017)
+
+    assigned.behind = {4: 0}  # scaled back down: partition 1 went to another replica
+    await consumer._update_lag()
+    assert reported(4) == 0
+    assert reported(1) is None  # not a stale 7,878 that keeps ConsumerLagHigh firing
+    assert consumer.lag() == {("things.v1", 4): 0}
 
 
 async def test_the_event_loop_watcher_records_how_late_the_loop_woke() -> None:

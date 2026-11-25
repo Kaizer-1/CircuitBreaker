@@ -11,6 +11,7 @@ class BusinessMetrics:
     bots_active: Gauge
     bot_order_lateness_seconds: Histogram
     bot_quote_gap_seconds: Histogram
+    bot_panic_requests_total: Counter
 
     def timing(self, kind: str, strategy: str, seconds: float) -> None:
         """The bots' own timing (application/bot.py TimingListener)."""
@@ -44,6 +45,14 @@ def register_business_metrics(registry: CollectorRegistry) -> BusinessMetrics:
             " until the bot placed a new one (market makers: time without a quote).",
             ["strategy"],
             buckets=(0.5, 1, 2, 3, 4, 5, 6, 8, 10, 15, 30),
+            registry=registry,
+        ),
+        bot_panic_requests_total=Counter(
+            "bot_panic_requests_total",
+            "The panic sell's requests (chaos TRAFFIC_SPIKE) by kind (SELL, GET) and answer: the"
+            " HTTP status, no_answer, or dropped (not sent: too many unanswered). Shows the rate"
+            " offered against the rate order-service answered; never read by the SRE agent.",
+            ["kind", "result"],
             registry=registry,
         ),
     )

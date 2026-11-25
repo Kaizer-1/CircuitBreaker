@@ -21,7 +21,8 @@ React + Vite + TypeScript single-page app with TradingView Lightweight Charts. E
 | **Time travel**         | `/time-travel`            | Presenter (projector) | Admin passcode (A-04) | Q-03, Q-06, Q-12, Q-13                   |
 | **Join**                | `/join` (the QR's target) | Trader (phone)        | None: a nickname      | A-01                                     |
 | **Trade**               | `/trade`                  | Trader (phone)        | The session from Join | Q-02, Q-06, Q-07, Q-09, Q-10, A-05, A-07 |
-| Chaos panel, agent      | (Phase 7)                 | Admin                 |                       | Q-19–Q-23, A-10, A-11, A-14, A-15        |
+| **Chaos Panel**         | `/chaos`                  | Presenter (projector) | Admin passcode (A-04) | Q-21, Q-22, A-10, A-11, A-20             |
+| Incident feed, agent    | (Phase 7, PR 7c)          | Admin                 |                       | Q-17–Q-20, A-14, A-15                    |
 
 - **Presenter dashboard:** the five tickers in a watchlist, the selected one big (keys 1–5 choose it), 5-second candles,
   the order book (best 6 levels), the trades tape, the join QR code, and a status bar (health, live streams, volume).
@@ -62,6 +63,17 @@ the gateway never log it. On every connect the server sends a snapshot, then upd
 (`src/market/marketState.ts`) drops anything at or below the sequence it has. After a disconnect it reconnects
 (`src/market/stream.ts`, waiting 1 s, then 2 s, doubling up to 30 s) and starts again from a fresh snapshot
 ([read side §4](../docs/03-architecture/08-read-side.md#4-snapshot-then-updates-resyncing-a-client)).
+
+### Chaos Panel (presenter)
+
+The four chaos scenarios ([chaos scenarios](../docs/03-architecture/06-chaos-scenarios.md), ADR-0020) as one table, not
+a grid of cards: what each breaks, the fix that is right for it (rollback, restart, scale, or do nothing and escalate),
+its state (ready; running with the time left and, once the SRE agent opened an incident, how fast it was detected; or
+how it ended) and a **Start** / **Stop** button. **Reset everything** (A-20) ends every experiment and undoes every
+fault, including replicas the agent added. A start chaos-service refuses (another experiment already affects that
+service: `409`) shows its reason in the status strip. Below, chaos-service's own timeline (and the presenter's
+resets), newest first. Polled every 2 s (Q-21, Q-22). Reached by the terminal skin's on-screen **F6 CHAOS** key or
+the paper skin's **Chaos** section link. The SRE agent never reads any of it: it works from symptoms.
 
 ### Time travel (presenter)
 

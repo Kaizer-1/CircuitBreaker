@@ -25,6 +25,7 @@
 | [0017](0017-fail-closed-orphan-release.md) | Fail-closed release of orphaned reservations | Accepted |
 | [0018](0018-kubernetes-platform-components.md) | Kubernetes platform components: Traefik, in-repo data stores, kube-prometheus-stack, community Loki, Alloy | Accepted |
 | [0019](0019-sealed-secrets-for-gitops.md) | Sealed Secrets: encrypted Secrets in Git for GitOps (an owner's exception to the design freeze) | Accepted |
+| [0020](0020-chaos-triggers-through-each-targets-own-hook.md) | Chaos triggers through each target's own hook; a fourth scenario the agent must decline (an owner's exception to the design freeze) | Accepted |
 
 **Template:** `# NNNN — Title` · Status · Date · Deciders · Context · Decision · Alternatives considered ·
 Consequences (positive / negative) · Viva Notes.

@@ -1,8 +1,8 @@
 # market-data-service
 
-> **Status:** Phase 4 — candles (5s, 1m, 5m), order-book depth, recent trades, last prices,
-> `CandleClosed`, the live market WebSocket (Q-06), time travel (Q-12) and replay (Q-13) are built. The chaos hooks
-> (A-12, A-13) are Phase 7, and answer `501` until then. Layout:
+> **Status:** Phase 7 — candles (5s, 1m, 5m), order-book depth, recent trades, last prices,
+> `CandleClosed`, the live market WebSocket (Q-06), time travel (Q-12), replay (Q-13) and the chaos memory-leak hook
+> (A-12, A-13) are built. Layout:
 > [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service) (package
 > `market_data_service`).
 
@@ -67,8 +67,8 @@ Schemas: [event catalog](../../docs/03-architecture/03-event-catalog.md). `tests
 Q-02 `GET /v1/instruments`, Q-03 `GET /v1/market/{ticker}/candles`, Q-04 `GET /v1/market/{ticker}/order-book`, Q-05
 `GET /v1/market/{ticker}/trades`; WebSocket Q-06 `/v1/ws/market/{ticker}` (messages in
 [api/README.md](../../api/README.md#q-06--v1wsmarketticker-market-data-service-any-role)); Q-12
-`GET /v1/time-travel/{ticker}?at=` and the replay WebSocket Q-13 `/v1/ws/replay/{ticker}` (both below). Phase 7: internal A-12 `POST /internal/v1/faults`, A-13
-`DELETE /internal/v1/faults`. Spec: [`api/market-data-service.yaml`](../../api/market-data-service.yaml);
+`GET /v1/time-travel/{ticker}?at=` and the replay WebSocket Q-13 `/v1/ws/replay/{ticker}` (both below). Internal A-12 `POST /internal/v1/faults`, A-13
+`DELETE /internal/v1/faults` (the chaos hook, below). Spec: [`api/market-data-service.yaml`](../../api/market-data-service.yaml);
 `tests/contract/test_response_schemas.py` validates the answers and the WebSocket messages against it. Until the
 start-up catch-up is done the queries answer `503 DEPENDENCY_UNAVAILABLE` and the WebSocket closes with `1011`.
 
@@ -116,6 +116,17 @@ not ready; trading is not affected.
 ## Scaling and operations
 
 Default 1 replica, agent may scale 1–5 (each replica consumes the full stream for its WebSocket clients; deterministic `CandleClosed` IDs make duplicates harmless). Memory limit 512 MiB. Chaos target for `MEMORY_LEAK`.
+
+**The memory-leak hook** (`api/faults.py`, `application/faults.py`; [chaos scenarios §3.2](../../docs/03-architecture/06-chaos-scenarios.md#32--memory-leak-memory_leak)).
+Only with `CHAOS_HOOKS_ENABLED=true` (staging and the demo prod); otherwise both routes answer 404. Only
+chaos-service may call them (network policy), and the gateway never forwards `/internal/`. A-12 `{"fault":
+"MEMORY_LEAK", "rate_mb_per_minute": 1..200}` starts a "cache that never evicts": every second it keeps another
+`rate / 60` MiB in anonymous memory with every page written, so the container's working set climbs in a straight line
+toward the limit; a second A-12 while it runs is `409 FAULT_ALREADY_ACTIVE`. A-13 stops it **and gives the memory
+back** (the maps are closed), so chaos-service's reset returns the service to normal without a restart; a restart
+(the SRE agent's fix) also clears it, because the leak lives only in the process. Nothing about the fault is a
+metric: the agent sees only the memory climbing. Switching it on and off is logged as `FaultInjected` /
+`FaultCleared` (INFO).
 
 ## Run and test it alone
 
