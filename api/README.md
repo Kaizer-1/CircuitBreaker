@@ -208,7 +208,9 @@ Pre-chaos hardening (2026-11-14): the engine remembers finished orders for one h
 memory of one hour"), so Q-15/Q-16 gain `forget_before`, each `closed` order gains `closed_at`, and the `state_hash`
 rule covers both (matching-engine spec 1.3.0; market-data spec 1.1.2 describes its hash accordingly).
 Phase 7 (chaos): order-service's concurrency limit, documented since Phase 0, was built: `503 OVERLOADED` with
-`Retry-After: 1` beyond 50 requests per pod (order-service spec 1.2.1).
+`Retry-After: 1` beyond 50 requests per pod (order-service spec 1.2.1); since 2026-11-26 it also closes the
+connection, so load can move to pods added by a scale-up (order-service spec 1.2.2; deployment doc, "Load balancing
+per connection").
 market-data's A-13 now gives back the leaked memory, so a chaos reset needs no restart (market-data spec 1.2.1).
 portfolio-service gained the "database degraded" chaos hook A-21/A-22 (portfolio spec 1.1.0), and bot-traders its
 first spec, the panic-sell hook A-23/A-24 (bot-traders spec 1.0.0).

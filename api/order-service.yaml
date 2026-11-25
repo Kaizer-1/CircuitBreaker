@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: order-service API
-  version: 1.2.1
+  version: 1.2.2
   summary: Accepts, validates and tracks orders.
   description: |
     Owned by the **Trading Team** (Kaizer Dewaswala). Reached from outside only through `api-gateway`,
@@ -10,7 +10,8 @@ info:
     order's status up to date from `matching.v1` events.
 
     Each pod handles at most 50 requests at once; beyond that an operation answers **503 `OVERLOADED`** with
-    `Retry-After: 1` at once, before reading or reserving anything (the traffic spike,
+    `Retry-After: 1` at once, before reading or reserving anything, and closes the connection
+    (`Connection: close`), so the caller's next connection may reach a less busy pod (the traffic spike,
     docs/03-architecture/06-chaos-scenarios.md section 3.3).
 
     Every operation's description starts with its SEED(S) action/query ID

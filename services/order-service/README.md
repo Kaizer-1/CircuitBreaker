@@ -176,7 +176,10 @@ everything and every request gets slow; with it the requests it takes stay fast 
 traffic spike, [chaos scenarios §3.3](../../docs/03-architecture/06-chaos-scenarios.md#33--traffic-spike-traffic_spike)).
 It is checked after routing, so a turned-away request is counted under its route; `/healthz`, `/readyz` and
 `/metrics` are never turned away. `http_problems_total{code="OVERLOADED"}` counts them, which is how the SRE agent
-tells overload from a bad release (`INTERNAL_ERROR`).
+tells overload from a bad release (`INTERNAL_ERROR`). A turned-away request also closes its connection
+(`Connection: close`): a Kubernetes Service balances connections, not requests, so the gateway's busy keep-alive
+connections would otherwise stay with the overloaded pods and pods added by a scale-up would get almost nothing
+([deployment doc](../../docs/03-architecture/07-deployment-and-environments.md#load-balancing-per-connection)).
 
 **Chaos target** for `BAD_DEPLOY` and `TRAFFIC_SPIKE`. The bad deploy is chaos-service patching this Deployment with
 `FAULT_PROFILE=bad-release` (and `FAULT_ERROR_RATE`, default 0.4): a new rollout revision whose pods fail that share
