@@ -4,4 +4,4 @@
 matching-engine:
   image:
     registry: ghcr.io/kaizer-1
-    tag: "da7333f99990"
+    tag: "ab541abe27f0"
