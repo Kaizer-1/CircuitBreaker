@@ -2,6 +2,12 @@
 # Argo CD v3.6.2). Trimmed for one laptop: no Dex (single sign-on), no notifications, one replica of everything.
 # Reached with `make argocd` (a port-forward; it prints the admin password).
 
+# Pinned by tag AND digest (the multi-arch image index): coding standards section 1, "Images".
+# The chart has no digest field: the digest rides in the tag (its version label strips it).
+global:
+  image:
+    tag: v3.6.2@sha256:bbcc3b6e79c5963439bdc5170f6e20a52365b41878133fac5ce8d6810d2641dc
+
 dex:
   enabled: false
 notifications:
@@ -51,6 +57,8 @@ applicationSet:
     requests: {cpu: 20m, memory: 64Mi}
     limits: {cpu: 500m, memory: 256Mi}
 redis:
+  image:
+    tag: 8.6.4-alpine@sha256:2cc044fc5a07c9b701f8f1255a309ae9ad7856e694ac03513bf3648c01e40763
   resources:
     requests: {cpu: 20m, memory: 32Mi}
     limits: {cpu: 200m, memory: 128Mi}

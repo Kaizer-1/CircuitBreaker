@@ -13,7 +13,7 @@ x-kafka-env: &kafka-env
 services:
   # --------------------------------------------------------------------------- infrastructure
   redpanda:
-    image: redpandadata/redpanda:v26.2.6
+    image: redpandadata/redpanda:v26.2.6@sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce
     profiles: [infra]
     command:
       - redpanda
@@ -40,7 +40,7 @@ services:
       start_period: 20s
 
   redpanda-init:
-    image: redpandadata/redpanda:v26.2.6
+    image: redpandadata/redpanda:v26.2.6@sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce
     profiles: [infra]
     entrypoint: ["/bin/bash", "/init/create-topics.sh"]
     environment:
@@ -54,7 +54,7 @@ services:
     restart: "no"
 
   redpanda-console:
-    image: redpandadata/console:v3.13.1
+    image: redpandadata/console:v3.13.1@sha256:d72608f64c65a5631adca6c99b44d157cefb9edb0473ed58451f91affcfcfa1b
     profiles: [infra]
     environment:
       KAFKA_BROKERS: redpanda:9092
@@ -73,7 +73,7 @@ services:
       start_period: 15s
 
   cassandra:
-    image: cassandra:5.0.9
+    image: cassandra:5.0.9@sha256:5e996210152ab03e7e4af435ea853a6657954f1d6360ef1283f56cdbd8ad5020
     profiles: [infra]
     entrypoint: ["/bin/bash", "/opt/cb/entrypoint.sh"]
     command: ["cassandra", "-f"]
@@ -99,7 +99,7 @@ services:
       start_period: 60s
 
   cassandra-init:
-    image: cassandra:5.0.9
+    image: cassandra:5.0.9@sha256:5e996210152ab03e7e4af435ea853a6657954f1d6360ef1283f56cdbd8ad5020
     profiles: [infra]
     entrypoint: ["/bin/bash", "/init/init-keyspaces.sh"]
     environment:
@@ -113,7 +113,7 @@ services:
     restart: "no"
 
   postgres:
-    image: postgres:16.15
+    image: postgres:16.15@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657
     profiles: [infra]
     environment:
       POSTGRES_PASSWORD: postgres # admin password, local development only

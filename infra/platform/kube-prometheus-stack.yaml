@@ -55,12 +55,23 @@ kubelet:
 kubeStateMetrics:
   enabled: true
 kube-state-metrics:
+  image:
+    tag: v2.20.0
+    sha: sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b # tag and digest (coding standards section 1, "Images")
   collectors: [pods, deployments, statefulsets, replicasets, jobs]
   resources:
     requests: {cpu: 10m, memory: 32Mi}
     limits: {cpu: 200m, memory: 96Mi}
 
 prometheusOperator:
+  # Tag and digest (coding standards section 1, "Images"); this chart's `sha` is the bare hex.
+  image:
+    tag: v0.94.2
+    sha: c7edf0379b7271ef1705dce258d2bb73820e299cc95559369e9f6fc3321639ec
+  prometheusConfigReloader:
+    image:
+      tag: v0.94.2
+      sha: a1897c67478bc23434534e91ad3855280771196b1daf17144db9dbcb655bef71
   # The validating webhook needs a certificate Job and a cert-manager-like dance; the rules are checked in CI
   # (promtool) instead.
   admissionWebhooks:
@@ -81,6 +92,9 @@ prometheus:
     paths: [/]
     pathType: Prefix
   prometheusSpec:
+    image:
+      tag: v3.16.0-distroless
+      sha: 9764044e09eb2c9e1abdb12d0f0188d4efb7384b0262d3c080f0fc59045c89ba
     # Every alert must fire within ~30 s of its condition (chaos scenarios section 5): 10 s scrapes and 10 s rule
     # evaluation, so a 20-30 s `for` adds up to about half a minute.
     scrapeInterval: 10s
@@ -105,6 +119,9 @@ prometheus:
 
 grafana:
   enabled: true
+  image:
+    tag: 13.3.0-distroless
+    sha: 540b8afb775bf34aefce417e4329039daa5d44b6f2fbda6881397b1b247ca7df
   # The chart's ~30 Kubernetes dashboards: off. Ours: observability/dashboards/.
   defaultDashboardsEnabled: false
   # The admin login comes from a Secret (make k8s-up: the local placeholder; Phase 6: Terraform).
@@ -134,6 +151,9 @@ grafana:
   testFramework:
     enabled: false
   sidecar:
+    image:
+      tag: 2.14.3
+      sha: 52d311dcedd587421a236c4d6c621f05614c40a51386e955e0699dca97ec0880
     dashboards:
       enabled: true
       label: grafana_dashboard

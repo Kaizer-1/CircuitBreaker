@@ -124,7 +124,7 @@ test-e2e: ## End-to-end checks on the running stack: trade, kill -9 the engine, 
 k8s-lint: ## Charts and alert rules without a cluster: helm lint, render, kubeconform, promtool (needs Docker)
 	@bash scripts/k8s_lint.sh
 
-PROMETHEUS_IMAGE := quay.io/prometheus/prometheus:v3.16.0
+PROMETHEUS_IMAGE := quay.io/prometheus/prometheus:v3.16.0@sha256:9332054523223e2ddc18d8101799d54a4a8d823b030c53216f063a6c117773cd
 test-alerts: ## promtool: check the alert rules and run their unit tests (observability/tests; needs Docker)
 	docker run --rm -v "$(CURDIR)/observability:/obs:ro" -w /obs/tests --entrypoint promtool $(PROMETHEUS_IMAGE) \
 	  check rules /obs/alerts/services.yaml /obs/alerts/platform.yaml
