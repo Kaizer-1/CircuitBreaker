@@ -4,4 +4,4 @@
 market-data-service:
   image:
     registry: ghcr.io/kaizer-1
-    tag: "b79dc7469c52"
+    tag: "da7333f99990"
