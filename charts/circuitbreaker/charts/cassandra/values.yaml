@@ -1,4 +1,4 @@
-image: cassandra:5.0.9 # the Compose image (Docker official image, Apache License 2.0)
+image: cassandra:5.0.9@sha256:5e996210152ab03e7e4af435ea853a6657954f1d6360ef1283f56cdbd8ad5020 # the Compose image (Docker official image, Apache License 2.0)
 storage: 4Gi
 # App names allowed to connect (CQL 9042).
 allowFrom: []

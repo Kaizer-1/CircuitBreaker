@@ -689,6 +689,33 @@ trade settled, with no pull errors; then on staging, running the images CI pushe
 Argo CD cannot reach GitHub while offline. The running system does not need it:
 the cluster keeps running what it last synced.
 
+### Every image pinned by digest
+
+Since Phase 7 (owner's decision, 2026-11-25) every image the platform pulls is named by **tag and digest**, the
+digest of the multi-architecture image index (one reference for the laptop's arm64 and CI's amd64). A tag can be moved
+to other content; a digest cannot, so prepull, the offline check and every rebuild get exactly the bytes that were
+tested. The prepull list is built from what the charts render and the pods run, so it carries the digests by itself.
+How to update one on purpose: [coding standards §1](../05-coding-standards.md#1-languages-and-tools).
+
+| Images | Where the digest is set | How the chart takes it |
+|---|---|---|
+| Our services' bases: `python:3.12-slim`, `uv`, `node:24-alpine`, `nginx-unprivileged`, the Dockerfile frontend | `services/order-service/Dockerfile` (copied to all eight), `web/Dockerfile` | `FROM name:tag@sha256:…` |
+| Data stores: Cassandra 5.0.9, Postgres 16.15, Redpanda v26.2.6 (and Redpanda Console v3.13.1 in Compose) | `charts/circuitbreaker/charts/<store>/values.yaml`, `docker-compose.yml` | `image: name:tag@sha256:…` |
+| Traefik v3.7.17 | `infra/platform/traefik.yaml` | `image.digest` (+ `versionOverride`: the chart's feature checks need the version) |
+| Argo CD v3.6.2 and its Redis 8.6.4 | `infra/platform/argo-cd.yaml` | No digest field: `tag: v3.6.2@sha256:…` (the chart's version label strips the digest) |
+| Prometheus, prometheus-operator, its config reloader, Grafana, Grafana's dashboard sidecar, kube-state-metrics | `infra/platform/kube-prometheus-stack.yaml` | `image.sha` (bare hex in kube-prometheus-stack and Grafana; `sha256:…` in kube-state-metrics) |
+| Loki 3.7.9 | `infra/platform/loki.yaml` | `loki.image.digest` |
+| Alloy v1.21.3 (its config reloader is pinned by the chart already) | `infra/platform/alloy.yaml` | `image.digest` |
+| The Sealed Secrets controller, the smoke tests' Python, Trivy, promtool | their values / workflow / Makefile | pinned before Phase 7, except promtool (now) |
+
+**Not pinned by digest, and why:**
+
+| Images | Why not |
+|---|---|
+| Kubernetes' own: the API server, scheduler, controller manager, etcd, CoreDNS, kube-proxy, kindnet, the local-path provisioner | Never pulled: they ship inside the kind node image, which is pinned by digest (`infra/kind/cluster.yaml`). Pinning the node pins them. |
+| Our own images on GHCR (`<service>:<commit sha>`) | Named by the 12-character commit they were built from, and CI never pushes a tag twice (build once, ADR-0014); the promotion copies the tag staging tested. Moving them to digests would mean CI writing a digest into `deploy/envs/` in the same commit: possible, but out of scope (Later list). |
+| Images only the CI runner uses that GitHub's actions pull themselves (the runner image, `actions/*` steps) | Pinned by action version, not by us; outside the cluster and the demo. |
+
 ## 5. Infrastructure as Code (Terraform)
 
 > **Infrastructure as Code (IaC):** infrastructure described in versioned files and created by a tool, so any

@@ -1,4 +1,4 @@
-image: redpandadata/redpanda:v26.2.6 # the Compose image (Business Source License, free; ADR-0018)
+image: redpandadata/redpanda:v26.2.6@sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce # the Compose image (Business Source License, free; ADR-0018)
 storage: 2Gi
 # App names allowed to connect (Kafka API 9092).
 allowFrom: []

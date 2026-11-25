@@ -19,12 +19,19 @@
 | Kubernetes | kind, kubectl, Helm 3 | |
 | IaC and deployment | Terraform ≥ 1.6 (kind, kubernetes, helm providers), Argo CD; LocalStack optional | |
 
-### Base images: pinned by digest
+### Images: pinned by digest
 
 Every image a Dockerfile builds on is named by **tag and digest**: `FROM python:3.12-slim@sha256:1910…` (the
 services' template, copied to all eight), the `uv` binary's image, `node:24-alpine` and `nginx-unprivileged` (web),
 and the `# syntax=docker/dockerfile:1@sha256:…` build frontend. The digest is the multi-architecture index's
 (`docker buildx imagetools inspect <image> --format '{{json .Manifest}}'`), so the amd64 and arm64 builds both use it.
+
+**Every image we run but do not build is pinned the same way** (owner's decision, 2026-11-25): the data stores
+(Cassandra, Postgres, Redpanda, Redpanda Console) in their charts and in `docker-compose.yml`, and the platform's
+images where its Helm chart lets us (Traefik, Argo CD and its Redis, kube-prometheus-stack's Prometheus, operator,
+config reloader, Grafana and its sidecar, kube-state-metrics, Loki, Alloy) in `infra/platform/`, plus Prometheus'
+`promtool` image in the `Makefile`. What cannot be pinned, and why, is listed in the
+[deployment doc](03-architecture/07-deployment-and-environments.md) ("Every image pinned by digest").
 
 > **Tag vs digest:** a tag (`3.12-slim`) is a name the publisher can point at different content at any time, and they
 > do (security rebuilds, new patch releases). A digest (`sha256:…`) is the hash of the content itself: it can only
@@ -44,6 +51,15 @@ hour at 57 KB/s).
    that has a fix ([deployment §4](03-architecture/07-deployment-and-environments.md)).
 3. CI bumps staging; the PostSync smoke tests and the usual checks run there; `make promote` takes it to prod.
 4. Run `make k8s-prepull` afterwards, so the demo laptop has the new layers before it goes offline.
+
+**To update a data store or platform image**, the same steps, with the digest changed where it is pinned (the chart's
+or `infra/platform/` values; for a data store also `docker-compose.yml`), and `make platform` for a platform image.
+**A data store needs one more check before merging: its data must still be readable.** A new version may change the
+format of the files it keeps on disk (Cassandra's SSTables, Postgres' data directory, Redpanda's log segments), and a
+major upgrade often does: Postgres 16 cannot open a Postgres 17 data directory without `pg_upgrade`. Read the release
+notes for on-disk format changes, then start the new image on a copy of real data (Compose: the existing volumes;
+kind: staging first) and run `make test-e2e`. If the format changed, the upgrade needs a migration plan of its own,
+not a digest bump.
 
 ## 2. Repository layout (monorepo)
 
