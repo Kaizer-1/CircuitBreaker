@@ -4,4 +4,4 @@
 chaos-service:
   image:
     registry: ghcr.io/kaizer-1
-    tag: "da7333f99990"
+    tag: "dd8fdc6b5bbd"
