@@ -436,6 +436,7 @@ flowchart LR
 | Push | To GHCR with the job's own `GITHUB_TOKEN` (`packages: write` for this job only). Pull requests from this repository push too | A pull request's images can be tried on staging before merging. They run nowhere until a commit names their tag |
 | Tag bump (`deploy-staging` job) | Only on `main`, only after **every** job passed: `gitops_images.py bump` writes the registry and tag into `deploy/envs/staging/<name>.yaml`, one commit per image, and pushes | What reaches staging was tested and scanned; one commit per service keeps each `git revert` clean (ADR-0016) |
 | No loop | Pushes to `main` that change only `deploy/envs/**` do not start CI (`paths-ignore`) | The tag bumps and promotions change nothing to test or build |
+| Documentation only (2026-11-26) | A first job, `changes` (`tools/ci_changes.py`), compares the change with its base. When every changed file is documentation (under `docs/`, or a `.md` file anywhere), the image builds and manifests, the integration tests and the end-to-end run are skipped, and on `main` so is the tag bump (nothing new to deploy). Lint, unit and contract tests, the chart and Terraform checks, web and gitleaks still run. With no base to compare (a new branch, a force push) or a diff that fails, everything runs | Documentation cannot change an image or what the system does. The checks that do read documentation still run (the event catalog is compared with the event schemas) |
 
 **Found while testing (2026-11-24): the first images could not run on the laptop.** CI built them on GitHub's
 standard runner (`amd64`); the laptop's kind node is `arm64`, and containerd refused the pull: "no match for platform
@@ -451,8 +452,12 @@ job, takes about 10 minutes. With staging pointed at those images (one commit pe
 staging pods ran them 91 s after the sync started, and a demo trade settled on them. The next run of the pull request
 found every folder unchanged since the tag staging runs, so it built and scanned but pushed nothing.
 
-A pull request always builds and scans all nine images, so a Dockerfile change or a new vulnerability in a base image
-shows before merging. On `main` only the changed ones are built. Because our pull requests are merged with merge
+**Documentation-only changes, measured.** Before the rule, PR #15 (the README alone) ran the full pipeline: 46 jobs,
+10 minutes, 29.8 runner-minutes, of which the end-to-end run took 9.9 and the 27 image jobs 10.1. The rule was added at
+the owner's request (2026-11-26): a public repository's Actions minutes are free, but the wait is not.
+
+A pull request that changes code always builds and scans all nine images, so a Dockerfile change or a new
+vulnerability in a base image shows before merging. On `main` only the changed ones are built. Because our pull requests are merged with merge
 commits, a pull request's commits stay in `main`'s history: if staging was tested with a pull request's images, `main`
 finds those folders unchanged and keeps exactly the images that were tested (squash merges would lose the commit,
 and the plan would simply build again).
@@ -810,6 +815,12 @@ they never close, so they stay with the two old pods. Our fix is in the overload
 away (`503 OVERLOADED`) it also closes that connection, and the gateway's next connection may land on a new pod. The
 platform-level answer is a service mesh, which balances every request; we did not add one, for the memory and the
 extra moving parts on a single laptop.
+
+**Q: A pull request that changes only documentation skips the image builds and the end-to-end run. Isn't that risky?**
+A: Those jobs test what documentation cannot change: the images and what the running system does. Every check that
+does read documentation still runs (the event catalog against the event schemas, retired names, gitleaks), and so do
+lint and unit tests. The rule only says "documentation only" when every changed file is under `docs/` or a `.md` file;
+anything else, or a change it cannot compare with its base, runs everything.
 
 **Q: Why not HPA?**
 A: The HorizontalPodAutoscaler sees only CPU and memory. The SRE agent sees error rates, deploy history and business
