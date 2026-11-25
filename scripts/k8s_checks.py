@@ -2281,6 +2281,7 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
                 )
             runs.append(result)
             out = ROOT / "build" / "chaos" / f"{args.label}.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(runs, indent=2))  # after every run: a stopped series keeps it
     return ok
 
