@@ -82,17 +82,17 @@ flowchart LR
 
 Full diagrams: [system architecture](docs/03-architecture/01-system-architecture.md).
 
-| Service | Responsibility | Owner |
-|---|---|---|
-| [`api-gateway`](services/api-gateway/README.md) | Sessions/JWT, routing, rate limits, WebSocket proxy | MD Asif Ali |
-| [`order-service`](services/order-service/README.md) | Validate, reserve, track orders | Kaizer Dewaswala |
-| [`matching-engine`](services/matching-engine/README.md) | Price-time matching, market event store | Kaizer Dewaswala |
-| [`market-data-service`](services/market-data-service/README.md) | Candles, depth, live streams, time travel | MD Asif Ali |
-| [`portfolio-service`](services/portfolio-service/README.md) | Accounts, reservations, settlement, leaderboard | MD Asif Ali |
-| [`bot-traders`](services/bot-traders/README.md) | 20 automated traders | Kaizer Dewaswala |
-| [`sre-agent`](services/sre-agent/README.md) | Detect, diagnose, remediate, explain | Kaizer Dewaswala |
-| [`chaos-service`](services/chaos-service/README.md) | Controlled failure injection | Mohammad Oweis |
-| [`web`](web/README.md) | Trader, presenter and admin UI | Kaizer Dewaswala |
+| Service | Responsibility |
+|---|---|
+| [`api-gateway`](services/api-gateway/README.md) | Sessions/JWT, routing, rate limits, WebSocket proxy |
+| [`order-service`](services/order-service/README.md) | Validate, reserve, track orders |
+| [`matching-engine`](services/matching-engine/README.md) | Price-time matching, market event store |
+| [`market-data-service`](services/market-data-service/README.md) | Candles, depth, live streams, time travel |
+| [`portfolio-service`](services/portfolio-service/README.md) | Accounts, reservations, settlement, leaderboard |
+| [`bot-traders`](services/bot-traders/README.md) | 20 automated traders |
+| [`sre-agent`](services/sre-agent/README.md) | Detect, diagnose, remediate, explain |
+| [`chaos-service`](services/chaos-service/README.md) | Controlled failure injection |
+| [`web`](web/README.md) | Trader, presenter and admin UI |
 
 **Stack:** Python 3.12 + FastAPI · Redpanda · Cassandra · Postgres · React + Vite + TradingView Lightweight Charts ·
 Docker Compose → kind + Helm · Argo CD (GitOps) · Prometheus, Grafana, Loki · Terraform · GitHub Actions · LLM via OpenRouter.
@@ -117,16 +117,9 @@ Read them in this order — each builds on the previous one.
 
 Every document ends with **Viva Notes**: likely examiner questions with short answers.
 
-## Team
+## Author
 
-Designed with the textbook's five-step team topology ([details](docs/04-team-topology.md)); three people play
-several team roles each.
-
-| Person | Team roles |
-|---|---|
-| Kaizer Dewaswala | System Design (enabling) · Trading (stream-aligned) · SRE agent (enabling) |
-| MD Asif Ali | Market Insights (stream-aligned) · API Team (stream-aligned) |
-| Mohammad Oweis | Cloud Platform (platform) · Release & Reliability (complicated-subsystem) |
+Built by Kaizer Dewaswala ([@Kaizer-1](https://github.com/Kaizer-1)).
 
 ## Viva Notes
 
