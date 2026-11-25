@@ -4,4 +4,4 @@
 order-service:
   image:
     registry: ghcr.io/kaizer-1
-    tag: "6774a51ef91f"
+    tag: "d77f505a30b8"
