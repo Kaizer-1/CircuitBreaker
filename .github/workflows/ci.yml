@@ -1,6 +1,7 @@
 # Runs on every push to main and every pull request. Images are built once, scanned (Trivy) and pushed to GHCR;
 # on main, once every job has passed, CI commits the new image tags to deploy/envs/staging/ and Argo CD deploys
-# them (ADR-0014; deployment doc section 4).
+# them (ADR-0014; deployment doc section 4). A change to documentation only (docs/, *.md) skips the image builds,
+# the integration tests and the end-to-end run, which it cannot affect (the `changes` job).
 name: CI
 
 on:
@@ -32,6 +33,23 @@ env:
   TRIVY_SHA256_ARM64: "ab9d51f86e6a5fb936f605faff6b593ac51bc378fff4d3e8b9d58358b9c367c3"
 
 jobs:
+  changes:
+    name: documentation only? (then no images, integration or end-to-end)
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the base commit must be here to compare with
+      - name: Classify the change (tools/ci_changes.py; when in doubt, code)
+        id: classify
+        env:
+          # A pull request: its base and head; a push to main: the commit before and this one.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 tools/ci_changes.py "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
+
   python:
     name: ${{ matrix.service }} (lint, types, tests)
     runs-on: ubuntu-latest
@@ -67,6 +85,8 @@ jobs:
 
   integration:
     name: ${{ matrix.service }} (integration tests, real stores in Docker)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -90,6 +110,8 @@ jobs:
 
   e2e:
     name: end to end in Compose (demo trade, kill -9 the engine, orphan rule)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -156,6 +178,8 @@ jobs:
         run: python3 tools/check_template_drift.py
       - name: retired instrument names appear only in dated history notes
         run: python3 tools/check_retired_names.py
+      - name: CI's documentation-only rule (tools/ci_changes.py)
+        run: python3 tools/ci_changes.py --self-test
       - name: Sealed secrets are sealed (the other half of the gitleaks allowlist)
         run: python3 tools/check_sealed_secrets.py
       - name: docker-compose.yml is valid
@@ -215,6 +239,8 @@ jobs:
     name: image ${{ matrix.image }} ${{ matrix.arch }} (build once, Trivy, GHCR)
     # Each architecture on its own runner, natively: amd64, and arm64 for the demo laptop (Apple Silicon). No
     # emulation, so an arm64 build takes as long as an amd64 one.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -290,7 +316,8 @@ jobs:
 
   manifests:
     name: image ${{ matrix.image }} (one tag, both architectures)
-    needs: images
+    needs: [changes, images]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -340,7 +367,8 @@ jobs:
 
   deploy-staging:
     name: staging tag bumps (GitOps, one commit per service)
-    # Only on main, only after every job passed: what reaches staging was tested and scanned.
+    # Only on main, only after every job passed: what reaches staging was tested and scanned. A documentation-only
+    # push skips it too (the jobs it needs were skipped: there is no new image to deploy).
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [python, integration, e2e, contracts, kubernetes, terraform, web, images, manifests, gitleaks]
     runs-on: ubuntu-latest
