@@ -1,9 +1,12 @@
 """Reverse proxy: forward a public /v1 request to the service that owns it (spec x-upstream)."""
 
 import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import httpx
 from fastapi import Request, Response
+from prometheus_client import Counter
 
 from api_gateway.domain.sessions import Principal
 from api_gateway.runtime.jsonlog import correlation_id_var
@@ -26,6 +29,16 @@ _HOP_BY_HOP = {
 }
 # Identity comes only from the verified JWT: a client must never set these itself.
 _IDENTITY_HEADERS = {"x-trader-id", "x-role", "x-nickname"}
+
+
+def count_connections(opened: Counter, upstream: str) -> Callable[[str, Any], Awaitable[None]]:
+    """An httpcore trace hook: counts each new TCP connection to the upstream."""
+
+    async def trace(event: str, info: Any) -> None:
+        if event == "connection.connect_tcp.complete":
+            opened.labels(upstream).inc()
+
+    return trace
 
 
 async def proxy_request(request: Request, upstream: str, principal: Principal) -> Response:
@@ -63,6 +76,11 @@ async def proxy_request(request: Request, upstream: str, principal: Principal) -
             params=params,
             headers=headers,
             content=await request.body(),
+            extensions={
+                "trace": count_connections(
+                    request.app.state.business_metrics.upstream_connections_opened, upstream
+                )
+            },
         )
     except httpx.HTTPError as exc:
         logger.warning(
