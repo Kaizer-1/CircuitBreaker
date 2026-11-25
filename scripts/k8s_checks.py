@@ -470,6 +470,7 @@ def check_scale(args: argparse.Namespace) -> bool:
     the bots' accounts), so the bot fleet is stopped while it runs and started again after.
     """
     require_mains_power("this measurement")
+    require_quiet_host("this measurement")
     low, high = 2, args.to
     heading(
         f"Capacity: {args.rate:.0f} req/s ({args.mix}), {low} then {high} order-service replicas"
@@ -625,6 +626,7 @@ def cassandra_pauses(env: str, start: float, end: float) -> dict[str, float]:
 def check_profile(args: argparse.Namespace) -> bool:
     """The same load at each replica count; for each, where a placement's time went."""
     require_mains_power("this measurement")
+    require_quiet_host("this measurement")
     heading(f"Profile '{args.label}': {args.rate:.0f} req/s ({args.mix}), replicas {args.replicas}")
     bots_were_on = args.mix == "panic" and bots_enabled(args.env)
     if bots_were_on:
@@ -1607,6 +1609,28 @@ def require_mains_power(what: str) -> None:
         )
 
 
+QUIET_LOAD = 8.0  # runbook step 0: above this, find what else is busy
+QUIET_WAIT = 180
+
+
+def require_quiet_host(what: str) -> None:
+    """A busy Mac makes every measured time longer (2026-11-25: 9.4 GB of swap after 116 days of
+    uptime, load 10-14). Wait up to 3 minutes for the 1-minute load to fall to 8 or less; otherwise
+    stop instead of measuring (owner's rule, 2026-11-25), like a run on battery."""
+    deadline = time.monotonic() + QUIET_WAIT
+    load = os.getloadavg()[0]
+    while load > QUIET_LOAD and time.monotonic() < deadline:
+        print(f"    {DIM}host load {load:.1f} > {QUIET_LOAD:.0f}: waiting{RESET}", flush=True)
+        time.sleep(15)
+        load = os.getloadavg()[0]
+    if load > QUIET_LOAD:
+        sys.exit(
+            f"{RED}STOPPED{RESET} before {what}: the Mac's 1-minute load is {load:.1f} (more than"
+            f" {QUIET_LOAD:.0f} for {QUIET_WAIT // 60} minutes). Close other apps (runbook step 0);"
+            " nothing was measured."
+        )
+
+
 class HostWatch:
     """The Mac's 1-minute load and its power source every 10 s while measurements run, saved next
     to the results (as the calibration did): a busy or unplugged Mac explains a slow run."""
@@ -1722,10 +1746,23 @@ def normal(env: str) -> tuple[bool, str]:
         " > 0)"
     )
     replicas = deployment(env, "order-service")["spec"]["replicas"]
-    ok = (errors or 0) < 0.01 and (p95 or 0) < 0.5 and (memory or 0) < 0.5 and replicas == 2
+    drifted = [
+        a["metadata"]["name"]
+        for a in json.loads(kubectl("get", "applications", "-n", ARGOCD, "-o", "json"))["items"]
+        if a["metadata"]["name"].endswith(f"-{env}")
+        and a.get("status", {}).get("sync", {}).get("status") != "Synced"
+    ]
+    ok = (
+        (errors or 0) < 0.01
+        and (p95 or 0) < 0.5
+        and (memory or 0) < 0.5
+        and replicas == 2
+        and not drifted
+    )
     return ok, (
         f"errors {100 * (errors or 0):.1f}%, p95 {1000 * (p95 or 0):.0f} ms, market-data memory"
-        f" {100 * (memory or 0):.0f}% of its limit, order-service {replicas} replicas"
+        f" {100 * (memory or 0):.0f}% of its limit, order-service {replicas} replicas,"
+        f" Argo CD {'OutOfSync: ' + ', '.join(drifted) if drifted else 'all Synced'}"
     )
 
 
@@ -1870,6 +1907,7 @@ def chaos_runs(args: argparse.Namespace, runs: list[dict[str, Any]], host: HostW
         for run in range(1, args.runs + 1):
             wait_quiet(env, WATCHED, timeout=300)
             require_mains_power(f"{scenario} run {run}")
+            require_quiet_host(f"{scenario} run {run}")
             params = {"rate_mb_per_minute": args.leak_rate} if name == "leak" else None
             body: dict[str, Any] = {"scenario": scenario}
             if params:

@@ -17,11 +17,15 @@ class FakeApiServer:
         self.env: list[dict[str, Any]] = [{"name": "LOG_LEVEL", "value": "INFO"}]
         self.revision = 7
         self.replicas = 2
+        self.change_cause: str | None = "release 0.5.0 (da7333f99990)"  # what Git (the chart) says
         self.requests: list[tuple[str, str, str | None, Any]] = []
 
     def deployment(self) -> dict[str, Any]:
+        annotations = {"deployment.kubernetes.io/revision": str(self.revision)}
+        if self.change_cause is not None:
+            annotations["kubernetes.io/change-cause"] = self.change_cause
         return {
-            "metadata": {"annotations": {"deployment.kubernetes.io/revision": str(self.revision)}},
+            "metadata": {"annotations": annotations},
             "spec": {
                 "template": {"spec": {"containers": [{"name": "order-service", "env": self.env}]}}
             },
@@ -38,6 +42,7 @@ class FakeApiServer:
             return httpx.Response(200, json={"spec": {"replicas": self.replicas}})
         assert request.url.path == BASE  # never any other object
         if request.method == "PATCH":
+            self.change_cause = body["metadata"]["annotations"]["kubernetes.io/change-cause"]
             for change in body["spec"]["template"]["spec"]["containers"][0]["env"]:
                 self.env = [e for e in self.env if e["name"] != change["name"]]
                 if change.get("$patch") != "delete":
@@ -68,9 +73,10 @@ async def test_the_bad_release_is_a_strategic_merge_patch_and_a_new_revision(
     assert [e["name"] for e in server.env] == ["LOG_LEVEL", "FAULT_PROFILE", "FAULT_ERROR_RATE"]
     assert await k8s.bad_release_running()
 
+    assert server.change_cause == "release 1.4.1"
     assert await k8s.remove_bad_release()
-    patch = server.requests[-1][3]
-    assert patch["metadata"]["annotations"] == {"kubernetes.io/change-cause": None}
+    # Git's change-cause comes back with the template, so Argo CD sees the Deployment Synced again
+    assert server.change_cause == "release 0.5.0 (da7333f99990)"
     assert server.env == [{"name": "LOG_LEVEL", "value": "INFO"}]  # the template as it was
     assert not await k8s.remove_bad_release()  # nothing to remove: no PATCH sent
     assert server.requests[-1][0] == "GET"

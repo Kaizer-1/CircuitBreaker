@@ -7,10 +7,15 @@ environment module allows exactly these verbs on exactly `deployments/order-serv
 
 The bad release adds FAULT_PROFILE and FAULT_ERROR_RATE to the container's env and sets the
 Deployment's change-cause to "release 1.4.1": a new rollout revision, like a developer's deploy.
-Removing them restores the previous pod template exactly, so Kubernetes reuses the old ReplicaSet.
+Removing them restores the previous pod template exactly, so Kubernetes reuses the old ReplicaSet,
+and puts back the change-cause Git gave it (the chart writes "release <version> (<tag>)"), so the
+Argo CD Application is Synced again. That value is remembered in this process only: after a
+chaos-service restart the reset removes the annotation, and Argo CD shows the Deployment
+OutOfSync until the next sync (`make sync env=<env> apply=yes`).
 """
 
 import asyncio
+import logging
 import ssl
 from pathlib import Path
 from typing import Any
@@ -27,12 +32,15 @@ CHANGE_CAUSE = "kubernetes.io/change-cause"
 REVISION = "deployment.kubernetes.io/revision"
 BAD_RELEASE = "release 1.4.1"
 
+logger = logging.getLogger("kubernetes")
+
 
 class KubernetesOrderService:
     def __init__(self, client: httpx.AsyncClient, api: str, namespace: str, token: str) -> None:
         self._client = client
         self._base = f"{api}/apis/apps/v1/namespaces/{namespace}/deployments/{DEPLOYMENT}"
         self._auth = {"Authorization": f"Bearer {token}"}
+        self._release: str | None = None  # the change-cause before the bad release
 
     @classmethod
     def in_cluster(cls, client_factory: Any = httpx.AsyncClient) -> "KubernetesOrderService":
@@ -74,7 +82,9 @@ class KubernetesOrderService:
 
     async def deploy_bad_release(self, error_rate: float) -> int | None:
         before = await self._deployment()
-        revision = int(before["metadata"].get("annotations", {}).get(REVISION, "0"))
+        annotations = before["metadata"].get("annotations", {})
+        revision = int(annotations.get(REVISION, "0"))
+        self._release = annotations.get(CHANGE_CAUSE)
         patch = {
             "metadata": {"annotations": {CHANGE_CAUSE: BAD_RELEASE}},
             "spec": {
@@ -105,8 +115,10 @@ class KubernetesOrderService:
     async def remove_bad_release(self) -> bool:
         if not await self.bad_release_running():
             return False
+        if self._release is None:
+            logger.warning("the change-cause before the bad release is not known: removing it")
         patch = {
-            "metadata": {"annotations": {CHANGE_CAUSE: None}},
+            "metadata": {"annotations": {CHANGE_CAUSE: self._release}},
             "spec": {
                 "template": {
                     "spec": {
@@ -121,6 +133,7 @@ class KubernetesOrderService:
             },
         }
         await self._request("PATCH", self._base, patch, "application/strategic-merge-patch+json")
+        self._release = None
         return True
 
     async def replicas(self) -> int:
