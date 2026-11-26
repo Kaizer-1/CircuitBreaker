@@ -80,8 +80,10 @@ class PanicSell:
     ) -> PanicState:
         if self.state is not None:
             raise PanicAlreadyRunningError(self.state)
-        if not self._sessions:  # its own sessions: works whether or not the bots are trading
-            self._sessions = [await self._exchange.login(a) for a in self._accounts]
+        # Its own sessions, made afresh for each burst: they work whether or not the bots are
+        # trading, and a token from an earlier burst may have expired (tokens last 12 hours; on
+        # staging, 2026-11-26, a panic a day after the first sent only 401s and no load at all).
+        self._sessions = [await self._exchange.login(a) for a in self._accounts]
         self.state = PanicState(requests_per_second, duration_seconds, now)
         self._task = asyncio.create_task(self._run(self.state))
         details = {"fault": "PANIC_SELL", "requests_per_second": requests_per_second}

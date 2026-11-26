@@ -28,9 +28,13 @@ class FakeExchange:
         self.clock = clock
         self.sent: list[tuple[float, str, str, str]] = []  # (time, kind, account, ticker)
         self.gate: asyncio.Event | None = None  # set: answers wait for it
+        self.tokens: set[str] = set()
+
+        self.logins = 0
 
     async def login(self, account: str) -> Session:
-        return Session(account, f"id-{account}", f"token-{account}")
+        self.logins += 1
+        return Session(account, f"id-{account}", f"token-{account}-{self.logins}")
 
     async def _answer(self) -> None:
         if self.gate is not None:
@@ -38,6 +42,7 @@ class FakeExchange:
 
     async def market_sell(self, session: Session, ticker: str) -> int:
         self.sent.append((self.clock[0], "SELL", session.account, ticker))
+        self.tokens.add(session.token)
         await self._answer()
         return 202
 
@@ -132,6 +137,21 @@ async def test_stopping_ends_it_at_once_and_a_second_start_is_refused() -> None:
     assert not await panic.stop()
     await asyncio.sleep(0)
     assert len(exchange.sent) == sent
+
+
+async def test_every_burst_logs_in_afresh_so_no_token_is_from_an_earlier_one() -> None:
+    """A token lasts 12 hours: a burst a day after the first must not reuse the first's
+    tokens (staging, 2026-11-26: every request 401, no load reached order-service)."""
+    now, sleep = virtual_time()
+    exchange = FakeExchange(now)
+    panic = PanicSell(exchange, rng=seeded(), clock=lambda: now[0], sleep=sleep)  # type: ignore[arg-type]
+    for burst in (1, 2):
+        exchange.tokens.clear()
+        await panic.start(40, 2, NOW)
+        await panic.wait()
+        assert exchange.logins == 20 * burst
+        first_token_of_burst = {f"token-bot-{n:02d}-{20 * (burst - 1) + n}" for n in range(1, 21)}
+        assert exchange.tokens <= first_token_of_burst
 
 
 @pytest.fixture
