@@ -21,6 +21,7 @@ dev = [
   "types-pyyaml>=6,<7",
   "ruff>=0.17,<1",
   "mypy>=2.4,<3",
+  "jsonschema[format-nongpl]>=4.26,<5",
 ]
 
 [build-system]
@@ -54,4 +55,8 @@ files = ["src", "tests"]
 [[tool.mypy.overrides]]
 # Optional drivers: imported lazily in runtime/checks.py, and not every service installs every driver.
 module = ["aiokafka.*", "cassandra.*", "psycopg.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["jsonschema.*"]
 ignore_missing_imports = true
