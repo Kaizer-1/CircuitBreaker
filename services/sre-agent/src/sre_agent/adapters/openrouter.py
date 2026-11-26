@@ -152,7 +152,22 @@ class OpenRouterClient:
         if "error" in choice or "error" in payload:
             raise LLMUnavailableError("the provider reported an error")
         finish = choice.get("finish_reason")
-        calls = (choice.get("message") or {}).get("tool_calls") or []
+        message = choice.get("message") or {}
+        calls = message.get("tool_calls") or []
+        if finish in ("length", "content_filter") or len(calls) != 1:
+            # What came back, to tell a model's habit from a provider's fault (no evidence in it).
+            logger.warning(
+                "unusable answer",
+                extra={
+                    "generation": payload.get("id"),
+                    "provider": payload.get("provider"),
+                    "finish": finish,
+                    "native_finish": choice.get("native_finish_reason"),
+                    "choices": len(payload.get("choices") or []),
+                    "message_keys": sorted(message),
+                    "content": str(message.get("content") or "")[:200],
+                },
+            )
         if finish in ("length", "content_filter"):
             raise LLMUnavailableError(f"the answer was cut off ({finish})")
         if len(calls) != 1:
