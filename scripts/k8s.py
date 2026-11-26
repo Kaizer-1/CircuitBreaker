@@ -284,6 +284,9 @@ DEV_SECRETS = {
     "market-data-service-db": {"password": ("MARKET_DATA_DB_PASSWORD", "cb_dev_market_data")},
     "sre-agent-db": {"password": ("SRE_AGENT_DB_PASSWORD", "cb_dev_sre_agent")},
     "portfolio-service-db": {"password": ("PORTFOLIO_DB_PASSWORD", "cb_dev_portfolio")},
+    # The agent reads the placeholder as "no key": the rule-based fallback decides (ADR-0021).
+    # export OPENROUTER_API_KEY=... before make k8s-up to try the model while developing.
+    "openrouter-api-key": {"value": ("OPENROUTER_API_KEY", "PLACEHOLDER-filled-in-phase-7")},
 }
 
 

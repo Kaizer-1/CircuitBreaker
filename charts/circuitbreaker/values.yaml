@@ -185,8 +185,18 @@ sre-agent:
     CASSANDRA_CONTACT_POINTS: cassandra
     CASSANDRA_KEYSPACE: sre_agent
     CASSANDRA_USERNAME: sre_agent_role
+    # What it reads (read-only): the alerts and metrics of its own namespace, and its error logs.
+    PROMETHEUS_URL: "http://kube-prometheus-stack-prometheus.{{ .Values.global.observabilityNamespace }}.svc:9090"
+    LOKI_URL: "http://loki.{{ .Values.global.observabilityNamespace }}.svc:3100"
+    # Configuration, never a setting (SRE agent design section 4). Approval mode: on in prod, off in staging,
+    # until an admin changes it (A-14).
+    SRE_AGENT_MODEL: anthropic/claude-sonnet-5.5
   secretEnv:
     CASSANDRA_PASSWORD: {secret: sre-agent-db, key: password}
+    OPENROUTER_API_KEY: {secret: openrouter-api-key, key: value}
+  # Its Role (Terraform environment module): get/list/patch Deployments and their scale, read ReplicaSets and Pods,
+  # in its own namespace only. No delete, no exec, no Secrets, no StatefulSets.
+  kubernetesApi: true
   networkPolicy:
     allowFrom: [api-gateway]
 
