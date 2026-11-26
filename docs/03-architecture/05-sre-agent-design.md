@@ -66,8 +66,8 @@ The agent has **exactly four tools**. There are no read tools, no shell, no gene
 
 | Tool | Arguments | What our code does | Typical diagnosis |
 |---|---|---|---|
-| `rollback_deployment` | `service`, `explanation` | Two deterministic steps: **(a)** roll the Deployment back to the previous revision through the Kubernetes API (the equivalent of `kubectl rollout undo`); **(b)** if the bad version came from Git, open a `git revert` pull request so Git matches the cluster again ([below](#rollback-mitigate-fast-reconcile-through-git)). | A deploy happened shortly before errors started → bad release. |
-| `scale_deployment` | `service`, `replicas` (1–5), `explanation` | Set the Deployment's replica count. | Traffic far above normal, latency/saturation high, no recent deploy. Also scaling back down once a spike is over. |
+| `rollback_deployment` | `service`, `explanation` | Two deterministic steps: **(a)** roll the Deployment back to the previous revision through the Kubernetes API (the equivalent of `kubectl rollout undo`); **(b)** if the bad version came from Git, open a `git revert` pull request so Git matches the cluster again ([below](#rollback-mitigate-fast-reconcile-through-git)). | The trouble began with a **new release** (a pod template first run minutes ago): internal errors, crashes or memory climbing. Never a known-good release, such as the one just rolled back to (G7, [ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)). |
+| `scale_deployment` | `service`, `replicas` (1–5), `explanation` | Set the Deployment's replica count. | Errors are `OVERLOADED`, or latency is high with traffic far above normal, **whatever the revision**. Also scaling back down once a spike is over. |
 | `restart_deployment` | `service`, `explanation` | Rolling restart (new pods, same version; like `kubectl rollout restart`). | Memory climbing steadily with no deploy and normal traffic → leak; or stuck pods. |
 | `do_nothing` | `explanation` | Records the decision only. | Transient blip; already recovering; evidence unclear; another action is still taking effect. |
 
