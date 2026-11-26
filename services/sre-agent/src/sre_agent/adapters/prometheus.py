@@ -78,23 +78,40 @@ class PrometheusMetrics:
                 out[key] = out.get(key, 0.0) + n
         return out
 
-    async def series(self, query: str, minutes: int, step_seconds: int) -> list[float | None]:
+    async def _range(
+        self, query: str, minutes: int, step_seconds: int
+    ) -> tuple[list[dict[str, Any]], float, int]:
         end = datetime.now().timestamp()
         start = end - minutes * 60
         data = await self._get(
             "/api/v1/query_range",
             {"query": query, "start": start, "end": end, "step": step_seconds},
         )
-        rows = data.get("result", [])
-        points = int(minutes * 60 // step_seconds) + 1
+        return data.get("result", []), start, int(minutes * 60 // step_seconds) + 1
+
+    @staticmethod
+    def _aligned(row: dict[str, Any], start: float, step: int, points: int) -> list[float | None]:
         out: list[float | None] = [None] * points
-        if not rows:
-            return out
-        for ts, raw in rows[0].get("values", []):  # one series: the queries aggregate
-            i = round((float(ts) - start) / step_seconds)
+        for ts, raw in row.get("values", []):
+            i = round((float(ts) - start) / step)
             if 0 <= i < points:
                 out[i] = _number(raw)
         return out
+
+    async def series(self, query: str, minutes: int, step_seconds: int) -> list[float | None]:
+        rows, start, points = await self._range(query, minutes, step_seconds)
+        if not rows:
+            return [None] * points
+        return self._aligned(rows[0], start, step_seconds, points)  # the queries aggregate
+
+    async def series_by_label(
+        self, query: str, label: str, minutes: int, step_seconds: int
+    ) -> dict[str, list[float | None]]:
+        rows, start, points = await self._range(query, minutes, step_seconds)
+        return {
+            str(r.get("metric", {}).get(label, "")): self._aligned(r, start, step_seconds, points)
+            for r in rows
+        }
 
 
 def _number(raw: Any) -> float | None:

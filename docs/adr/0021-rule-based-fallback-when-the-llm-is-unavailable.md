@@ -38,7 +38,7 @@ carries the same three, so both paths reason from the same distinctions:
 | Fact | From | Values |
 |---|---|---|
 | **Error type** | `http_problems_total{code}` (every 5xx counted by its Problem Details code, 7a) | `INTERNAL_ERROR` (a bug), `OVERLOADED` (the 50-request limit), `DEPENDENCY_UNAVAILABLE` (an open breaker, or the gateway's upstream not answering); for the gateway also the share of its 5xx it only **passed on** from an upstream |
-| **Revision** | The Deployment's ReplicaSets | **New**: this pod template first ran less than 15 minutes ago. **Known-good**: it ran long before, as after the agent's rollback (Kubernetes reuses the old ReplicaSet) or a restart (only the restart annotation differs, which is ignored) |
+| **Revision** | The Deployment's ReplicaSets, and each one's ready pods over the last 12 hours (Prometheus, kube-state-metrics) | **Known-good**: this pod template once **ran 15 minutes or more in a row** (a restart's ReplicaSets count together: only the restart annotation differs, which is ignored), as after the agent's rollback to a release that ran for hours. **New**: it never did: a fresh release, or a bad one deployed again. *Not* the ReplicaSet's age (found on staging, 2026-11-26): Kubernetes reuses a template's old ReplicaSet whenever that template is deployed again, so the day's second chaos bad deploy looked hours old and "known-good", and was left alone. A release last run more than 12 hours ago (Prometheus's retention) counts as new |
 | **Load** | `http_requests_total` | The request rate now against its median over the previous hour (≥ 2× is "far above normal") |
 
 **The rules, in order** (`services/sre-agent/src/sre_agent/domain/fallback.py`, each one a unit test):

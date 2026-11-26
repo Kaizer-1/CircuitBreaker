@@ -90,6 +90,11 @@ class NoAlerts:
     async def series(self, query: str, minutes: int, step_seconds: int) -> list[float | None]:
         return []
 
+    async def series_by_label(
+        self, query: str, label: str, minutes: int, step_seconds: int
+    ) -> dict[str, list[float | None]]:
+        return {}
+
 
 def now() -> datetime:
     return datetime.now(UTC)

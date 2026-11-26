@@ -1,30 +1,38 @@
 """Is the running pod template a new release, or one that already ran well? (ADR-0021)
 
 Kubernetes keeps one ReplicaSet per pod template a Deployment ever ran (up to its history limit),
-numbered by the `deployment.kubernetes.io/revision` annotation. Three things look alike in that
-list and must not be confused:
+numbered by the `deployment.kubernetes.io/revision` annotation. Things that look alike in that
+list must not be confused:
 
-- a **new release** (a new image or new settings): a template never seen before;
+- a **new release** (a new image or new settings): a template never run for long;
 - a **rollback**: Kubernetes reuses the old ReplicaSet and gives it the newest number, so the
-  revision is new but the template is old (known-good);
+  revision number is new but the template ran for hours before (known-good);
+- a **bad release deployed again**: Kubernetes reuses ITS old ReplicaSet too, so its creation
+  time is old although it never ran well (found on staging, 2026-11-26: the second chaos
+  BAD_DEPLOY of the day reused the first one's ReplicaSet and looked known-good);
 - a **restart**: a new ReplicaSet whose template differs only in the `restartedAt` annotation,
   the same release as before.
 
 So a release is identified by its template **without** the restart annotation and the
-pod-template-hash label (the release fingerprint), and its age is that of the OLDEST ReplicaSet
-with that fingerprint.
+pod-template-hash label (the release fingerprint), and it is **known-good** when it once RAN
+(had ready pods) for at least 15 minutes in a row: Prometheus keeps each ReplicaSet's ready
+replicas for 12 hours. A release's ReplicaSets count together, so a restart does not make it new.
+Without that history (Prometheus not answering), the age of its oldest ReplicaSet stands in.
 """
 
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sre_agent.domain.signals import NEW_REVISION_MINUTES
 
 RESTARTED_AT = "kubectl.kubernetes.io/restartedAt"
 TEMPLATE_HASH = "pod-template-hash"
+SAME_RUN_GAP = timedelta(minutes=2)  # a restart's hand-over, or a missing sample, is one run
+
+Span = tuple[datetime, datetime]
 
 
 @dataclass(frozen=True)
@@ -33,6 +41,7 @@ class ReplicaSetInfo:
     created_at: datetime
     template: dict[str, Any]  # spec.template as the API returns it
     change_cause: str | None = None  # the chart writes "release <version> (<tag>)"
+    name: str = ""
 
     @property
     def images(self) -> tuple[str, ...]:
@@ -52,39 +61,86 @@ def release_fingerprint(template: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()[:12]
 
 
+def spans_from_series(points: list[float | None], end: datetime, step_seconds: int) -> list[Span]:
+    """Where a ReplicaSet had ready pods, from its series (oldest first, last point at `end`)."""
+    spans: list[Span] = []
+    start: datetime | None = None
+    step = timedelta(seconds=step_seconds)
+    for i, value in enumerate(points):
+        at = end - step * (len(points) - 1 - i)
+        if value and value > 0:
+            start = start or at
+        elif start is not None:
+            spans.append((start, at - step))
+            start = None
+    if start is not None:
+        spans.append((start, end))
+    return spans
+
+
+def merge(spans: list[Span]) -> list[Span]:
+    merged: list[Span] = []
+    for s, e in sorted(spans):
+        if merged and s - merged[-1][1] <= SAME_RUN_GAP:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
 @dataclass(frozen=True)
 class RevisionFacts:
     revision: int
     release: str | None  # change-cause of the running revision
-    first_ran_minutes: float  # how long ago this release's template first ran
-    first_ran_at: datetime  # when its first ReplicaSet was made
-    known_good: bool  # it already ran long before (a rollback to it, or a restart of it)
+    running_minutes: float  # how long this release has been running, this time
+    longest_run_minutes: float  # its longest run in a row (12 h of history), this one included
+    first_ran_at: datetime  # when this run began (when its template went live this time)
     rollback_to: int | None  # the newest revision of a DIFFERENT release, if any
     rollback_release: str | None
 
     @property
+    def known_good(self) -> bool:
+        return self.longest_run_minutes >= NEW_REVISION_MINUTES
+
+    @property
     def new(self) -> bool:
-        return self.first_ran_minutes < NEW_REVISION_MINUTES and not self.known_good
+        return not self.known_good
 
 
-def facts(replicasets: list[ReplicaSetInfo], now: datetime) -> RevisionFacts | None:
-    """The running revision is the highest-numbered ReplicaSet (as `kubectl rollout` counts)."""
+def facts(
+    replicasets: list[ReplicaSetInfo],
+    now: datetime,
+    activity: dict[str, list[Span]] | None = None,
+) -> RevisionFacts | None:
+    """The running revision is the highest-numbered ReplicaSet (as `kubectl rollout` counts).
+    `activity`: each ReplicaSet's runs (by name), from Prometheus; None or empty: not known."""
     if not replicasets:
         return None
     ordered = sorted(replicasets, key=lambda rs: rs.revision)
     current = ordered[-1]
     release = release_fingerprint(current.template)
     same = [rs for rs in ordered if release_fingerprint(rs.template) == release]
-    first_ran = min(rs.created_at for rs in same)
-    first_ran_minutes = max(0.0, (now - first_ran).total_seconds() / 60)
+    runs = merge([span for rs in same for span in (activity or {}).get(rs.name, [])])
+    if runs:
+        live = runs[-1] if now - runs[-1][1] <= SAME_RUN_GAP else None
+        began = live[0] if live else now
+        # A ReplicaSet made during this run says to the second when it began (the series only to
+        # the minute); a reused one cannot, so the run's first sample stands.
+        fresh = [rs.created_at for rs in same if rs.created_at >= began - SAME_RUN_GAP]
+        began = min(fresh) if fresh else began
+        running = max(0.0, (now - began).total_seconds() / 60)
+        longest = max(running, *((e - s).total_seconds() / 60 for s, e in runs))
+    else:
+        began = min(rs.created_at for rs in same)
+        running = longest = max(0.0, (now - began).total_seconds() / 60)
     earlier = [rs for rs in ordered if release_fingerprint(rs.template) != release]
     target = earlier[-1] if earlier else None
     return RevisionFacts(
         revision=current.revision,
         release=current.change_cause,
-        first_ran_minutes=first_ran_minutes,
-        first_ran_at=first_ran,
-        known_good=first_ran_minutes >= NEW_REVISION_MINUTES,
+        running_minutes=running,
+        longest_run_minutes=longest,
+        first_ran_at=began,
         rollback_to=target.revision if target else None,
         rollback_release=target.change_cause if target else None,
     )

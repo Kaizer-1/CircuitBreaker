@@ -36,6 +36,12 @@ class Metrics(Protocol):
         """One series, oldest first, a point every `step_seconds` (None where there was none)."""
         ...
 
+    async def series_by_label(
+        self, query: str, label: str, minutes: int, step_seconds: int
+    ) -> dict[str, list[float | None]]:
+        """Several series, one per value of `label`, each as `series` gives one."""
+        ...
+
 
 class Logs(Protocol):
     async def error_lines(self, service: str, minutes: int, limit: int) -> list[str]:

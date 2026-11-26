@@ -92,6 +92,7 @@ class KubernetesPlatform:
                     created_at=_time(rs["metadata"]["creationTimestamp"]),
                     template=rs["spec"]["template"],
                     change_cause=annotations.get(CHANGE_CAUSE),
+                    name=rs["metadata"].get("name", ""),
                 )
             )
         return out

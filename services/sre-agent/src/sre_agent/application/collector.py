@@ -35,6 +35,7 @@ DATABASE_SLOW_SECONDS = 0.2  # portfolio's transaction p95, and at least 5x its 
 # Memory's derivative is never exactly 0 (measured at rest: +0.5 to +1 kB/s); the leak scenario
 # grows 1.3 MB/s. "Rising" means more than 50 kB/s (3 MB a minute).
 RISING_BYTES_PER_SECOND = 50_000
+HISTORY_MINUTES = 720  # Prometheus keeps 12 hours: how far back a release's runs are known
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,14 @@ class Queries:
         return (
             "histogram_quantile(0.95, sum by (le) (rate(postgres_transaction_seconds_bucket"
             f'{{namespace="{self.ns}",phase="transaction"}}[{window}]{off})))'
+        )
+
+    @property
+    def replicaset_ready(self) -> str:
+        """Each of the service's ReplicaSets' ready pods: when each pod template RAN."""
+        return (
+            f'max by (replicaset) (kube_replicaset_status_ready_replicas{{namespace="{self.ns}",'
+            f'replicaset=~"{self.svc}-[a-z0-9]+"}})'
         )
 
     @property
@@ -226,7 +235,14 @@ class EvidenceCollector:
             )
             top = await get("loki", logs.top_errors(alert.service, WINDOW_MINUTES, 5), [])
 
-        rev = revisions.facts(deployment.replicasets, now) if deployment else None
+        no_runs: dict[str, list[float | None]] = {}
+        ready = await get(
+            "prometheus",
+            m.series_by_label(q.replicaset_ready, "replicaset", HISTORY_MINUTES, 60),
+            no_runs,
+        )
+        activity = {name: revisions.spans_from_series(pts, now, 60) for name, pts in ready.items()}
+        rev = revisions.facts(deployment.replicasets, now, activity) if deployment else None
         errors = {code: v for code, v in by_type.items() if v > 0}
         signals = Signals(
             alert=alert.name,
@@ -237,7 +253,7 @@ class EvidenceCollector:
             cpu_of_limit=cpu or 0.0,
             memory_of_limit=memory or 0.0,
             memory_rising=(rising or 0) > RISING_BYTES_PER_SECOND,
-            revision_minutes=rev.first_ran_minutes if rev else None,
+            revision_minutes=rev.running_minutes if rev else None,
             revision_known_good=rev.known_good if rev else False,
             replicas=deployment.desired if deployment else 0,
             breaker_open=bool(breaker),
@@ -263,7 +279,8 @@ class EvidenceCollector:
                 "number": rev.revision,
                 "release": rev.release,
                 "new": rev.new,
-                "first_ran_minutes_ago": round(rev.first_ran_minutes, 1),
+                "running_for_minutes": round(rev.running_minutes, 1),
+                "longest_run_minutes_last_12h": round(rev.longest_run_minutes, 1),
                 "rollback_target": (
                     {"revision": rev.rollback_to, "release": rev.rollback_release}
                     if rev.rollback_to

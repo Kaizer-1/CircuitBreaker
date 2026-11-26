@@ -15,9 +15,10 @@ turning work away because it has too much. DEPENDENCY_UNAVAILABLE means somethin
 is failing (the cause is elsewhere).
   - passed_on_share (the gateway only): the share of its errors that another service answered and \
 the gateway only passed on. Then the problem is in that other service, not the gateway.
-  - revision.new is true only when the running pod template first ran minutes ago. After a \
-rollback or a restart the revision number is new but the template is old: new is false \
-(known-good). Never roll back a known-good revision.
+  - revision.new is true when the running pod template has never run for 15 minutes in a row \
+(a fresh release, or a bad one deployed again). After a rollback to a release that ran for hours, \
+or a restart, the revision number is new but new is false (known-good). Never roll back a \
+known-good revision.
   - load_ratio: request rate now divided by its normal rate over the previous hour.
 - rollback_deployment: the trouble began with a NEW revision (revision.new is true): \
 INTERNAL_ERROR errors, pods crash-looping, or memory climbing since the release.

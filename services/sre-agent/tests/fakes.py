@@ -92,7 +92,9 @@ class World:
     ) -> FakeDeployment:
         """revisions: (number, minutes ago, image, change-cause)."""
         sets = [
-            ReplicaSetInfo(n, self.clock.now() - timedelta(minutes=m), template(img), cause)
+            ReplicaSetInfo(
+                n, self.clock.now() - timedelta(minutes=m), template(img), cause, f"{name}-r{n}"
+            )
             for n, m, img, cause in revisions
         ]
         d = FakeDeployment(name, desired, sets)
@@ -109,6 +111,8 @@ class World:
 
 
 def key_of(query: str) -> str:
+    if "kube_replicaset_status_ready_replicas" in query:
+        return "replicaset_ready"
     if "quantile_over_time" in query:
         return "normal_rate"
     if "by (code)" in query:
@@ -181,6 +185,13 @@ class FakeMetrics:
             return [float(shape(m)) for m in ago]
         v = await self.value(query)
         return [v] * points
+
+    async def series_by_label(
+        self, query: str, label: str, minutes: int, step_seconds: int
+    ) -> dict[str, list[float | None]]:
+        """`replicaset_ready`: {ReplicaSet name: its ready pods, oldest first} (none: unknown)."""
+        v = self.world.metric(service_of(query), key_of(query))
+        return dict(v) if isinstance(v, dict) else {}
 
 
 class FakeLogs:
