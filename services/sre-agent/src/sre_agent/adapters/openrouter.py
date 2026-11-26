@@ -92,6 +92,8 @@ class OpenRouterClient:
             "tool_choice": "auto",
             "max_tokens": MAX_TOKENS,
             "provider": {"require_parameters": True, "data_collection": "deny"},
+            # OpenRouter's own field (not a provider parameter): the answer says what the call cost.
+            "usage": {"include": True},
         }
         if self._fallbacks:
             body["models"] = [self._model, *self._fallbacks]
@@ -111,15 +113,15 @@ class OpenRouterClient:
                 break
             try:
                 choice = await self._attempt(body, left)
-                self._observe(started, choice.tokens, choice.model)
+                self._observe(started, choice.tokens, choice.model, choice.cost_dollars)
                 return choice
             except _RetryableError as exc:
                 last = str(exc)
                 await asyncio.sleep(1.0)
             except LLMUnavailableError:
-                self._observe(started, 0, self._model, failed=True)
+                self._observe(started, 0, self._model, None, failed=True)
                 raise
-        self._observe(started, 0, self._model, failed=True)
+        self._observe(started, 0, self._model, None, failed=True)
         raise LLMUnavailableError(last)
 
     async def _attempt(self, body: dict[str, Any], seconds: float) -> Choice:
@@ -162,10 +164,20 @@ class OpenRouterClient:
             proposal = parse(str(function.get("name", "")), function.get("arguments"), model)
         except UnusableAnswerError as exc:
             raise LLMUnavailableError(str(exc)) from exc
-        tokens = int((payload.get("usage") or {}).get("total_tokens") or 0)
-        return Choice(proposal, model, time.monotonic() - began, tokens)
+        usage = payload.get("usage") or {}
+        tokens = int(usage.get("total_tokens") or 0)
+        cost = usage.get("cost")
+        cost_dollars = float(cost) if isinstance(cost, int | float) else None
+        return Choice(proposal, model, time.monotonic() - began, tokens, cost_dollars)
 
-    def _observe(self, started: float, tokens: int, model: str, failed: bool = False) -> None:
+    def _observe(
+        self,
+        started: float,
+        tokens: int,
+        model: str,
+        cost: float | None = None,
+        failed: bool = False,
+    ) -> None:
         if self._metrics is None:
             return
         self._metrics.sre_agent_llm_latency_seconds.observe(time.monotonic() - started)
@@ -173,3 +185,5 @@ class OpenRouterClient:
             self._metrics.sre_agent_llm_errors_total.inc()
         if tokens:
             self._metrics.sre_agent_llm_tokens_total.labels(model).inc(tokens)
+        if cost:
+            self._metrics.sre_agent_llm_cost_dollars_total.labels(model).inc(cost)

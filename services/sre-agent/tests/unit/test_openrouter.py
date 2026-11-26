@@ -20,7 +20,7 @@ def answer(*calls: dict[str, Any], finish: str = "tool_calls") -> dict[str, Any]
     return {
         "model": MODEL,
         "choices": [{"finish_reason": finish, "message": {"tool_calls": tool_calls}}],
-        "usage": {"total_tokens": 4321},
+        "usage": {"total_tokens": 4321, "cost": 0.0089},
     }
 
 
@@ -61,10 +61,11 @@ async def test_one_tool_call_becomes_the_proposal_and_the_request_is_as_designed
         MODEL,
         4321,
     )
-    assert choice.proposal.source == MODEL
+    assert choice.proposal.source == MODEL and choice.cost_dollars == 0.0089
     body = server.bodies[0]
     assert body["tool_choice"] == "auto" and "parallel_tool_calls" not in body
     assert body["provider"] == {"require_parameters": True, "data_collection": "deny"}
+    assert body["usage"] == {"include": True}  # so OpenRouter says what each call cost
     assert len(body["tools"]) == 4 and "temperature" not in body
     assert body["messages"][0]["role"] == "system"
     assert body["messages"][1]["content"].count("<evidence>") == 1

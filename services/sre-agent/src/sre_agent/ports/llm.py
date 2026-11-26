@@ -18,6 +18,7 @@ class Choice:
     model: str
     seconds: float
     tokens: int
+    cost_dollars: float | None = None  # what OpenRouter charged for this call
 
 
 class LLMClient(Protocol):

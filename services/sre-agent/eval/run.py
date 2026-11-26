@@ -135,6 +135,7 @@ async def run_case(case: Case, llm: OpenRouterClient, runs: int) -> dict[str, An
                         situation,
                         seconds=round(choice.seconds, 1),
                         tokens=choice.tokens,
+                        cost=choice.cost_dollars,
                         path="model",
                     )
                 )
@@ -230,6 +231,12 @@ async def main() -> None:
         ),
         "rules_right": sum(c["rules"]["right"] for c in report),
         "tokens": sum(r.get("tokens", 0) for r in model_runs),
+        "cost_dollars": round(sum(r.get("cost") or 0 for r in model_runs), 4),
+        "cost_per_decision_dollars": (
+            round(sum(r.get("cost") or 0 for r in model_runs) / len(model_runs), 5)
+            if model_runs
+            else None
+        ),
         "median_seconds": sorted(r["seconds"] for r in model_runs)[len(model_runs) // 2]
         if model_runs
         else None,

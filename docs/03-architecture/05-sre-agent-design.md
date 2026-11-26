@@ -257,7 +257,7 @@ The feed (`WS /v1/ws/incidents`, Q-19) streams every step as a short human-reada
 | `sre_agent_actions_total{action,service,outcome}` | Actions executed |
 | `sre_agent_declined_total{by,reason}` | Guardrail/admin declines |
 | `sre_agent_time_to_recover_seconds` (histogram) | MTTR source |
-| `sre_agent_llm_latency_seconds`, `sre_agent_llm_errors_total`, `sre_agent_llm_tokens_total{model}` | LLM health and spend |
+| `sre_agent_llm_latency_seconds`, `sre_agent_llm_errors_total`, `sre_agent_llm_tokens_total{model}`, `sre_agent_llm_cost_dollars_total{model}` | LLM health and spend (the cost is what OpenRouter reports for each call: `usage.include`) |
 
 ## 9. Running outside Kubernetes
 
