@@ -21,7 +21,7 @@ TRIVY_IMAGE := aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a
 .PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
         k8s-up k8s-down k8s-status k8s-set-url k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade k8s-passcode k8s-test-phone \
         test-alerts test-k8s k8s-check k8s-lint test-phone \
-        platform platform-plan sync argocd seal sealing-cert sealing-key-backup ghcr-token openrouter-key github-app github-rules-check k8s-prepull scan promote
+        platform platform-plan sync argocd seal sealing-cert sealing-key-backup ghcr-token openrouter-key github-app github-rules-check agent-eval k8s-prepull scan promote
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -182,6 +182,9 @@ openrouter-key: ## Secrets: seal the SRE agent's OpenRouter key for both environ
 
 github-app: ## Secrets: check and seal the SRE agent's GitHub App (ID asked for; key from private/keys/): make github-app [app_id=] [pem=]
 	@python3 scripts/sealed_secrets.py github-app $(if $(app_id),--app-id $(app_id),) $(if $(pem),--pem $(pem),)
+
+agent-eval: ## SRE agent: 21 designed situations through the real model, 3 runs each (~200k tokens): make agent-eval [runs=3]
+	@cd services/sre-agent && uv run --frozen python -m eval.run --runs $(if $(runs),$(runs),3)
 
 github-rules-check: ## Secrets: GitHub must refuse the agent's App a merge, a push to main and any v* tag change, and everyone a v* tag delete or move
 	@python3 scripts/github_rules_check.py

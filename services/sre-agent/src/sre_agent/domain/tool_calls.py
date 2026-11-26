@@ -20,9 +20,10 @@ EXPLANATION = {
 }
 
 DESCRIPTIONS = {
-    Tool.ROLLBACK: "Roll ONE service back to its previous release. Use when its errors are"
-    " INTERNAL_ERROR (a bug) and the running revision is NEW (first ran minutes ago). Never when"
-    " the running revision is known-good (for example the one just rolled back to).",
+    Tool.ROLLBACK: "Roll ONE service back to its previous release. Use when the trouble began with"
+    " a NEW revision (first ran minutes ago): INTERNAL_ERROR errors (a bug), crash-looping pods, or"
+    " memory climbing since the release. Never when the running revision is known-good (for"
+    " example the one just rolled back to).",
     Tool.SCALE: "Change the number of replicas of ONE service (1 to 5, by at most 3 at once). Use"
     " when it is overloaded: errors are OVERLOADED or latency is high, with traffic far above"
     " normal. Also to scale back down once load is normal again.",

@@ -20,7 +20,7 @@ from sre_agent.domain.incident import Incident
 from sre_agent.domain.revisions import RESTARTED_AT, ReplicaSetInfo
 from sre_agent.ports.llm import Choice, LLMUnavailableError
 from sre_agent.ports.observability import Alert
-from sre_agent.ports.platform import DeploymentState, PlatformError
+from sre_agent.ports.platform import DeploymentState, PlatformError, PodInfo
 from sre_agent.ports.store import ActionRecord, AgentSettings
 from sre_agent.runtime.events import EventEnvelope
 
@@ -72,7 +72,9 @@ class Rule:
     firing: Callable[["World"], bool] = lambda w: True  # noqa: E731
 
 
-Metric = float | dict[str, float] | None | Callable[["World"], Any]
+# A value, or a function of the world (it changes after the agent acts). `<key>_series` entries
+# are functions of minutes ago instead: the shape of the 15-minute window.
+Metric = float | dict[str, float] | None | Callable[[Any], Any]
 
 
 class World:
@@ -83,6 +85,7 @@ class World:
         self.metrics: dict[str, dict[str, Metric]] = {}  # service -> key -> value
         self.acted_at: dict[str, datetime] = {}  # service -> when the agent last acted
         self.fail_next: str | None = None
+        self.pods: dict[str, list[PodInfo]] = {}  # service -> its pods (default: all ready)
 
     def deploy(
         self, name: str, *revisions: tuple[int, float, str, str], desired: int = 2
@@ -163,12 +166,21 @@ class FakeMetrics:
 
     async def by_label(self, query: str, label: str) -> dict[str, float]:
         self.queries.append(query)
-        v = self.world.metric(service_of(query), key_of(query))
+        key = key_of(query)
+        # The upstreams' errors are asked across services (service=~"..."): the gateway holds them.
+        v = self.world.metric("api-gateway" if key == "upstream_errors" else service_of(query), key)
         return dict(v) if isinstance(v, dict) else {}
 
     async def series(self, query: str, minutes: int, step_seconds: int) -> list[float | None]:
+        """A `<key>_series` metric is a function of minutes ago (the shape over the window);
+        without one, the series is flat at the current value."""
+        shape = self.world.metrics.get(service_of(query), {}).get(f"{key_of(query)}_series")
+        points = minutes * 60 // step_seconds + 1
+        if callable(shape):
+            ago = [minutes - i * step_seconds / 60 for i in range(points)]
+            return [float(shape(m)) for m in ago]
         v = await self.value(query)
-        return [v] * (minutes * 60 // step_seconds)
+        return [v] * points
 
 
 class FakeLogs:
@@ -198,7 +210,9 @@ class FakePlatform:
 
     async def deployment(self, service: str) -> DeploymentState:
         d = self.world.deployments[service]
-        return DeploymentState(d.name, d.desired, d.desired, d.desired, list(d.replicasets), [])
+        pods = self.world.pods.get(service, [])
+        ready = sum(p.ready for p in pods) if pods else d.desired
+        return DeploymentState(d.name, d.desired, ready, d.desired, list(d.replicasets), pods)
 
     async def rollback(self, service: str, to_revision: int) -> str:
         d = self._d(service)

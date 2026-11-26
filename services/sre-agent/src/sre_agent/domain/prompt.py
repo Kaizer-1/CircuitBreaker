@@ -19,7 +19,8 @@ the gateway only passed on. Then the problem is in that other service, not the g
 rollback or a restart the revision number is new but the template is old: new is false \
 (known-good). Never roll back a known-good revision.
   - load_ratio: request rate now divided by its normal rate over the previous hour.
-- rollback_deployment: errors are INTERNAL_ERROR and revision.new is true.
+- rollback_deployment: the trouble began with a NEW revision (revision.new is true): \
+INTERNAL_ERROR errors, pods crash-looping, or memory climbing since the release.
 - scale_deployment: errors are OVERLOADED, or latency is high with load far above normal, \
 whatever the revision. Scale by at most 3 replicas at once, to at most 5.
 - restart_deployment: memory climbs steadily toward the limit with no new revision and normal \

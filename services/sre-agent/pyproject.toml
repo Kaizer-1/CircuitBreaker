@@ -53,7 +53,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "N", "ASYNC", "S"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests"]
+files = ["src", "tests", "eval"]
 
 [[tool.mypy.overrides]]
 # Optional drivers: imported lazily in runtime/checks.py, and not every service installs every driver.
