@@ -114,11 +114,14 @@ every table can be dropped and rebuilt from the event store ([read side](08-read
 
 | Table | Partition key | Clustering key | Answers the query |
 |---|---|---|---|
-| `incidents` | `incident_id` | — | Q-18 Get incident |
+| `incidents` | `incident_id` | — | Q-18 Get incident: one JSON document with its remediations and timeline, rewritten after every change (the agent is the only writer), so Q-18 is one read |
 | `incidents_by_day` | `day` | `opened_at DESC` | Q-17 List incidents |
-| `incident_timeline` | `incident_id` | `occurred_at ASC` | Timeline in Q-18; feed history |
 | `agent_settings` | `environment` | — | Q-20 Get settings (approval toggle, paused) |
-| `action_log` | `service` | `executed_at DESC` | Cooldown checks ("last action on order-service") |
+| `action_log` | `service` | `executed_at DESC` | Cooldown checks ("last action on order-service") and the hourly budget, across restarts |
+| `incident_counter` | `name` | — | The last `INC-nnnn` number given out (moved on with a lightweight transaction) |
+
+*As built (Phase 7b, 2026-11-26): the timeline lives inside the incident's document instead of its own
+`incident_timeline` table (Q-18 reads one row; the feed's history is Q-17/Q-18), and `incident_counter` was added.*
 
 ### Database `portfolio` (owner: portfolio-service, Postgres)
 

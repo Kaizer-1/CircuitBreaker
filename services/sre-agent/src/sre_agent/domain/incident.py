@@ -195,6 +195,42 @@ class Incident:
             "recovered_at": iso(self.recovered_at),
         }
 
+    def to_document(self) -> dict[str, Any]:
+        """Everything, for the store: the API view plus what only the agent needs."""
+        return {
+            **self.to_api(),
+            "remediation_details": {r.remediation_id: r.details for r in self.remediations},
+        }
+
+    @classmethod
+    def from_document(cls, d: dict[str, Any]) -> "Incident":
+        details = d.get("remediation_details", {})
+        remediations = []
+        for raw in d["remediations"]:
+            r = Remediation.from_api(raw)
+            r.details = details.get(r.remediation_id)
+            remediations.append(r)
+        return cls(
+            incident_id=d["incident_id"],
+            alert_name=d["alert_name"],
+            service=d["service"],
+            severity=d["severity"],
+            summary=d["summary"],
+            opened_at=parse_time(d["opened_at"]),  # type: ignore[arg-type]
+            fired_at=parse_time(d.get("fired_at")),
+            status=Status(d["status"]),
+            resolution=Resolution(d["resolution"]) if d.get("resolution") else None,
+            resolved_at=parse_time(d.get("resolved_at")),
+            mitigated_at=parse_time(d.get("mitigated_at")),
+            recovered_at=parse_time(d.get("recovered_at")),
+            evidence_summary=d.get("evidence_summary", ""),
+            remediations=remediations,
+            timeline=[
+                Entry(parse_time(e["at"]), Kind(e["kind"]), e["message"])  # type: ignore[arg-type]
+                for e in d.get("timeline", [])
+            ],
+        )
+
     def to_api(self) -> dict[str, Any]:
         pending = self.pending
         return {

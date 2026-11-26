@@ -1,9 +1,10 @@
 # sre-agent
 
-> **Status:** Phase 1 — runnable skeleton. Follows the layout in
-> [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service)
-> (Python package `sre_agent`). Every operation in its API spec answers `501 Not Implemented` until its phase;
-> `/healthz`, `/readyz` and `/metrics` work.
+> **Status:** Phase 7b — built: the loop, evidence, the model through OpenRouter, the rule-based fallback
+> ([ADR-0021](../../docs/adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)), the guardrails, approval,
+> execution through the Kubernetes API, verification, incidents.v1 and every operation of its spec. Follows the layout
+> in [coding standards §3](../../docs/05-coding-standards.md#3-folder-layout-inside-every-service) (package
+> `sre_agent`).
 
 | | |
 |---|---|
@@ -18,7 +19,8 @@ Watches Prometheus alerts, opens incidents, collects evidence (metrics, Loki log
 
 ## Owned data
 
-Cassandra keyspace `sre_agent`: `incidents`, `incidents_by_day`, `incident_timeline`, `agent_settings`, `action_log`.
+Cassandra keyspace `sre_agent`: `incidents` (one JSON document per incident, timeline included), `incidents_by_day`,
+`agent_settings`, `action_log`, `incident_counter` ([data ownership](../../docs/03-architecture/02-data-ownership.md)).
 
 ## Events
 
@@ -38,6 +40,23 @@ Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards 
 ## Synchronous dependencies
 
 Prometheus HTTP API, Loki HTTP API, Kubernetes API (ServiceAccount `sre-agent`, minimal Role), OpenRouter chat-completions API.
+
+## How it is built
+
+| Layer | What | Where |
+|---|---|---|
+| Domain (pure, no I/O) | The four tools and their targets, guardrails G1–G10, the fallback's rules, the fixed declines, revisions (a release is its pod template without the restart annotation), evidence and its scrubbing, the tool menu, the prompt, the incident aggregate | `domain/` |
+| Application | The loop (`agent.py`: one task per incident: evidence → decide → guard → approve → act → verify), the evidence collector (the PromQL, Loki and Kubernetes questions, and the three facts of ADR-0021), the decider (model, or rules), the feed hub | `application/` |
+| Adapters | Prometheus and Loki (HTTP), Kubernetes (HTTPS with the ServiceAccount token: GET and PATCH only), OpenRouter, Cassandra, incidents.v1 | `adapters/` |
+
+**Configuration** (environment variables, [config.py](src/sre_agent/config.py)): `PROMETHEUS_URL` and `LOKI_URL`
+(no Prometheus, as in Docker Compose: the loop does not run, the API does), `OPENROUTER_API_KEY` (no key: the rules
+decide), `SRE_AGENT_MODEL` (default `anthropic/claude-sonnet-5.5`), `SRE_AGENT_FALLBACK_MODELS`,
+`APPROVAL_REQUIRED_BY_DEFAULT` (unset: on in prod, off elsewhere; A-14 changes it at runtime), `POLL_SECONDS` (5).
+
+**Tests:** unit tests run the real collector, decider, guardrails and incident against a fake cluster on a virtual
+clock (`tests/fakes.py`): a 4-minute verification takes milliseconds. Integration tests use a real Cassandra 5.0.9
+(`make test-integration s=sre-agent`). Every event is checked against its catalog schema.
 
 ## Scaling and operations
 
@@ -68,7 +87,10 @@ curl localhost:8006/readyz         # or `make up` from the repo root to run its 
 A: Exactly four things: roll back, scale (1–5 replicas), restart, or do nothing — each checked by guardrails and limited by RBAC.
 
 **Q: What if the LLM is down or answers nonsense?**
-A: Anything other than one valid tool call becomes do_nothing plus an escalation to the admin.
+A: Anything other than one tool call with JSON arguments is unusable: fixed rules then choose from the error type,
+whether the running release is new, and the load ([ADR-0021](../../docs/adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)),
+through the same guardrails, labelled "rule-based (LLM unavailable)". A tool call with bad arguments is declined by
+the guardrails.
 
 **Q: Why can't it see chaos-service?**
 A: So its diagnosis is genuine — it must infer causes from symptoms like a human SRE.

@@ -32,6 +32,9 @@ UPSTREAMS = ("order-service", "portfolio-service", "market-data-service")
 WINDOW_MINUTES = 15
 STEP_SECONDS = 30
 DATABASE_SLOW_SECONDS = 0.2  # portfolio's transaction p95, and at least 5x its normal
+# Memory's derivative is never exactly 0 (measured at rest: +0.5 to +1 kB/s); the leak scenario
+# grows 1.3 MB/s. "Rising" means more than 50 kB/s (3 MB a minute).
+RISING_BYTES_PER_SECOND = 50_000
 
 
 @dataclass(frozen=True)
@@ -233,7 +236,7 @@ class EvidenceCollector:
             normal_rate=normal or 0.0,
             cpu_of_limit=cpu or 0.0,
             memory_of_limit=memory or 0.0,
-            memory_rising=(rising or 0) > 0,
+            memory_rising=(rising or 0) > RISING_BYTES_PER_SECOND,
             revision_minutes=rev.first_ran_minutes if rev else None,
             revision_known_good=rev.known_good if rev else False,
             replicas=deployment.desired if deployment else 0,

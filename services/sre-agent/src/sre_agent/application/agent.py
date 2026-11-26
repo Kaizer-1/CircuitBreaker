@@ -171,6 +171,11 @@ class Agent:
 
     # ------------------------------------------------------------------ reading
 
+    @property
+    def model(self) -> str:
+        """The configured model (Q-20): configuration, never a setting."""
+        return self._decider.model
+
     def open_incidents(self) -> list[Incident]:
         return list(self._open.values())
 

@@ -10,6 +10,7 @@ dependencies = [
   "prometheus-client>=0.26,<1",
   "aiokafka>=0.15,<1",
   "cassandra-driver>=3.30,<4",
+  "httpx>=0.28,<1",
 ]
 
 [dependency-groups]
@@ -22,6 +23,7 @@ dev = [
   "ruff>=0.17,<1",
   "mypy>=2.4,<3",
   "jsonschema[format-nongpl]>=4.26,<5",
+  "testcontainers[cassandra]>=4.15,<5",
 ]
 
 [build-system]
@@ -58,5 +60,5 @@ module = ["aiokafka.*", "cassandra.*", "psycopg.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["jsonschema.*"]
+module = ["jsonschema.*", "testcontainers.*"]
 ignore_missing_imports = true

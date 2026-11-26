@@ -50,7 +50,7 @@ class Proposal:
     service: str | None
     replicas: int | None
     explanation: str
-    source: str  # "llm:<model>" or "rule-based (LLM unavailable)"
+    source: str  # the model's OpenRouter slug, "rule-based (LLM unavailable)" or a fixed rule
 
     @property
     def summary(self) -> str:

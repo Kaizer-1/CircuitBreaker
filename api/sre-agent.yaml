@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: sre-agent API
-  version: 1.0.0
+  version: 1.1.0
   summary: Incidents, remediation approvals and agent settings.
   description: |
     Owned by **Kaizer Dewaswala** (SRE agent role, enabling; in collaboration with the Release & Reliability Team).
@@ -222,6 +222,10 @@ paths:
                 model: anthropic/claude-sonnet-5.5
                 updated_at: '2026-11-20T10:00:00.000Z'
                 updated_by: presenter
+                budget:
+                  actions_left_this_hour: 5
+                  cooldown_seconds_by_service:
+                    order-service: 212
         '403':
           $ref: './shared/common.yaml#/components/responses/Forbidden'
     put:
@@ -320,6 +324,21 @@ components:
           type: array
           items:
             $ref: './shared/common.yaml#/components/schemas/AgentAction'
+        fired_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the alert started firing (its pending start plus the rule's `for`). Detect = opened_at − fired_at.
+        mitigated_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the agent's first action ran (do_nothing is not an action). Mitigate = mitigated_at − opened_at.
+        recovered_at:
+          type: [string, 'null']
+          format: date-time
+          description: >-
+            When the alert stopped firing, if it then stayed clear for 60 s. `time_to_recover_seconds` is
+            recovered_at − opened_at; `resolved_at` comes after the 60-second check (approved timing definitions,
+            2026-11-24). Null if escalated.
     IncidentList:
       type: object
       required: [items, next_cursor]
@@ -358,7 +377,9 @@ components:
           maxLength: 600
         model:
           type: string
-          description: OpenRouter model slug used for the diagnosis.
+          description: >-
+            Who chose: the OpenRouter model slug, "rule-based (LLM unavailable)" (ADR-0021), or
+            "fixed rule (alert is information only)" for a remediable=false alert.
         status:
           type: string
           enum: [PROPOSED, APPROVED, DECLINED, EXECUTED, FAILED]
@@ -460,6 +481,21 @@ components:
           $ref: './shared/common.yaml#/components/schemas/Timestamp'
         updated_by:
           type: [string, 'null']
+        budget:
+          description: >-
+            Read-only. What the guardrails still allow (G5, G6): executed actions left in the last hour (of 6), and
+            the seconds left of each service's 5-minute cooldown. Never settable: there is no runtime override.
+          type: object
+          properties:
+            actions_left_this_hour:
+              type: integer
+              minimum: 0
+              maximum: 6
+            cooldown_seconds_by_service:
+              type: object
+              additionalProperties:
+                type: integer
+                minimum: 0
     AgentSettingsUpdate:
       type: object
       minProperties: 1
