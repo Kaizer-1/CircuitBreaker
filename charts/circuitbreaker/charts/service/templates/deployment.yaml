@@ -68,6 +68,10 @@ spec:
                 secretKeyRef:
                   name: {{ $ref.secret }}
                   key: {{ $ref.key }}
+                  {{- if $ref.optional }}
+                  # Missing is allowed: the service runs without it (CI's slim profile, make k8s-up).
+                  optional: true
+                  {{- end }}
             {{- end }}
             {{- /* An operator's setting wins over the chart's when it is set (env beats envFrom); unset, the
                    chart's value above stays. */}}

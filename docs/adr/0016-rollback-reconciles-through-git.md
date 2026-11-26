@@ -46,9 +46,31 @@ flowchart TD
   *pull requests: write*. A repository ruleset protects `main`, and the App is **not** on its bypass list, so it can
   open pull requests but never merge them. *As built (2026-11-24): the ruleset requires a pull request with 0
   approvals (only the owner has access) and **restricts updates** to `main` to its bypass list: the admin role, only
-  by merging a pull request, and deploy keys (CI's tag bumps). GitHub itself therefore refuses the App's merge or push;
-  Phase 7 tests that it does ([deployment doc §4](../03-architecture/07-deployment-and-environments.md#4-cicd-pipeline-github-actions--argo-cd-gitops)).*
+  by merging a pull request, and deploy keys (CI's tag bumps). GitHub itself therefore refuses the App's merge or push.
+  Tested 2026-11-26 (`make github-rules-check`, 26 of 26): as the App, GitHub allowed a commit, a branch and a pull
+  request, and refused with a rule violation the merge, a push to `main` (API and `git push`) and creating, moving or
+  deleting a release tag; it cannot edit the rulesets (no Administration permission). Release tags `v*` have their
+  own rulesets (no one deletes or moves them, only the admin creates them), so the App can never touch the demo's
+  fallback tags ([deployment doc §4](../03-architecture/07-deployment-and-environments.md#4-cicd-pipeline-github-actions--argo-cd-gitops)).
+  `make github-app` seals its credentials only after GitHub confirms these limits.*
+
+  *Found on staging (2026-11-26): "the Application was `Synced`" does not prove the bad release came from Git. Two
+  facts of Argo CD: its diff compares only the fields Git sets (an environment variable added from outside is
+  invisible), and its automated sync re-applies Git when an Application drifts while a newer revision of its paths is
+  waiting (any commit to its values file **or the shared chart** since its last sync). During a chaos `BAD_DEPLOY`,
+  Argo CD re-synced order-service 5 s after the patch, reset its release annotation, kept the injected setting and
+  said `Synced`; the first version of the pre-check then opened a revert of an unrelated, day-old image bump (closed
+  unmerged, PR #24). The pre-check now asks for the sync that **started just before the bad pod template first ran**
+  and **changed the service's values file**, and reverts a commit from that sync only. The same automated sync is
+  the one known way a rollback can be undone before its revert pull request is merged: a commit that touches the
+  service's paths in between re-applies the bad release. Merge the revert first.*
 - A read-only **Argo CD account** `sre-agent` whose Argo CD RBAC allows `get` on Applications only.
+  *As built (2026-11-26): one account per environment, `sre-agent-<env>` (`apiKey` only), each with the role
+  `get` on `circuitbreaker/*-<env>`: its own environment's Applications, not the other's (`infra/platform/argo-cd.yaml`,
+  `policy.default` empty); its token is ADR-0019's third
+  bootstrap secret, made by `make platform`. The pre-check reads `<service>-<env>` with `refresh=normal`; a revert
+  pull request targets the branch the Application follows (`main`, or a branch under test), its head is
+  `sre-agent/revert-<env>-<service>-INC-nnnn`, and G11's checks run first (`services/sre-agent/src/sre_agent/adapters/gitops.py`).*
 
 **New guardrail G11 (Git step):**
 

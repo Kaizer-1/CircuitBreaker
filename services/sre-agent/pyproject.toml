@@ -10,6 +10,8 @@ dependencies = [
   "prometheus-client>=0.26,<1",
   "aiokafka>=0.15,<1",
   "cassandra-driver>=3.30,<4",
+  "httpx>=0.28,<1",
+  "pyjwt[crypto]>=2.15,<3",
 ]
 
 [dependency-groups]
@@ -21,6 +23,8 @@ dev = [
   "types-pyyaml>=6,<7",
   "ruff>=0.17,<1",
   "mypy>=2.4,<3",
+  "jsonschema[format-nongpl]>=4.26,<5",
+  "testcontainers[cassandra]>=4.15,<5",
 ]
 
 [build-system]
@@ -49,9 +53,13 @@ select = ["E", "F", "I", "B", "UP", "SIM", "N", "ASYNC", "S"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests"]
+files = ["src", "tests", "eval"]
 
 [[tool.mypy.overrides]]
 # Optional drivers: imported lazily in runtime/checks.py, and not every service installs every driver.
 module = ["aiokafka.*", "cassandra.*", "psycopg.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["jsonschema.*", "testcontainers.*"]
 ignore_missing_imports = true

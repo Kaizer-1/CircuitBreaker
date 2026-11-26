@@ -503,7 +503,33 @@ The SRE agent's GitHub App (Phase 7, [ADR-0016](../adr/0016-rollback-reconciles-
 list, so GitHub refuses both its merge and its push to `main`: its revert pull requests always wait for a person.
 The bypass is a deliberate act each time: a pull request that passes every check still says "blocked" until the owner
 merges it with `--admin`, and even the owner cannot push to `main` directly.
-Phase 7 adds a test that GitHub refuses the App's attempt to merge or push.
+
+**Release tags are fixed (2026-11-26, the owner's decision).** The `v*` tags (`v0.6-demoable` and the older ones) are
+the demo's fallbacks (demo runbook section 4): a moved or deleted one would make the fallback run different code. Two
+tag rulesets on `refs/tags/v*`, two because a ruleset's bypass list covers all of its rules:
+
+| Ruleset | Rules | Bypass | Effect |
+|---|---|---|---|
+| Release tags: never deleted or moved | restrict deletions, restrict updates, block force pushes | **none** | Nobody (owner, CI's deploy key, the agent's App) can delete or move a `v*` tag. The owner could still switch the ruleset off: a visible, deliberate act in the repository's settings |
+| Release tags: only the admin creates them | restrict creations | the admin role, `always` | Only the owner tags a release. The deploy key's bypass on `main` does not reach tags |
+
+**Tested, not assumed:** `make github-rules-check` (`scripts/github_rules_check.py`, a person runs it after `make
+github-app`) logs in as the App with the credentials sealed for prod, and as the owner, and tries everything. Every
+refusal must come from a rule (or, for editing a ruleset, a missing permission); a refusal for another reason fails
+the check. Tag tests touch only a canary tag, `v0.0.0-tag-rules-canary`, which the owner made once after the tag
+rulesets (that was the admin-may-create test). The test commit has `main`'s exact files and `[skip ci]`, so even a
+wrong "allowed" would change nothing and start no workflow. First run, 2026-11-26: **26 of 26 passed**.
+
+| Attempt | Who | GitHub's answer |
+|---|---|---|
+| Make a commit, push its own branch, open a pull request; close it, delete the branch | App | Allowed (the revert-PR path ADR-0016 needs) |
+| Merge its pull request | App | Refused: 405, "Repository rule violations found" |
+| Move `main` (API; `git push`) | App | Refused: 422 rule violations; `GH013` |
+| Create a `v*` tag (API; `git push`) | App | Refused: 422 "Reference update failed"; `GH013`. The API's message names no rule, so the check first makes (and deletes) a tag **outside** `v*` with the same request: allowed, so the refusal is the ruleset's |
+| Move or delete the canary (API; `git push`) | App | Refused: 422 rule violations; `GH013` |
+| Move or delete the canary (`git push`) | owner (admin) | Refused: `GH013` |
+| Edit the `main` ruleset | App | Refused: 403 "Resource not accessible by integration" (it has no Administration permission) |
+| Afterwards | | `main` and every tag exactly as before; the App's pull requests closed, its branches gone |
 
 **The known trade-off: a deploy key bypasses `always`.** A leaked CI deploy key could push **anything** to `main`,
 not only tag bumps, and skip the pull request (GitHub's bypass entry cannot limit what a push contains). Three things
@@ -781,6 +807,9 @@ infra/
 | Rotate one secret | Edit (or delete, for a new random) its value in `private/secrets/<env>.json`, or `make seal env=<env> rotate="jwt-secret"`; commit | Argo CD updates the Secret; pods read environment variables at start, so restart the services that use it (`kubectl rollout restart`, ignored by Argo CD). A database password also needs the role changed in the database (`ALTER ROLE` / `ALTER USER`) first. |
 | Rotate the sealing key | Set `keycutofftime` in `infra/platform/sealed-secrets.yaml` to now (`LC_ALL=C date -R`) and `make platform`: the controller restarts with `--key-cutoff-time` and makes a new key, keeping the old ones. Then `make sealing-cert`, `make seal env=staging` and `env=prod` (a new certificate re-seals every file), commit, `make sealing-key-backup` | Verified on the cluster (2026-11-23): a new key appeared, the controller served a new certificate, and every existing SealedSecret still decrypted with the old key. The setting can stay: it only makes a key when the newest is older than the cutoff. After a **leak**, rotating the key is not enough: the old ciphertext is in Git history, so every secret value must change too. |
 | GHCR pull token | `make ghcr-token` (a person) | Prompts for the token without echoing it. Refuses anything but a **classic** token with exactly `read:packages` and an expiry date: it asks GitHub for the token's scopes and expiry. Sealed as `ghcr-pull` (type `kubernetes.io/dockerconfigjson`) for both environments. `sealed_secrets.py check` warns 14 days before it expires; to renew, make a new token, run `make ghcr-token`, commit. Images already on the node keep working after it expires; only new pulls fail. |
+| SRE agent's OpenRouter key | `make openrouter-key` (a person) | Prompts for the key without echoing it, asks OpenRouter about it (only the key is sent) and **refuses a key without a credit limit**: that limit is the agent's spend control (SRE agent design, section 4). Prints the limit, the use so far, and whether the agent's model offers tool calling. Sealed as `openrouter-api-key` for both environments (one key, one limit for both). To rotate: make a new key, run it again, commit, delete the old key on openrouter.ai. |
+| SRE agent's GitHub App | `make github-app [app_id=]` (a person), then `make github-rules-check` | Reads the App's private key from `private/keys/sre-agent-github-app.pem` (refused unless mode 600), logs in as the App and **refuses to seal** unless GitHub reports: installed on this repository only, permissions exactly contents (write), pull requests (write) and metadata (read), and the App on no ruleset's bypass list. Finds the installation ID itself. Sealed as `sre-agent-github-app` (`app-id`, `installation-id`, `private-key`) for both environments. To rotate: generate a new private key on the App's page, run it again, commit, delete the old key there. |
+| SRE agent's Argo CD token | Automatic in `make platform` (`scripts/k8s.py argo-agent-token`) | The read-only account `sre-agent-<env>`'s API token (one account per environment), made through Argo CD's API after Terraform, checked (reads its own environment's Application, refused the other environment's, sees no repository) and stored as Secret `argocd-sre-agent` in each environment by `kubectl`: in neither Git nor Terraform's state. A token that still works is kept. It cannot be sealed: Argo CD signs it with a key made when this cluster's Argo CD is installed (ADR-0019's third bootstrap secret). To rotate: delete the Secret and run `make platform`. |
 | Lost key, no backup | `make sealing-cert` (the new key's certificate), then `make seal` for both environments: a new certificate re-seals every file | Possible only because the plaintext source exists. Without it too, every credential must be changed (new values, `ALTER ROLE` for the databases). |
 
 ### How this maps onto the textbook's AWS infrastructure
@@ -820,6 +849,13 @@ A: Yes, a known trade-off. A deploy key on the bypass list bypasses always, so a
 only tag bumps. We keep it in the `gitops` environment, which releases it only to workflow runs on `main`, so a pull
 request or another branch cannot read it; Argo CD's key is read-only; and if it leaks we delete the key on GitHub,
 which stops it at once, and check `main`'s history.
+
+**Q: How do you know the SRE agent's GitHub App really cannot merge its own pull request?**
+A: We tried. `make github-rules-check` logs in as the App and opens a pull request, then tries to merge it, to push to
+`main`, and to create, move or delete a release tag. GitHub refused every one with a rule violation, while the
+allowed path (commit, branch, pull request) worked. It is GitHub's rulesets that refuse, not our code: the App is on
+no bypass list, and it cannot edit the rulesets either (no Administration permission). A tag is tested only on a
+canary, and the test commit has `main`'s exact files, so even a wrong "allowed" could not change what runs.
 
 **Q: `main` needs a pull request for every change. How does CI commit tag bumps to it?**
 A: With a deploy key that the ruleset lets bypass. Only CI's job on `main` can read that key (it is in the `gitops`

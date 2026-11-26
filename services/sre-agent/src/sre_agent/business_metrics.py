@@ -1,4 +1,4 @@
-"""Business metrics named in the docs. Registered now at zero; later phases update them."""
+"""Business metrics named in the docs (SRE agent design section 8)."""
 
 from dataclasses import dataclass
 
@@ -14,6 +14,7 @@ class BusinessMetrics:
     sre_agent_llm_latency_seconds: Histogram
     sre_agent_llm_errors_total: Counter
     sre_agent_llm_tokens_total: Counter
+    sre_agent_llm_cost_dollars_total: Counter
 
 
 def register_business_metrics(registry: CollectorRegistry) -> BusinessMetrics:
@@ -54,6 +55,12 @@ def register_business_metrics(registry: CollectorRegistry) -> BusinessMetrics:
         sre_agent_llm_tokens_total=Counter(
             "sre_agent_llm_tokens_total",
             "LLM tokens used, by model.",
+            ["model"],
+            registry=registry,
+        ),
+        sre_agent_llm_cost_dollars_total=Counter(
+            "sre_agent_llm_cost_dollars",
+            "What OpenRouter charged for the agent's model calls (US dollars), by model.",
             ["model"],
             registry=registry,
         ),
