@@ -180,12 +180,12 @@ sees OpenRouter's request/response format, so changing gateway or model touches 
 | # | Guardrail | On violation |
 |---|---|---|
 | G1 | Tool must be one of the four (guaranteed by the API, re-checked anyway) | Decline |
-| G2 | Target service must be allowlisted **for that tool** (scale: `api-gateway`, `order-service`, `market-data-service`, `portfolio-service`; rollback/restart: the 8 application services) | Decline |
+| G2 | Target service must be allowlisted **for that tool** (scale: `api-gateway`, `order-service`, `market-data-service`, `portfolio-service`; rollback/restart: the 8 application services), **and be the incident's own service**: the evidence describes that one service, so an answer naming another (for example after an injected log line) is refused | Decline + escalate |
 | G3 | `replicas` between 1 and the service's max (≤ 5); a single step may change replicas by at most 3 | Decline |
 | G4 | Only the agent's own namespace (`staging` or `prod`) — also enforced by Kubernetes RBAC | Impossible by permissions |
 | G5 | **Cooldown:** no action on the same service within 5 minutes of the previous one | Decline + escalate |
 | G6 | **Budget:** max 3 executed actions per incident, max 6 per hour overall | Escalate |
-| G7 | `rollback_deployment` needs a previous revision to exist | Decline |
+| G7 | `rollback_deployment` needs a previous revision to exist, **and the running release must be new** (its pod template first ran less than 15 minutes ago). After the agent's own rollback the running release is known-good, so a second rollback, which would bring the bad release back, is refused whoever proposes it ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)) | Decline + escalate |
 | G8 | Agent **paused** by admin | Record the proposal only; never execute |
 | G9 | LLM error, timeout, refusal or no tool call | The rule-based fallback chooses, labelled "rule-based (LLM unavailable)"; its proposal meets G1–G10 like any other ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md); before it: `do_nothing` + escalate) |
 | G10 | `explanation` must be 1–600 characters | Replace with a generic explanation and flag it |

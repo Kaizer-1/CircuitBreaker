@@ -55,7 +55,9 @@ carries the same three, so both paths reason from the same distinctions:
 | Anything else | `do_nothing` and escalate: no rule guesses |
 
 **The pair the tests and the evaluation must hold** (owner, 2026-11-24): overload shortly after a rollback is scaled,
-**never** rolled back; internal errors after a bad release are rolled back.
+**never** rolled back; internal errors after a bad release are rolled back. The first half is also a guardrail, so it holds
+whoever proposes: G7 refuses to roll back a release that is known-good (SRE agent design §5). The evaluation measures
+how often the model gets it right by itself.
 
 ## Alternatives considered
 

@@ -3,9 +3,10 @@ call may run. The model only proposes; this decides. Checked in this order, the 
 
 G8  paused by an admin            -> record the proposal, never execute
 G1  the tool is one of the four   -> decline
-G2  the target is allowed for it  -> decline (data stores are in no list)
+G2  the target is allowed for it, and is the incident's own service -> decline (data stores
+    are in no list)
 G3  replicas 1..5, step <= 3      -> decline
-G7  rollback needs an older revision -> decline
+G7  rollback needs an older revision, and a NEW running release (ADR-0021) -> decline
 G5  5-minute cooldown per service -> decline and escalate
     one action at a time per service -> decline and escalate
 G6  3 executed actions per incident, 6 per hour -> escalate
@@ -39,6 +40,8 @@ class Situation:
     acting_on: frozenset[str] = frozenset()  # services with an action still being verified
     replicas: dict[str, int] = field(default_factory=dict)
     has_previous_revision: dict[str, bool] = field(default_factory=dict)
+    revision_new: dict[str, bool] = field(default_factory=dict)  # release first ran < 15 min ago
+    incident_service: str | None = None  # the service whose evidence the proposal is based on
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,14 @@ def check(p: Proposal, s: Situation) -> Verdict:
     tool = Tool(p.tool)
     if tool is Tool.NOTHING:
         return Verdict(True, None, "Nothing to run.", False, explanation, flagged)
+    if s.incident_service is not None and p.service != s.incident_service:  # G2
+        return _no(
+            "G2",
+            f"The incident is about {s.incident_service}; the agent acts only on the service its"
+            f" evidence describes, not {p.service!r}.",
+            explanation,
+            escalate=True,
+        )
     if p.service not in TARGETS[tool]:  # G2
         return _no(
             "G2",
@@ -91,6 +102,14 @@ def check(p: Proposal, s: Situation) -> Verdict:
             return _no("G3", f"{p.service} already runs {current} replicas.", explanation)
     if tool is Tool.ROLLBACK and not s.has_previous_revision.get(p.service, False):  # G7
         return _no("G7", f"{p.service} has no earlier revision to roll back to.", explanation)
+    if tool is Tool.ROLLBACK and not s.revision_new.get(p.service, False):  # G7
+        return _no(
+            "G7",
+            f"{p.service}'s running release is known-good (it ran long before, for example the"
+            " one just rolled back to): rolling back would bring the earlier release back.",
+            explanation,
+            escalate=True,
+        )
     if p.service in s.acting_on:
         return _no(
             "G5",

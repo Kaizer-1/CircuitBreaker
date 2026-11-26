@@ -12,6 +12,7 @@ CALM = Situation(
     now=NOW,
     replicas={"order-service": 2, "market-data-service": 1, "portfolio-service": 2},
     has_previous_revision={"order-service": True, "market-data-service": True},
+    revision_new={"order-service": True, "market-data-service": True},
 )
 
 
@@ -100,3 +101,23 @@ def test_paused_records_only_and_a_bad_explanation_is_replaced_not_trusted() -> 
     assert long.explanation == "The agent proposed rollback_deployment(order-service)."
     empty = check(propose(Tool.NOTHING.value, None, explanation="   "), CALM)
     assert empty.flagged and empty.explanation == "The agent proposed do_nothing."
+
+
+def test_a_known_good_release_is_never_rolled_back_whoever_proposes_it() -> None:
+    """ADR-0021's pair, in code: after the agent's rollback the running release is known-good,
+    so even a model that ignored the facts cannot roll back onto the bad release."""
+    after_rollback = Situation(**{**CALM.__dict__, "revision_new": {"order-service": False}})
+    verdict = check(propose(Tool.ROLLBACK.value), after_rollback)
+    assert (verdict.allowed, verdict.guardrail, verdict.escalate) == (False, "G7", True)
+    assert "known-good" in verdict.reason
+    assert check(propose(Tool.SCALE.value, replicas=5), after_rollback).allowed
+
+
+def test_the_proposal_must_be_about_the_incidents_own_service() -> None:
+    """A log line can tell the model to act elsewhere (prompt injection): the incident's
+    evidence is about one service, and only that service may be touched."""
+    on_order = Situation(**{**CALM.__dict__, "incident_service": "order-service"})
+    verdict = check(propose(Tool.RESTART.value, "market-data-service"), on_order)
+    assert (verdict.allowed, verdict.guardrail) == (False, "G2")
+    assert check(propose(Tool.RESTART.value, "order-service"), on_order).allowed
+    assert check(propose(Tool.NOTHING.value, None), on_order).allowed
