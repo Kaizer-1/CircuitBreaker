@@ -70,6 +70,7 @@ class Rule:
     remediable: bool = True
     summary: str = ""
     firing: Callable[["World"], bool] = lambda w: True  # noqa: E731
+    value: Callable[["World"], float] | None = None  # the alert's value (e.g. the lag)
 
 
 # A value, or a function of the world (it changes after the agent acts). `<key>_series` entries
@@ -158,7 +159,15 @@ class FakeMetrics:
             raise ConnectionError("prometheus down")
         w = self.world
         return [
-            Alert(r.name, r.service, r.severity, r.remediable, r.summary or r.name, w.clock.now())
+            Alert(
+                r.name,
+                r.service,
+                r.severity,
+                r.remediable,
+                r.summary or r.name,
+                w.clock.now(),
+                value=r.value(w) if r.value else None,
+            )
             for r in w.rules
             if r.firing(w)
         ]

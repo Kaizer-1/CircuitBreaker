@@ -251,6 +251,17 @@ class ArgoGitOps:
             if h.get("revision") and started:
                 at = datetime.fromisoformat(started.replace("Z", "+00:00"))
                 history.append(Sync(h["revision"], at))
+        # Argo CD writes a sync into its history only when it FINISHES; a bad release that never
+        # becomes healthy keeps its sync running (its PostSync smoke test waits for health), so
+        # the operation in progress counts too.
+        op = app.get("status", {}).get("operationState") or {}
+        op_revision = (op.get("syncResult") or {}).get("revision") or (
+            (op.get("operation") or {}).get("sync") or {}
+        ).get("revision")
+        if op.get("startedAt") and op_revision:
+            at = datetime.fromisoformat(op["startedAt"].replace("Z", "+00:00"))
+            if not any(h.revision == op_revision and h.started_at == at for h in history):
+                history.append(Sync(op_revision, at))
         return SyncState(
             synced=status == "Synced",
             revision=revision,

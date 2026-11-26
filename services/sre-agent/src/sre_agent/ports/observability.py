@@ -19,6 +19,7 @@ class Alert:
     summary: str
     fired_at: datetime | None  # when it started FIRING (pending start + the rule's `for`)
     labels: dict[str, str] = field(default_factory=dict)
+    value: float | None = None  # the rule's expression now (e.g. the consumer lag in messages)
 
 
 class Metrics(Protocol):

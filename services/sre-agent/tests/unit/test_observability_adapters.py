@@ -27,6 +27,7 @@ RULES = {
                                 "annotations": {"summary": "order-service errors at 38%"},
                                 "state": "firing",
                                 "activeAt": "2026-11-26T11:05:11.123456789Z",
+                                "value": "3.8e-01",
                             },
                             {"labels": {"namespace": "prod", "service": "order-service"},
                              "state": "firing", "activeAt": "2026-11-26T11:05:11Z"},
@@ -65,6 +66,7 @@ async def test_only_this_namespaces_firing_alerts_with_their_firing_time() -> No
     ]
     assert alerts[0].fired_at == datetime(2026, 11, 26, 11, 5, 31, 123456, tzinfo=UTC)
     assert alerts[0].summary == "order-service errors at 38%"
+    assert alerts[0].value == 0.38 and alerts[1].value is None
 
 
 async def test_values_sum_series_by_label_and_nan_means_no_answer() -> None:

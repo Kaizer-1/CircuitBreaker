@@ -196,3 +196,30 @@ async def test_no_answer_before_no_first_run_time_or_no_app_is_failed() -> None:
     assert (await g.reconcile("order-service", synced, "INC-1", None))["status"] == "FAILED"
     out = await g.reconcile("order-service", synced, "INC-1", FIRST_RAN)
     assert "No GitHub App" in out["reason"]
+
+
+async def test_a_sync_still_running_counts_as_the_one_before_the_bad_release() -> None:
+    """Argo CD records a sync in its history only when it finishes; a release that never gets
+    healthy keeps its sync running, so the pre-check must read the operation in progress."""
+    started = iso(T - timedelta(seconds=3))
+
+    def argo(request: httpx.Request) -> httpx.Response:
+        status = {
+            "sync": {"status": "Synced", "revision": SYNCED},
+            "history": [{"revision": BEFORE, "deployStartedAt": iso(T - timedelta(hours=3))}],
+            "operationState": {
+                "phase": "Running",
+                "startedAt": started,
+                "operation": {"sync": {"revision": SYNCED}},
+            },
+        }
+        return httpx.Response(
+            200, json={"spec": {"source": {"targetRevision": "main"}}, "status": status}
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(argo))
+    before = await ArgoGitOps(client, "http://argo", "argo-token", "staging", None).sync_state(
+        "order-service"
+    )
+    assert before is not None
+    assert [h.revision for h in before.history] == [BEFORE, SYNCED]

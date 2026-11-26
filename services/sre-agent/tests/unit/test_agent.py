@@ -38,6 +38,7 @@ class Rig:
         approval: bool = False,
         logs: FakeLogs | None = None,
         approval_timeout: float = 300.0,
+        **config: Any,
     ) -> None:
         self.world, self.clock = world, world.clock
         self.metrics = FakeMetrics(world)
@@ -49,7 +50,7 @@ class Rig:
             "staging", self.metrics, logs or FakeLogs(), self.platform, self.clock.now
         )
         self.agent = Agent(
-            AgentConfig("staging", approval, approval_timeout_seconds=approval_timeout),
+            AgentConfig("staging", approval, approval_timeout_seconds=approval_timeout, **config),
             alerts=self.metrics,
             collector=collector,
             decider=Decider(llm, self.clock.now),
@@ -427,3 +428,84 @@ def test_the_open_breaker_leads_when_one_service_has_several_alerts() -> None:
     ]
     assert lead_alert(alerts).name == "OrderServiceCircuitOpen"
     assert lead_alert(alerts[:2]).name == "OrderServiceHighErrorRate"
+
+
+def lag_after_scale(world: World, start: float, end: float, value: Any) -> None:
+    """The panic's backlog: ConsumerLagHigh on order-service from `start` to `end` s after the
+    agent's scale-up, its value (the lag) a function of seconds since the action."""
+
+    def since(w: World) -> float:
+        return w.since_action("order-service") or -1.0
+
+    world.rules.append(
+        Rule(
+            "ConsumerLagHigh",
+            "order-service",
+            severity="warning",
+            remediable=False,
+            firing=lambda w: start <= since(w) < end,
+            value=lambda w: value(since(w)),
+        )
+    )
+
+
+async def keep_ticking(rig: Rig, seconds: float) -> None:
+    for _ in range(int(seconds / 5)):
+        await rig.clock.sleep(5)
+        await rig.agent.tick()
+    await rig.agent.wait_idle()
+
+
+async def test_lag_draining_after_a_scale_up_is_an_after_effect_of_that_incident(
+    world: World,
+) -> None:
+    """Owner, 2026-11-27: not a separate escalated incident, and not hidden either."""
+    overload_after_rollback(world)
+    lag_after_scale(world, 130, 260, lambda t: 3000 - 20 * (t - 130))
+    rig = Rig(world)
+    (incident,) = await rig.run()
+    await keep_ticking(rig, 300)
+    assert len(rig.store.incidents) == 1  # no second incident
+    notes = [e.message for e in incident.timeline if e.kind.value == "VERIFIED"]
+    assert any("ConsumerLagHigh" in n and "expected after-effect" in n for n in notes)
+    assert any("drained" in n for n in notes)
+    assert incident.resolution and incident.resolution.value == "RECOVERED"
+
+
+async def test_lag_that_stops_draining_is_handed_to_a_person(world: World) -> None:
+    overload_after_rollback(world)
+    lag_after_scale(world, 130, 900, lambda t: 3000.0)  # not going down
+    rig = Rig(world)
+    (first,) = await rig.run()
+    await keep_ticking(rig, 200)
+    second = sorted(rig.store.incidents.values(), key=lambda i: i.incident_id)[-1]
+    assert second is not first and second.alert_name == "ConsumerLagHigh"
+    assert second.resolution and second.resolution.value == "ESCALATED"
+    assert any("stopped draining" in e.message for e in first.timeline)
+
+
+async def test_lag_still_there_when_the_window_ends_is_handed_to_a_person(world: World) -> None:
+    overload_after_rollback(world)
+    lag_after_scale(world, 130, 900, lambda t: 9000 - 5 * t)  # draining, but slowly
+    rig = Rig(world, after_effect_seconds=120)
+    (first,) = await rig.run()
+    await keep_ticking(rig, 300)
+    assert len(rig.store.incidents) == 2
+    assert any("recovery window ended" in e.message for e in first.timeline)
+
+
+async def test_a_remediable_alert_after_recovery_is_a_new_problem_not_an_after_effect(
+    world: World,
+) -> None:
+    overload_after_rollback(world)
+    world.rules.append(
+        Rule(
+            "OrderServiceHighLatency",
+            "order-service",
+            firing=lambda w: 130 <= (w.since_action("order-service") or -1) < 400,
+        )
+    )
+    rig = Rig(world)
+    await rig.run()
+    await keep_ticking(rig, 60)
+    assert len(rig.store.incidents) == 2

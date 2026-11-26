@@ -54,6 +54,7 @@ class PrometheusMetrics:
                             summary=a.get("annotations", {}).get("summary", rule.get("name", "")),
                             fired_at=fired,
                             labels=labels,
+                            value=_number(a.get("value")),
                         )
                     )
         return alerts

@@ -66,6 +66,24 @@ def lead_alert(alerts: list[Alert]) -> Alert:
     return min(alerts, key=rank)
 
 
+@dataclass
+class AfterEffect:
+    """An information-only alert expected after a fix, watched on the incident it follows."""
+
+    incident: Incident
+    since: datetime
+    ends: datetime
+    samples: list[tuple[datetime, float | None]]
+
+    def stalled(self, now: datetime, seconds: float) -> tuple[float, float] | None:
+        """(then, now) if the alert's value went no lower over the last `seconds`."""
+        current = self.samples[-1][1]
+        earlier = [v for t, v in self.samples if (now - t).total_seconds() >= seconds]
+        if current is None or not earlier or earlier[-1] is None:
+            return None
+        return (earlier[-1], current) if current >= earlier[-1] else None
+
+
 @dataclass(frozen=True)
 class AgentConfig:
     environment: str
@@ -74,6 +92,11 @@ class AgentConfig:
     approval_timeout_seconds: float = 300.0
     hold_seconds: float = 60.0  # the alert must stay clear this long to count as recovered
     max_rounds: int = 3
+    # After a successful fix, an information-only alert on the same service (ConsumerLagHigh while
+    # the backlog of a panic drains) is an expected after-effect of THAT incident for this long,
+    # not a new incident; it is handed to a person if it stops improving (owner, 2026-11-27).
+    after_effect_seconds: float = 600.0
+    drain_check_seconds: float = 60.0  # it must have gone down over this long
     # How long to wait for the alert to clear after each kind of action. Scaling is measured: new
     # pods take 20-60 s to be ready, traffic moves over within ~60 s more, and the latency alert
     # clears 22-28 s after the real recovery (chaos scenarios 3.3), so it gets 4 minutes.
@@ -126,6 +149,9 @@ class Agent:
         self._sent: dict[str, int] = {}
         self._last_event: dict[str, str] = {}
         self._firing: list[Alert] = []
+        self._recovery: dict[str, tuple[Incident, datetime, str]] = {}  # service -> its window
+        self._after_effects: dict[tuple[str, str], AfterEffect] = {}
+        self._handed_over: set[tuple[str, str]] = set()
         self.settings = AgentSettings(
             environment=config.environment,
             approval_required=config.approval_by_default,
@@ -201,8 +227,11 @@ class Agent:
     async def tick(self) -> None:
         alerts = await self._alerts.firing_alerts()
         self._firing = alerts
+        now = self._now()
         keys = {(a.name, a.service) for a in alerts}
         self._escalated &= keys  # a cleared alert may open an incident again
+        self._handed_over &= keys
+        await self._watch_after_effects(alerts, now)
         by_service: dict[str, list[Alert]] = {}
         for alert in alerts:
             if alert.service in APPLICATION_SERVICES:  # never a data store
@@ -210,10 +239,68 @@ class Agent:
         for service, group in sorted(by_service.items()):
             if service in self._open:
                 continue
+            group = [a for a in group if (a.name, service) not in self._after_effects]
+            window = self._recovery.get(service)
+            if window is not None and now < window[1]:
+                for alert in [a for a in group if not a.remediable]:
+                    if (alert.name, service) not in self._handed_over:
+                        await self._attach(window, alert, now)
+                group = [a for a in group if (a.name, service) not in self._after_effects]
+            if not group:
+                continue
             lead = lead_alert(group)
             if (lead.name, service) in self._escalated:
                 continue
             await self._open_incident(lead)
+
+    # ------------------------------------------------------------------ after-effects
+
+    async def _attach(
+        self, window: tuple[Incident, datetime, str], alert: Alert, now: datetime
+    ) -> None:
+        incident, ends, action = window
+        key = (alert.name, alert.service)
+        self._after_effects[key] = AfterEffect(incident, now, ends, [(now, alert.value)])
+        level = f" ({alert.value:.0f} now)" if alert.value is not None else ""
+        minutes = (ends - now).total_seconds() / 60
+        incident.note(
+            Kind.VERIFIED,
+            f"{alert.name}{level} after the {action.replace('_deployment', '')}: an expected"
+            f" after-effect, draining; no action. Watched for up to {minutes:.0f} min.",
+            now,
+        )
+        await self._emit(incident, [])
+
+    async def _watch_after_effects(self, alerts: list[Alert], now: datetime) -> None:
+        for key, effect in list(self._after_effects.items()):
+            alert = next((a for a in alerts if (a.name, a.service) == key), None)
+            incident = effect.incident
+            if alert is None:
+                seconds = round((now - effect.since).total_seconds())
+                incident.note(
+                    Kind.VERIFIED,
+                    f"{key[0]} cleared after {seconds} s: the after-effect drained.",
+                    now,
+                )
+                del self._after_effects[key]
+                await self._emit(incident, [])
+                continue
+            effect.samples.append((now, alert.value))
+            why = None
+            if now >= effect.ends:
+                why = "still firing when the recovery window ended"
+            else:
+                stalled = effect.stalled(now, self._cfg.drain_check_seconds)
+                if stalled is not None:
+                    why = f"stopped draining ({stalled[0]:.0f} to {stalled[1]:.0f} in a minute)"
+            if why is None:
+                continue
+            del self._after_effects[key]
+            self._handed_over.add(key)
+            incident.note(Kind.VERIFIED, f"{key[0]} {why}: handed to a person.", now)
+            await self._emit(incident, [])
+            if alert.service not in self._open:
+                await self._open_incident(alert)
 
     async def _open_incident(self, lead: Alert) -> None:
         number = await self._store.next_incident_number()
@@ -453,7 +540,7 @@ class Agent:
         if approve:
             events = incident.approve(remediation_id, by, comment, now)
         else:
-            reason = f"Declined by {by}." + (f" {comment}" if comment else "")
+            reason = comment or "No reason given."
             events = incident.decline(remediation_id, reason, now, admin=by)
             self._count_decline("admin", "admin")
         await self._emit(incident, events)
@@ -521,6 +608,9 @@ class Agent:
         )
         if self._metrics is not None and acted:
             self._metrics.sre_agent_time_to_recover_seconds.observe(max(0, seconds))
+        if acted:
+            ends = self._now() + timedelta(seconds=self._cfg.after_effect_seconds)
+            self._recovery[incident.service] = (incident, ends, incident.actions_taken[-1])
         await self._resolve(incident, resolution, message)
 
     async def _resolve(self, incident: Incident, resolution: Resolution, message: str) -> None:

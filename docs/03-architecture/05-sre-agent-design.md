@@ -112,6 +112,16 @@ instead of acting ([chaos scenarios §5](06-chaos-scenarios.md#5-alert-rules-pro
 | `ConsumerLagHigh` | Lag is a symptom (a slow or stopped consumer), not a cause. |
 | `DeadLetterMessages` | A person must look at the parked message. |
 
+**After-effects of a fix (owner's decision, 2026-11-27).** A panic sell leaves order-service with a backlog of
+events, so `ConsumerLagHigh` fires a minute after the agent's scale-up has already fixed the overload. That is not a
+new problem, and a separate "escalated" incident right after a successful fix would mislead the audience; hiding it
+would be worse. So for **10 minutes after an incident recovers through an action**, an information-only alert on
+the same service is attached to *that* incident as an expected after-effect ("ConsumerLagHigh (3,000 now) after the
+scale: an expected after-effect, draining; no action") and watched through the alert's own value. It is noted as
+drained when it clears; it becomes its own incident and goes to a person if its value stops going down for a
+minute, or if it still fires when the 10 minutes end. An alert the agent can act on, after a recovery, is a new
+problem and opens its own incident as before.
+
 **Phase 7 must demonstrate this:** with portfolio-service broken, `OrderServiceCircuitOpen` fires and the incident
 feed shows the agent choosing **not** to act on order-service and escalating, with its explanation. It is a key viva
 moment: a good operator knows when the right action is no action on the service that raised the alarm.
