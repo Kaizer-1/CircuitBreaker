@@ -58,6 +58,10 @@ Both are therefore in Terraform's state, one of the reasons the state file is gi
 **Placeholders for Phase 7:** `openrouter-api-key` and `sre-agent-github-app` are sealed now with placeholder
 values, so the charts' references resolve; Phase 7 re-seals them with real values (`make seal env=<env>
 rotate="openrouter-api-key"` after editing the plaintext source).
+*Done 2026-11-26: real values sealed for both environments by `make openrouter-key` (refuses a key without a credit
+limit) and `make github-app` (refuses unless GitHub confirms the App reaches only this repository with only contents
+and pull-request permissions and is on no ruleset's bypass list). A person types or points to each value; none is an
+argument or in shell history.*
 
 ## Alternatives considered
 

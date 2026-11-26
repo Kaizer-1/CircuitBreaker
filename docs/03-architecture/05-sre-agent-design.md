@@ -164,7 +164,7 @@ sees OpenRouter's request/response format, so changing gateway or model touches 
 | Argument validation | `strict: true` where the model supports it **and always** our own JSON Schema validation of the returned arguments in code | Not every model enforces strict schemas, so we never trust arguments without checking them ourselves. Invalid arguments → declined by guardrail. |
 | Timeout | 30 s, 1 retry, then the fallback model (if configured) | If OpenRouter or the model is slow or down, fall back to `do_nothing` + escalate: the system is never *worse* because the LLM failed. |
 | Stop reasons | Anything other than a single valid tool call (plain text, refusal, content filter, length cut-off) → `do_nothing` + escalate | Always check why the response stopped before reading it. |
-| Key | `OPENROUTER_API_KEY` from the Kubernetes Secret `openrouter-api-key`, created by Terraform from a git-ignored input ([ADR-0015](../adr/0015-terraform-local-platform.md)) | Never in code or Git. |
+| Key | `OPENROUTER_API_KEY` from the Kubernetes Secret `openrouter-api-key`: a SealedSecret in Git ([ADR-0019](../adr/0019-sealed-secrets-for-gitops.md)), sealed by `make openrouter-key`, which refuses a key without a credit limit | Never in code; in Git only encrypted. |
 | Data minimisation | Evidence only (metrics, truncated logs, deploy history); nicknames and trader IDs are scrubbed from log lines | Prompts leave our system and pass through OpenRouter and the model provider, so we send only what diagnosis needs. |
 | Spend control | OpenRouter key with a credit limit; the agent stores token usage per call (`sre_agent_llm_tokens_total`) | A runaway loop cannot cost more than the key's limit. |
 

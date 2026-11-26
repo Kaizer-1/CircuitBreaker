@@ -81,7 +81,9 @@ anything that slips through is off the screen with **B**.
 ## 4. Fallback: the last known-good version
 
 Annotated Git tags mark versions that were verified end to end. Falling back changes the code, not the data, so it
-takes minutes, not a reset, as long as the data is from the same tickers.
+takes minutes, not a reset, as long as the data is from the same tickers. On GitHub these tags can be neither
+deleted nor moved, by anyone, and only the owner creates a new one (tag rulesets, tested 2026-11-26: deployment doc
+section 4), so a tag still names exactly the code that was verified.
 
 | Tag | Verified | Runs on |
 |---|---|---|

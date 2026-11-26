@@ -46,8 +46,13 @@ flowchart TD
   *pull requests: write*. A repository ruleset protects `main`, and the App is **not** on its bypass list, so it can
   open pull requests but never merge them. *As built (2026-11-24): the ruleset requires a pull request with 0
   approvals (only the owner has access) and **restricts updates** to `main` to its bypass list: the admin role, only
-  by merging a pull request, and deploy keys (CI's tag bumps). GitHub itself therefore refuses the App's merge or push;
-  Phase 7 tests that it does ([deployment doc §4](../03-architecture/07-deployment-and-environments.md#4-cicd-pipeline-github-actions--argo-cd-gitops)).*
+  by merging a pull request, and deploy keys (CI's tag bumps). GitHub itself therefore refuses the App's merge or push.
+  Tested 2026-11-26 (`make github-rules-check`, 26 of 26): as the App, GitHub allowed a commit, a branch and a pull
+  request, and refused with a rule violation the merge, a push to `main` (API and `git push`) and creating, moving or
+  deleting a release tag; it cannot edit the rulesets (no Administration permission). Release tags `v*` have their
+  own rulesets (no one deletes or moves them, only the admin creates them), so the App can never touch the demo's
+  fallback tags ([deployment doc §4](../03-architecture/07-deployment-and-environments.md#4-cicd-pipeline-github-actions--argo-cd-gitops)).
+  `make github-app` seals its credentials only after GitHub confirms these limits.*
 - A read-only **Argo CD account** `sre-agent` whose Argo CD RBAC allows `get` on Applications only.
 
 **New guardrail G11 (Git step):**
