@@ -324,7 +324,7 @@ Kubernetes deployment (`make k8s-check c=alerts`, Phase 5):
 | `MarketDataMemoryGrowth` | market-data-service | memory > 70% of the limit and rising (`deriv` over 2 minutes) | 30s | critical | true | 36 s after crossing 70% |
 | `GatewayHighErrorRate` | api-gateway | 5xx ratio > 5% | 20s | critical | true | 61 s (portfolio-service down) |
 | `PortfolioHighErrorRate` | portfolio-service | 5xx ratio > 5% | 20s | critical | true | 48 s (a revoked INSERT; still "ready") |
-| `PodCrashLooping` | any app service | restarts > 3 in 5m, **or** waiting in CrashLoopBackOff after more than 3 restarts (added 2026-11-27: Kubernetes' growing back-off made the first condition clear while the pod still crashed) | 0m | critical | true | at the 4th restart, and while the crash loop lasts |
+| `PodCrashLooping` | any app service | restarts > 3 in 5m, **or** waiting in CrashLoopBackOff after more than 3 restarts (added 2026-11-27: Kubernetes' growing back-off made the first condition clear while the pod still crashed); both count only containers that still exist, so it clears once the crashing pod is gone (a deleted pod's restarts stayed in the 5-minute window for minutes after a working rollback) | 0m | critical | true | at the 4th restart, and while the crash loop lasts |
 | `ConsumerLagHigh` | any consumer | lag > 1,000: the consumer's own gauge **or** the broker's lag for its group | 30s | warning | false (informational) | 38 s after passing 1,000 (matching-engine stopped) |
 | `DeadLetterMessages` | any | a message sent to any `.dlq` topic (`events_dead_lettered_total`) | 0m | warning | false | 13 s |
 
@@ -340,6 +340,10 @@ order-service replicas and every Argo CD Application `Synced`. Mains power; the 
 | Memory leak, 80 MB/min | `MarketDataMemoryGrowth` | 266–275 s (30–32 s) | restart | 16–18 s | **286–294 s** | already normal | none |
 | Panic sell, 110 req/s | `OrderServiceHighLatency` | 40–62 s (30–32 s) | scale 2 → 5 | 47–48 s; twice 98–128 s | **90–110 s; twice 162–170 s** (since 2026-11-26: 69–113 s in 4 of 5, once 182 s; §3.3) | 0–83 s | `OrderServiceHighErrorRate` + `GatewayHighErrorRate` (`OVERLOADED`, 3 of 5) |
 | Portfolio database degraded | `OrderServiceCircuitOpen` | 8–10 s (2 s) | none: the presenter's reset | 28–58 s | **38–70 s** (100 s with the restart test) | already normal | none |
+
+**With the agent** (Phase 7b, 2026-11-26/27): each scenario 3–4 times, the agent deciding and acting itself. From the
+alert firing: detect 1–5 s, mitigate 2–9 s, recovered 23–45 s; the database decline escalated within 3 s. Full table,
+the special tests and what they found: [SRE agent design §11](05-sre-agent-design.md#11-measured-on-staging).
 
 - **`OrderServiceCircuitOpen` is information, not a call to act.** An open breaker means portfolio-service is failing
   and order-service is doing the right thing (failing fast with 503). Restarting, scaling or rolling back
