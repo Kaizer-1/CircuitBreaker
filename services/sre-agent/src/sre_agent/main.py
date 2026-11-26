@@ -157,6 +157,9 @@ async def run_service(app: FastAPI, settings: Settings, http: httpx.AsyncClient)
             fallback_models=fallbacks,
             base_url=settings.openrouter_url,
             metrics=business,
+            ignore_providers=tuple(
+                x.strip() for x in settings.sre_agent_ignore_providers.split(",") if x.strip()
+            ),
         )
         tasks.append(asyncio.create_task(llm.learn_parameters()))
     else:

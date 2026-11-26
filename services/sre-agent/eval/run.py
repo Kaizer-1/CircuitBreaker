@@ -29,6 +29,7 @@ from eval.cases import CASES, NOTHING, Case, setup
 from sre_agent.adapters.openrouter import OpenRouterClient
 from sre_agent.application.collector import Collected, EvidenceCollector
 from sre_agent.application.decider import Decider
+from sre_agent.config import Settings
 from sre_agent.domain import fallback, guardrails
 from sre_agent.domain.actions import Proposal
 from sre_agent.domain.guardrails import Situation
@@ -36,6 +37,9 @@ from sre_agent.domain.incident import Incident
 from sre_agent.ports.llm import LLMUnavailableError
 
 MODEL = "anthropic/claude-sonnet-5.5"
+IGNORE = tuple(
+    Settings.model_fields["sre_agent_ignore_providers"].default.split(",")
+)  # as deployed
 SERVICE = Path(__file__).resolve().parents[1]
 
 
@@ -201,7 +205,7 @@ async def main() -> None:
     args = parser.parse_args()
     cases = [c for c in CASES if not args.only or c.name in args.only]
     async with httpx.AsyncClient() as http:
-        llm = OpenRouterClient(http, api_key(), MODEL)
+        llm = OpenRouterClient(http, api_key(), MODEL, ignore_providers=IGNORE)
         await llm.learn_parameters()
         report = []
         for case in cases:

@@ -27,6 +27,8 @@ class Settings(BaseServiceSettings):
     openrouter_url: str = "https://openrouter.ai/api/v1"
     sre_agent_model: str = "anthropic/claude-sonnet-5.5"
     sre_agent_fallback_models: str = ""  # comma-separated, tried by OpenRouter in order
+    # Providers OpenRouter must not route to (comma-separated): one returned tool calls as text.
+    sre_agent_ignore_providers: str = "Claude Platform on AWS"
 
     # The rollback's Git step (ADR-0016). Without the Argo CD token (make k8s-up, CI's slim profile)
     # there is nothing to reconcile; without the App, a bad release from Git is FAILED ("manual git

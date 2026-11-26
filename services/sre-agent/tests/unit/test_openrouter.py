@@ -115,3 +115,17 @@ async def test_a_timeout_is_not_retried_and_says_how_long_it_waited() -> None:
     with pytest.raises(LLMUnavailableError, match="did not answer in 25 s"):
         await client(server).choose_action(EVIDENCE, 25)
     assert len(server.bodies) == 1
+
+
+async def test_providers_to_ignore_are_never_routed_to() -> None:
+    server = Server(httpx.Response(200, json=answer(SCALE)))
+    http = httpx.AsyncClient(transport=httpx.MockTransport(server))
+    c = OpenRouterClient(
+        http,
+        "sk-or-test",
+        MODEL,
+        base_url="https://or/api/v1",
+        ignore_providers=("Claude Platform on AWS",),
+    )
+    await c.choose_action(EVIDENCE, 25)
+    assert server.bodies[0]["provider"]["ignore"] == ["Claude Platform on AWS"]

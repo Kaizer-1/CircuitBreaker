@@ -3,6 +3,10 @@
 One request per decision: the fixed system prompt, the evidence as the user message, the four
 tools and `tool_choice: "auto"`, routed only to providers that support every parameter we send
 (`provider.require_parameters`) and do not keep the prompts (`provider.data_collection: "deny"`).
+Providers named in SRE_AGENT_IGNORE_PROVIDERS are never used: on staging (2026-11-26) "Claude
+Platform on AWS" sometimes returned the tool call as text in the message (Anthropic's XML
+`<invoke ...>` form) while reporting finish_reason tool_calls, so the call was lost (generation
+gen-1795723084-4kPwdr7wxw5ylrcz0kYf). Routing around it is safer than reading actions out of text.
 `temperature: 0` and `parallel_tool_calls: false` are sent only if OpenRouter's public model list
 says the model takes them: for anthropic/claude-sonnet-5.5 no provider offers either (checked
 2026-11-26), and sending one anyway makes strict routing find no provider at all (404). Without
@@ -54,7 +58,9 @@ class OpenRouterClient:
         fallback_models: tuple[str, ...] = (),
         base_url: str = API,
         metrics: BusinessMetrics | None = None,
+        ignore_providers: tuple[str, ...] = (),
     ) -> None:
+        self._ignore = ignore_providers
         self._client = client
         self._key = api_key
         self._model = model
@@ -91,7 +97,11 @@ class OpenRouterClient:
             "tools": definitions(),
             "tool_choice": "auto",
             "max_tokens": MAX_TOKENS,
-            "provider": {"require_parameters": True, "data_collection": "deny"},
+            "provider": {
+                "require_parameters": True,
+                "data_collection": "deny",
+                **({"ignore": list(self._ignore)} if self._ignore else {}),
+            },
             # OpenRouter's own field (not a provider parameter): the answer says what the call cost.
             "usage": {"include": True},
         }
