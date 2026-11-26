@@ -369,7 +369,8 @@ class Agent:
                 )
                 return True
             self._acting.add(incident.service)
-            succeeded, details, git = await self._execute(incident, r)
+            first_ran = collected.revision.first_ran_at if collected.revision else None
+            succeeded, details, git = await self._execute(incident, r, first_ran)
             executed_at = self._now()
             if succeeded:
                 record = ActionRecord(incident.service, executed_at, incident.incident_id, r.action)
@@ -401,14 +402,14 @@ class Agent:
         return False
 
     async def _execute(
-        self, incident: Incident, r: Remediation
+        self, incident: Incident, r: Remediation, first_ran: datetime | None = None
     ) -> tuple[bool, str, dict[str, Any] | None]:
         service = r.target_service or incident.service
         try:
             if r.action == Tool.ROLLBACK:
                 before = await self._gitops.sync_state(service)
                 details = await self._platform.rollback(service, int(r.parameters["to_revision"]))
-                git = await self._gitops.reconcile(service, before, incident.incident_id)
+                git = await self._gitops.reconcile(service, before, incident.incident_id, first_ran)
                 return True, details, git
             if r.action == Tool.SCALE:
                 return (

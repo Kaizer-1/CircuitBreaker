@@ -53,6 +53,17 @@ flowchart TD
   own rulesets (no one deletes or moves them, only the admin creates them), so the App can never touch the demo's
   fallback tags ([deployment doc §4](../03-architecture/07-deployment-and-environments.md#4-cicd-pipeline-github-actions--argo-cd-gitops)).
   `make github-app` seals its credentials only after GitHub confirms these limits.*
+
+  *Found on staging (2026-11-26): "the Application was `Synced`" does not prove the bad release came from Git. Two
+  facts of Argo CD: its diff compares only the fields Git sets (an environment variable added from outside is
+  invisible), and its automated sync re-applies Git when an Application drifts while a newer revision of its paths is
+  waiting (any commit to its values file **or the shared chart** since its last sync). During a chaos `BAD_DEPLOY`,
+  Argo CD re-synced order-service 5 s after the patch, reset its release annotation, kept the injected setting and
+  said `Synced`; the first version of the pre-check then opened a revert of an unrelated, day-old image bump (closed
+  unmerged, PR #24). The pre-check now asks for the sync that **started just before the bad pod template first ran**
+  and **changed the service's values file**, and reverts a commit from that sync only. The same automated sync is
+  the one known way a rollback can be undone before its revert pull request is merged: a commit that touches the
+  service's paths in between re-applies the bad release. Merge the revert first.*
 - A read-only **Argo CD account** `sre-agent` whose Argo CD RBAC allows `get` on Applications only.
   *As built (2026-11-26): one account per environment, `sre-agent-<env>` (`apiKey` only), each with the role
   `get` on `circuitbreaker/*-<env>`: its own environment's Applications, not the other's (`infra/platform/argo-cd.yaml`,

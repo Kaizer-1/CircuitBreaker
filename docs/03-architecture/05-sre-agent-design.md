@@ -137,13 +137,22 @@ skip the Git step, and the agent still has exactly four tools.
 
 | Step | What the code does | Why |
 |---|---|---|
-| **Pre-check** | Read the service's Argo CD Application (forcing a refresh) and record its sync status and synced Git revision. | Tells *where* the bad version came from: `Synced` means it came from Git; `OutOfSync` means live drift (e.g. chaos). |
+| **Pre-check** | Read the service's Argo CD Application (forcing a refresh): its sync status and its **sync history**. The bad release came from Git only if a sync **started at most 3 minutes before the bad pod template first ran** and **changed `deploy/envs/<env>/<service>.yaml`** (GitHub's compare between that sync and the one before). | Tells *where* the bad version came from. `Synced` alone is not enough (found on staging, 2026-11-26): Argo CD compares only the fields Git sets, and its automated sync can re-apply Git a few seconds *after* a change made outside Git and then report `Synced` while that change still runs. |
 | **(a) Mitigate** | Roll the Deployment back one revision through the Kubernetes API. | Seconds, not minutes. Users stop seeing errors. |
-| **(b) Reconcile** | Only if the pre-check said `Synced`: find the newest commit on `main` (at or before the synced revision) that changed `deploy/envs/<env>/<service>.yaml`. Check it touched only that file. Push branch `sre-agent/revert-INC-nnnn` with the revert commit (`Revert "…"` / `This reverts commit <sha>.`) and open a pull request. **Never merge.** | Git becomes true again. A human reviews the change; Argo CD applies it, with no new rollout because the pod template is identical. |
+| **(b) Reconcile** | Only if the pre-check found that sync: the newest commit **in that sync** that changed `deploy/envs/<env>/<service>.yaml`. Check it touched only that file. Push branch `sre-agent/revert-INC-nnnn` with the revert commit (`Revert "…"` / `This reverts commit <sha>.`) and open a pull request. **Never merge.** | Git becomes true again. A human reviews the change; Argo CD applies it, with no new rollout because the pod template is identical. |
 | **Record** | `git_reconciliation` on `RemediationExecuted` and on the incident's remediation: `PR_OPENED` (with `pull_request_url`, `reverted_commit`), `NOT_NEEDED`, or `FAILED` (with `reason`). | Visible on the incident feed and in the API. |
 
 If step (b) fails (GitHub unreachable, the commit check fails, or the file changed in the meantime), the rollback
 from (a) **stays**. The incident is escalated with "manual `git revert` needed".
+
+**What a rollback can and cannot undo (found 2026-11-26).** Kubernetes rolls back a Deployment's **pod template**
+(image, resources, the environment variables written in the template, annotations). It does not roll back other
+objects. Our chart puts a service's ordinary settings in its **ConfigMap** (read through `envFrom`), and the
+template only carries the ConfigMap's checksum: after a rollback the old checksum is back, but the new pods read the
+ConfigMap as it is now. So a bad *setting* delivered through Git is not undone by the rollback; only by the revert
+pull request, once merged. A bad *image*, *resource limit* or anything else in the template is undone at once. The
+chaos `BAD_DEPLOY` changes the template's own environment, which a rollback does undo, and the Git-delivered
+rehearsal changes a memory limit for the same reason.
 
 ## 4. Calling the LLM through OpenRouter
 
@@ -343,6 +352,11 @@ the bad release, acting on another service) are refused in code whoever proposes
 **Q: Why is evidence collected by code instead of letting the LLM query Prometheus?**
 A: It keeps the agent's powers exactly equal to the four-tool allowlist, makes every diagnosis reproducible (we store
 the evidence), bounds cost and latency, and reduces prompt-injection surface.
+
+**Q: Does `kubectl rollout undo` undo every bad change?**
+A: No: only the pod template. A setting the chart keeps in a ConfigMap stays as it is, because a rollback does not
+touch other objects; the pods it brings back read the current ConfigMap. That is one more reason the agent also opens
+the `git revert` pull request: merging it fixes what the rollback could not.
 
 **Q: With GitOps, doesn't a rollback leave Git pointing at the bad release?**
 A: Not any more: **mitigate fast, reconcile through Git**. `rollback_deployment` first rolls back in the cluster

@@ -18,12 +18,13 @@ import base64
 import contextlib
 import logging
 import time
+from datetime import datetime
 from typing import Any
 
 import httpx
 import jwt
 
-from sre_agent.ports.gitops import SyncState
+from sre_agent.ports.gitops import Sync, SyncState, sync_behind
 
 logger = logging.getLogger("gitops")
 GITHUB = "https://api.github.com"
@@ -100,7 +101,13 @@ class GitHubReverter:
         return str(body["token"])
 
     async def open_revert(
-        self, service: str, environment: str, before: SyncState, incident_id: str
+        self,
+        service: str,
+        environment: str,
+        before: SyncState,
+        incident_id: str,
+        sync: Sync,
+        previous: Sync | None,
     ) -> dict[str, Any]:
         path = f"deploy/envs/{environment}/{service}.yaml"
         base = before.branch or "main"
@@ -113,12 +120,26 @@ class GitHubReverter:
                 raise GitStepError(
                     f"a revert pull request for {service} is already open ({pr.get('html_url')})"
                 )
-        commits = await self._call(
-            "GET", f"{repo}/commits?sha={before.revision or base}&path={path}&per_page=1", t
+        # The commit to revert is the newest one that changed the values file IN the sync that put
+        # the bad release in place (between the sync before it and that sync).
+        touched = await self._call(
+            "GET", f"{repo}/commits?sha={sync.revision}&path={path}&per_page=20", t
         )
-        if not commits:
+        if not touched:
             raise GitStepError(f"no commit changed {path}")
-        sha = str(commits[0]["sha"])
+        in_sync = [str(c["sha"]) for c in touched]
+        if previous is not None:
+            compared = await self._call(
+                "GET", f"{repo}/compare/{previous.revision}...{sync.revision}", t
+            )
+            new = {str(c["sha"]) for c in (compared or {}).get("commits", [])}
+            in_sync = [sha for sha in in_sync if sha in new]
+        if not in_sync:
+            raise GitStepError(
+                f"the sync at {sync.started_at:%H:%M:%S} did not change {path}: the bad release"
+                " came from another file (the shared chart?), which the agent never reverts (G11)"
+            )
+        sha = in_sync[0]
         commit = await self._call("GET", f"{repo}/commits/{sha}", t)
         files = [f["filename"] for f in commit.get("files", [])]
         if files != [path]:
@@ -224,15 +245,26 @@ class ArgoGitOps:
         sync = app.get("status", {}).get("sync", {})
         status = sync.get("status", "Unknown")
         revision = sync.get("revision")
+        history = []
+        for h in app.get("status", {}).get("history", []):
+            started = h.get("deployStartedAt") or h.get("deployedAt")
+            if h.get("revision") and started:
+                at = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                history.append(Sync(h["revision"], at))
         return SyncState(
             synced=status == "Synced",
             revision=revision,
             detail=f"{status} at {str(revision)[:12]}",
             branch=app.get("spec", {}).get("source", {}).get("targetRevision"),
+            history=tuple(sorted(history, key=lambda x: x.started_at)),
         )
 
     async def reconcile(
-        self, service: str, before: SyncState | None, incident_id: str
+        self,
+        service: str,
+        before: SyncState | None,
+        incident_id: str,
+        first_ran: datetime | None,
     ) -> dict[str, Any]:
         if before is None:
             return result(
@@ -247,10 +279,24 @@ class ArgoGitOps:
                 " revision was a change made outside Git, and the rollback brought the cluster back"
                 " to what Git says.",
             )
+        if first_ran is None:
+            return result(
+                "FAILED", "When the bad release first ran is not known: a person checks Git."
+            )
+        sync, previous = sync_behind(before.history, first_ran)
+        if sync is None:
+            return result(
+                "NOT_NEEDED",
+                f"The bad release first ran at {first_ran:%H:%M:%S} UTC and no Argo CD sync had"
+                " started just before it: it was a change made outside Git. The rollback brought"
+                " the cluster back to what Git says.",
+            )
         if self._github is None:
             return result("FAILED", "No GitHub App is configured: a manual git revert is needed.")
         try:
-            return await self._github.open_revert(service, self._env, before, incident_id)
+            return await self._github.open_revert(
+                service, self._env, before, incident_id, sync, previous
+            )
         except GitStepError as exc:
             logger.warning("git revert step failed", extra={"reason": str(exc)})
             return result("FAILED", f"Manual git revert needed: {exc}.")

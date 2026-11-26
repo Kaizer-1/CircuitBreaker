@@ -57,6 +57,7 @@ class RevisionFacts:
     revision: int
     release: str | None  # change-cause of the running revision
     first_ran_minutes: float  # how long ago this release's template first ran
+    first_ran_at: datetime  # when its first ReplicaSet was made
     known_good: bool  # it already ran long before (a rollback to it, or a restart of it)
     rollback_to: int | None  # the newest revision of a DIFFERENT release, if any
     rollback_release: str | None
@@ -82,6 +83,7 @@ def facts(replicasets: list[ReplicaSetInfo], now: datetime) -> RevisionFacts | N
         revision=current.revision,
         release=current.change_cause,
         first_ran_minutes=first_ran_minutes,
+        first_ran_at=first_ran,
         known_good=first_ran_minutes >= NEW_REVISION_MINUTES,
         rollback_to=target.revision if target else None,
         rollback_release=target.change_cause if target else None,
