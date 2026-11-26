@@ -9,6 +9,7 @@ from sre_agent.domain.revisions import (
     facts,
     history,
     spans_from_series,
+    template_changes,
 )
 
 NOW = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
@@ -114,3 +115,20 @@ def test_runs_are_read_from_a_series_of_ready_pods() -> None:
         (NOW - timedelta(minutes=4), NOW - timedelta(minutes=3)),
         (NOW, NOW),
     ]
+
+
+def test_what_changed_is_named_even_when_the_release_name_did_not_change() -> None:
+    """Staging, 2026-11-27: only the memory limit changed, so both revisions were called
+    "release 0.5.0 (d77f505a30b8)" with the same image, and the model saw no difference."""
+    tight = template("ghcr.io/x/order-service:a1", hash_="h7")
+    tight["spec"]["containers"][0]["resources"] = {"limits": {"memory": "40Mi"}}
+    assert template_changes(GOOD, tight) == ["order-service: resources"]
+    rows = history([rs(54, 600, GOOD, "release 0.5.0"), rs(55, 2, tight, "release 0.5.0")], NOW)
+    assert rows[0]["changed_from_previous"] == ["order-service: resources"]
+    assert rows[1]["changed_from_previous"] is None
+
+
+def test_a_release_that_never_had_a_ready_pod_is_new_even_if_its_replicaset_is_old() -> None:
+    sets = [rs(54, 1100, GOOD, "r0"), rs(55, 40, BAD, "r0")]  # bad one made 40 min ago, never ready
+    f = facts(sets, NOW, {"rs-54": ran((1100, 40))})
+    assert f is not None and f.new and f.longest_run_minutes == 0

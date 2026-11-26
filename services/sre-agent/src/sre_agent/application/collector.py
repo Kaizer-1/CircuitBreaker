@@ -296,6 +296,15 @@ class EvidenceCollector:
             }
         if deployment is not None:
             facts["replicas"] = {"desired": deployment.desired, "ready": deployment.ready}
+            if rev is not None and deployment.pods:
+                current = [p for p in deployment.pods if p.revision == rev.revision]
+                older = [p for p in deployment.pods if p.revision != rev.revision]
+                facts["rollout"] = {
+                    "current_revision_ready_pods": sum(p.ready for p in current),
+                    "current_revision_pods": len(current),
+                    "older_revisions_ready_pods": sum(p.ready for p in older),
+                    "current_revision_restarts": sum(p.restarts for p in current),
+                }
         if breaker is not None:
             facts["breaker_to_portfolio_open"] = bool(breaker)
         if database is not None:
@@ -333,6 +342,8 @@ class EvidenceCollector:
             pods=[
                 {
                     "name": p.name,
+                    "revision": p.revision,
+                    "of_current_revision": bool(rev and p.revision == rev.revision),
                     "phase": p.phase,
                     "ready": p.ready,
                     "restarts": p.restarts,

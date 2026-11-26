@@ -52,8 +52,8 @@ the prompt uses our vocabulary and is the same shape every time.
 | **Prometheus metrics** | Request rate; 5xx error ratio; p95 latency; memory (resident set size) and % of its limit, with the trend; CPU; container restarts; ready vs desired replicas; consumer lag where relevant (the consumer's own gauge, or the broker's measurement of its group when the consumer has stopped). Each as a short series (one point per 30 s) plus the "normal" baseline from the previous hour. |
 | **Prometheus alert** | Alert name, labels, value, how long it has been firing. |
 | **Loki logs** | The 50 most recent `error`-level log lines for the service (truncated to 300 characters each), plus counts of the top 5 distinct error messages. |
-| **Deploy history** | The last 5 rollout revisions of the Deployment: revision number, time, image tag, `change-cause` annotation (release name). |
-| **Pod status** | Each pod's phase, restarts, last termination reason (e.g. `OOMKilled`). |
+| **Deploy history** | The last 5 rollout revisions of the Deployment: revision number, time, image tag, `change-cause` annotation (release name), and **what each changed from the one before** ("order-service: resources"). The release name alone is not enough: the chart names a release by version and image tag, so a changed memory limit keeps the same name (found in the Git rehearsal, 2026-11-27). |
+| **Pod status** | Each pod's phase, restarts, last termination reason (e.g. `OOMKilled`) and **revision**, and in the facts the current revision's ready pods against the older revisions' (old pods keep serving while a new revision crashes or never gets ready). |
 | **Agent history** | Actions the agent took on this service in the last hour, and on this incident so far. |
 | **Limits** | The service's current and maximum replicas, and whether it is scalable at all. |
 

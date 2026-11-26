@@ -97,7 +97,10 @@ class KubernetesPlatform:
             )
         return out
 
-    async def _pods(self, deployment: dict[str, Any]) -> list[PodInfo]:
+    async def _pods(
+        self, deployment: dict[str, Any], replicasets: list[ReplicaSetInfo] | None = None
+    ) -> list[PodInfo]:
+        by_hash = {rs.name.rsplit("-", 1)[-1]: rs.revision for rs in replicasets or [] if rs.name}
         labels = deployment["spec"]["selector"].get("matchLabels", {})
         selector = ",".join(f"{k}={v}" for k, v in sorted(labels.items()))
         listing = await self._request(
@@ -121,6 +124,7 @@ class KubernetesPlatform:
                     ready=bool(statuses) and all(s.get("ready") for s in statuses),
                     restarts=sum(int(s.get("restartCount", 0)) for s in statuses),
                     last_termination=last,
+                    revision=by_hash.get(pod["metadata"].get("labels", {}).get(TEMPLATE_HASH, "")),
                 )
             )
         return pods
@@ -128,13 +132,14 @@ class KubernetesPlatform:
     async def deployment(self, service: str) -> DeploymentState:
         d = await self._deployment(service)
         status = d.get("status", {})
+        replicasets = await self._replicasets(d)
         return DeploymentState(
             name=service,
             desired=int(d["spec"].get("replicas", 0)),
             ready=int(status.get("readyReplicas", 0)),
             updated=int(status.get("updatedReplicas", 0)),
-            replicasets=await self._replicasets(d),
-            pods=await self._pods(d),
+            replicasets=replicasets,
+            pods=await self._pods(d, replicasets),
         )
 
     async def rollback(self, service: str, to_revision: int) -> str:

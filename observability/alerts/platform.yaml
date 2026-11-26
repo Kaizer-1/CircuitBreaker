@@ -4,9 +4,12 @@ groups:
   - name: circuitbreaker-platform
     interval: 10s
     rules:
-      # An app service's container restarted more than 3 times in 5 minutes. Expected fix: rollback (a bad
-      # revision) or restart; the agent decides from the deploy history. Data stores and init jobs are left out:
-      # the agent never acts on Cassandra, Postgres or Redpanda.
+      # An app service's container restarted more than 3 times in 5 minutes, or is still waiting in CrashLoopBackOff
+      # after more than 3 restarts. Expected fix: rollback (a bad revision) or restart; the agent decides from the
+      # deploy history. The second half keeps it firing while Kubernetes' back-off grows (10 s, 20 s, ... up to
+      # 5 minutes between restarts): the restart count alone fell under 4 in 5 minutes and the alert cleared while the
+      # pod still crashed (found on staging, 2026-11-27). Data stores and init jobs are left out: the agent never acts
+      # on Cassandra, Postgres or Redpanda.
       - alert: PodCrashLooping
         expr: |
           max by (namespace, service) (
@@ -15,10 +18,19 @@ groups:
               "service", "$1", "container", "(.*)"
             )
           ) > 3
+          or
+          max by (namespace, service) (
+            label_replace(
+              (kube_pod_container_status_restarts_total{namespace=~"prod|staging",container!~"cassandra|postgres|redpanda|init"} > 3)
+              and on (namespace, pod, container)
+              (kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"} == 1),
+              "service", "$1", "container", "(.*)"
+            )
+          )
         for: 0s
         labels: {severity: critical, remediable: "true"}
         annotations:
-          summary: "{{ $labels.service }} restarted {{ $value | humanize }} times in 5 minutes"
+          summary: "{{ $labels.service }} keeps crashing: {{ $value | humanize }} restarts"
           description: A container keeps crashing and being restarted by Kubernetes.
 
       # A consumer is more than 1,000 messages behind its topic. Information only: lag is a symptom (a slow or

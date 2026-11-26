@@ -29,6 +29,7 @@ DEPLOYMENT = {
 def rs(revision: int, image: str, cause: str, owner: str = "order-service") -> dict[str, Any]:
     return {
         "metadata": {
+            "name": f"order-service-h{revision}",
             "creationTimestamp": "2026-11-26T09:00:00Z",
             "annotations": {
                 "deployment.kubernetes.io/revision": str(revision),
@@ -68,7 +69,7 @@ class Api:
             return httpx.Response(200, json={"items": items})
         if path.endswith("/pods"):
             pod = {
-                "metadata": {"name": "order-service-abc"},
+                "metadata": {"name": "order-service-abc", "labels": {"pod-template-hash": "h8"}},
                 "status": {
                     "phase": "Running",
                     "containerStatuses": [
@@ -97,6 +98,7 @@ async def test_state_reads_its_own_replicasets_and_pods() -> None:
     assert sorted(r.revision for r in state.replicasets) == [8, 9]  # another owner's is ignored
     (pod,) = state.pods
     assert (pod.ready, pod.restarts, pod.last_termination) == (True, 2, "OOMKilled")
+    assert pod.revision == 8  # its pod-template-hash names revision 8's ReplicaSet
 
 
 async def test_rollback_is_rollout_undo_with_the_change_cause() -> None:

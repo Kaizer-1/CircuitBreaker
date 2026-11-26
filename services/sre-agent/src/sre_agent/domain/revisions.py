@@ -121,7 +121,12 @@ def facts(
     release = release_fingerprint(current.template)
     same = [rs for rs in ordered if release_fingerprint(rs.template) == release]
     runs = merge([span for rs in same for span in (activity or {}).get(rs.name, [])])
-    if runs:
+    if activity and not runs:
+        # History is known, and this release never had a ready pod in it: it never ran at all
+        # (a bad release whose pods crash at start, deployed now or again).
+        began = max(rs.created_at for rs in same)
+        running = longest = 0.0
+    elif runs:
         live = runs[-1] if now - runs[-1][1] <= SAME_RUN_GAP else None
         began = live[0] if live else now
         # A ReplicaSet made during this run says to the second when it began (the series only to
@@ -146,13 +151,62 @@ def facts(
     )
 
 
+CONTAINER_FIELDS = (
+    "image",
+    "command",
+    "args",
+    "env",
+    "envFrom",
+    "resources",
+    "ports",
+    "readinessProbe",
+    "livenessProbe",
+    "startupProbe",
+    "volumeMounts",
+)
+
+
+def template_changes(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    """What differs between two pod templates, in a few words ("order-service: resources").
+    The release name (change-cause) can stay the same while the template changes: the chart names a
+    release by version and image tag, so a new memory limit keeps the name (staging, 2026-11-27)."""
+    changes: list[str] = []
+    a_spec, b_spec = before.get("spec", {}), after.get("spec", {})
+    a_c = {c.get("name"): c for c in a_spec.get("containers", [])}
+    b_c = {c.get("name"): c for c in b_spec.get("containers", [])}
+    for name in sorted(set(a_c) | set(b_c), key=str):
+        if name not in a_c or name not in b_c:
+            changes.append(f"container {name} {'added' if name in b_c else 'removed'}")
+            continue
+        fields = [f for f in CONTAINER_FIELDS if a_c[name].get(f) != b_c[name].get(f)]
+        if fields:
+            changes.append(f"{name}: {', '.join(fields)}")
+    for field in ("volumes", "serviceAccountName", "nodeSelector"):
+        if a_spec.get(field) != b_spec.get(field):
+            changes.append(field)
+
+    def notes(t: dict[str, Any]) -> dict[str, Any]:
+        annotations = (t.get("metadata") or {}).get("annotations") or {}
+        return {k: v for k, v in annotations.items() if k != RESTARTED_AT}
+
+    changed = sorted(
+        k
+        for k in set(notes(before)) | set(notes(after))
+        if notes(before).get(k) != notes(after).get(k)
+    )
+    changes += [f"annotation {k}" for k in changed]
+    return changes
+
+
 def history(
     replicasets: list[ReplicaSetInfo], now: datetime, last: int = 5
 ) -> list[dict[str, Any]]:
-    """The deploy history for the model's evidence: newest first, restarts marked as such."""
+    """The deploy history for the model's evidence: newest first, restarts marked as such, and
+    what each revision changed from the one before."""
     ordered = sorted(replicasets, key=lambda rs: rs.revision)
     seen: dict[str, int] = {}
     rows = []
+    previous: ReplicaSetInfo | None = None
     for rs in ordered:
         fingerprint = release_fingerprint(rs.template)
         rows.append(
@@ -162,7 +216,11 @@ def history(
                 "release": rs.change_cause,
                 "images": list(rs.images),
                 "same_release_as_revision": seen.get(fingerprint),
+                "changed_from_previous": (
+                    template_changes(previous.template, rs.template) if previous else None
+                ),
             }
         )
         seen.setdefault(fingerprint, rs.revision)
+        previous = rs
     return list(reversed(rows))[:last]

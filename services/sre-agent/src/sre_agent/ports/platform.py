@@ -18,6 +18,7 @@ class PodInfo:
     ready: bool
     restarts: int
     last_termination: str | None  # e.g. "OOMKilled"
+    revision: int | None = None  # the Deployment revision (ReplicaSet) it belongs to
 
 
 @dataclass(frozen=True)

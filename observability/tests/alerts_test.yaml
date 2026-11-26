@@ -227,6 +227,24 @@ tests:
               summary: portfolio-service is 1.5k messages behind on matching.v1
               description: A consumer group is falling behind; its read model or reactions are stale.
 
+  # ------------------------------------------------------------------ a crash loop the back-off slows down
+  # Restarts at 10, 30, 70, 150 s, then every 300 s (Kubernetes' back-off): fewer than 4 in 5 minutes from about
+  # 8 minutes on, but the container waits in CrashLoopBackOff all along, so it keeps firing (staging, 2026-11-27).
+  - interval: 10s
+    input_series:
+      - series: 'kube_pod_container_status_restarts_total{namespace="staging",pod="order-service-7f6",container="order-service"}'
+        values: '0 1 1 2 2 2 2 3 3 3 3 3 3 3 3 4x29 5x29 6x29'
+      - series: 'kube_pod_container_status_waiting_reason{namespace="staging",pod="order-service-7f6",container="order-service",reason="CrashLoopBackOff"}'
+        values: '0 1x120'
+    alert_rule_test:
+      - eval_time: 900s # 4, 5 and 6 restarts spread over 10 minutes: only 2 in the last 5
+        alertname: PodCrashLooping
+        exp_alerts:
+          - exp_labels: {namespace: staging, service: order-service, severity: critical, remediable: "true"}
+            exp_annotations:
+              summary: "order-service keeps crashing: 6 restarts"
+              description: A container keeps crashing and being restarted by Kubernetes.
+
   # ------------------------------------------------------------------ crash loop, lag, dead letters
   - interval: 10s
     input_series:
@@ -242,7 +260,7 @@ tests:
         exp_alerts:
           - exp_labels: {namespace: prod, service: order-service, severity: critical, remediable: "true"}
             exp_annotations:
-              summary: order-service restarted 4 times in 5 minutes
+              summary: "order-service keeps crashing: 4 restarts"
               description: A container keeps crashing and being restarted by Kubernetes.
       - {eval_time: 110s, alertname: ConsumerLagHigh, exp_alerts: []}
       - eval_time: 130s # over 1,000 from 90 s, firing after `for: 30s`

@@ -324,7 +324,7 @@ Kubernetes deployment (`make k8s-check c=alerts`, Phase 5):
 | `MarketDataMemoryGrowth` | market-data-service | memory > 70% of the limit and rising (`deriv` over 2 minutes) | 30s | critical | true | 36 s after crossing 70% |
 | `GatewayHighErrorRate` | api-gateway | 5xx ratio > 5% | 20s | critical | true | 61 s (portfolio-service down) |
 | `PortfolioHighErrorRate` | portfolio-service | 5xx ratio > 5% | 20s | critical | true | 48 s (a revoked INSERT; still "ready") |
-| `PodCrashLooping` | any app service | restarts > 3 in 5m | 0m | critical | true | at the 4th restart |
+| `PodCrashLooping` | any app service | restarts > 3 in 5m, **or** waiting in CrashLoopBackOff after more than 3 restarts (added 2026-11-27: Kubernetes' growing back-off made the first condition clear while the pod still crashed) | 0m | critical | true | at the 4th restart, and while the crash loop lasts |
 | `ConsumerLagHigh` | any consumer | lag > 1,000: the consumer's own gauge **or** the broker's lag for its group | 30s | warning | false (informational) | 38 s after passing 1,000 (matching-engine stopped) |
 | `DeadLetterMessages` | any | a message sent to any `.dlq` topic (`events_dead_lettered_total`) | 0m | warning | false | 13 s |
 

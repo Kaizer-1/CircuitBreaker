@@ -20,6 +20,10 @@ the gateway only passed on. Then the problem is in that other service, not the g
 or a restart, the revision number is new but new is false (known-good). Never roll back a \
 known-good revision.
   - load_ratio: request rate now divided by its normal rate over the previous hour.
+  - rollout and pods: each pod says which revision it belongs to. Ready pods of OLDER revisions \
+can still serve while the current revision's pods crash or never get ready: then the current \
+revision is failing. A release name can stay the same while its template changed \
+(changed_from_previous in the deploy history).
 - rollback_deployment: the trouble began with a NEW revision (revision.new is true): \
 INTERNAL_ERROR errors, pods crash-looping, or memory climbing since the release.
 - scale_deployment: errors are OVERLOADED, or latency is high with load far above normal, \
