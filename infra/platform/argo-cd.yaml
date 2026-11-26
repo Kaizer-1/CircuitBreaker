@@ -26,16 +26,19 @@ configs:
     exec.enabled: false
     admin.enabled: true
     statusbadge.enabled: false
-    # The SRE agent's read-only account (ADR-0016): an API token only, no web login. make platform makes its
-    # token (scripts/k8s.py argo-agent-token) and stores it in each environment's namespace.
-    accounts.sre-agent: apiKey
+    # The SRE agent's read-only accounts (ADR-0016), one per environment: an API token only, no web login. make
+    # platform makes each token (scripts/k8s.py argo-agent-token) and stores it in its environment's namespace.
+    accounts.sre-agent-staging: apiKey
+    accounts.sre-agent-prod: apiKey
   rbac:
-    # Nobody gets a role by default; the agent's role may read this project's Applications and nothing else (no
-    # sync, no repositories, no settings). Its pre-check reads the Application with a forced refresh.
+    # Nobody gets a role by default. Each agent may read its OWN environment's Applications and nothing else: no
+    # sync, no repositories, no settings, not the other environment. Its pre-check reads one with a forced refresh.
     policy.default: ""
     policy.csv: |
-      p, role:sre-agent, applications, get, circuitbreaker/*, allow
-      g, sre-agent, role:sre-agent
+      p, role:sre-agent-staging, applications, get, circuitbreaker/*-staging, allow
+      p, role:sre-agent-prod, applications, get, circuitbreaker/*-prod, allow
+      g, sre-agent-staging, role:sre-agent-staging
+      g, sre-agent-prod, role:sre-agent-prod
   params:
     # Plain HTTP behind the port-forward (no certificate to accept in the browser).
     server.insecure: true

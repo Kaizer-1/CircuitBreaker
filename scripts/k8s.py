@@ -1029,11 +1029,12 @@ def cmd_argo_agent_token(_: argparse.Namespace) -> None:
     bootstrap secret (ADR-0019): Argo CD signs it with this cluster's own key, so it exists only
     once this Argo CD does and cannot be sealed into Git beforehand. make platform runs this.
 
-    The account `sre-agent` has an API key only (it cannot log in to the web UI) and the role in
-    infra/platform/argo-cd.yaml: get on the project's Applications, nothing else. A Secret holding
-    a token that still works is kept; otherwise a new token is made, checked (it reads an
-    Application, and is refused a repository listing) and stored as Secret argocd-sre-agent in the
-    environment's namespace. Never in Terraform's state, never in Git."""
+    One account per environment, `sre-agent-<env>`, with an API key only (no web login) and the
+    role in infra/platform/argo-cd.yaml: get on its own environment's Applications, nothing else. A
+    Secret holding a token that still works as designed is kept; otherwise a new token is made,
+    checked (it reads its environment's Application, is refused the other environment's and sees
+    no repository) and stored as Secret argocd-sre-agent in the environment's namespace. Never in
+    Terraform's state, never in Git."""
     import socket
 
     if not ok(kubectl("get", "deployment", "argo-cd-argocd-server", "-n", "argocd")):
@@ -1067,33 +1068,33 @@ def cmd_argo_agent_token(_: argparse.Namespace) -> None:
         if status != 200:
             sys.exit(f"Argo CD refused the admin login ({status})")
         admin = session["token"]
+
+        def as_designed(token: str, env: str) -> tuple[bool, str]:
+            """Reads its own environment's Application; refused the other's and every repository."""
+            other = "prod" if env == "staging" else "staging"
+            own = argo_api(base, "GET", f"/applications/order-service-{env}", token=token)[0]
+            theirs = argo_api(base, "GET", f"/applications/order-service-{other}", token=token)[0]
+            repos = argo_api(base, "GET", "/repositories", token=token)
+            seen_repos = repos[0] == 200 and bool(repos[1].get("items"))
+            detail = f"own {own}, {other} {theirs}, repositories {'seen' if seen_repos else 'none'}"
+            return own == 200 and theirs != 200 and not seen_repos, detail
+
         for env in envs:
-            app = f"/applications/order-service-{env}"
+            account = f"sre-agent-{env}"
             kept = secret_value(env, ARGO_AGENT_SECRET, "token")
-            if kept and argo_api(base, "GET", app, token=kept)[0] == 200:
-                print(f"{env}: sre-agent Argo CD token works, kept")
+            if kept and as_designed(kept, env)[0]:
+                print(f"{env}: {account} Argo CD token works as designed, kept")
                 continue
-            token_id = f"sre-agent-{env}"
-            argo_api(base, "DELETE", f"/account/sre-agent/token/{token_id}", token=admin)
+            argo_api(base, "DELETE", f"/account/{account}/token/{account}", token=admin)
             status, made = argo_api(
-                base,
-                "POST",
-                "/account/sre-agent/token",
-                {"name": "sre-agent", "id": token_id},
-                admin,
+                base, "POST", f"/account/{account}/token", {"name": account, "id": account}, admin
             )
             if status != 200 or not made.get("token"):
-                sys.exit(
-                    f"Argo CD did not make a token for sre-agent ({status}): is the account there?"
-                )
+                sys.exit(f"Argo CD made no token for {account} ({status}): is the account there?")
             token = made["token"]
-            reads = argo_api(base, "GET", app, token=token)[0]
-            repos = argo_api(base, "GET", "/repositories", token=token)
-            if reads != 200 or repos[0] == 200 and repos[1].get("items"):
-                sys.exit(
-                    f"the sre-agent token is not read-only as designed (application {reads},"
-                    f" repositories {repos[0]})"
-                )
+            good, detail = as_designed(token, env)
+            if not good:
+                sys.exit(f"the {account} token is not read-only as designed ({detail})")
             secret = {
                 "apiVersion": "v1",
                 "kind": "Secret",
@@ -1106,7 +1107,7 @@ def cmd_argo_agent_token(_: argparse.Namespace) -> None:
                 "stringData": {"token": token},
             }
             run(kubectl("apply", "-f", "-"), input_text=json.dumps(secret), capture=True)
-            print(f"{env}: sre-agent Argo CD token made (reads Applications, repositories refused)")
+            print(f"{env}: {account} Argo CD token made ({detail})")
     finally:
         forward.terminate()
 

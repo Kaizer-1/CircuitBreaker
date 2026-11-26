@@ -54,8 +54,9 @@ flowchart TD
   fallback tags ([deployment doc §4](../03-architecture/07-deployment-and-environments.md#4-cicd-pipeline-github-actions--argo-cd-gitops)).
   `make github-app` seals its credentials only after GitHub confirms these limits.*
 - A read-only **Argo CD account** `sre-agent` whose Argo CD RBAC allows `get` on Applications only.
-  *As built (2026-11-26): `accounts.sre-agent: apiKey` and the role `p, role:sre-agent, applications, get,
-  circuitbreaker/*, allow` (`infra/platform/argo-cd.yaml`, `policy.default` empty); its token is ADR-0019's third
+  *As built (2026-11-26): one account per environment, `sre-agent-<env>` (`apiKey` only), each with the role
+  `get` on `circuitbreaker/*-<env>`: its own environment's Applications, not the other's (`infra/platform/argo-cd.yaml`,
+  `policy.default` empty); its token is ADR-0019's third
   bootstrap secret, made by `make platform`. The pre-check reads `<service>-<env>` with `refresh=normal`; a revert
   pull request targets the branch the Application follows (`main`, or a branch under test), its head is
   `sre-agent/revert-<env>-<service>-INC-nnnn`, and G11's checks run first (`services/sre-agent/src/sre_agent/adapters/gitops.py`).*
