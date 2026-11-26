@@ -207,6 +207,8 @@ def create_app(
     """`agent` and `store` are for tests: they are served as they are, nothing else starts."""
     settings = settings or Settings()
     configure_logging(settings.service_name, settings.log_level)
+    # httpx logs every request at INFO: the 5-second alert poll alone would be ~17,000 lines a day.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     metrics = Metrics(settings.service_name)
     business_metrics = register_business_metrics(metrics.registry)
     checks = list(readiness_checks) if readiness_checks is not None else default_checks(settings)
