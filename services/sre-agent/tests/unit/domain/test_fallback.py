@@ -123,3 +123,9 @@ def test_the_database_degraded_decline_names_the_data_store() -> None:
     )
     assert "database" in reason and "data store" in reason and "may never touch" in reason
     assert "would not help" in reason and "Escalating" in reason
+
+
+def test_the_release_age_reads_naturally() -> None:
+    fresh = Signals(**{**BAD_RELEASE.__dict__, "revision_minutes": 0.3})
+    assert "less than a minute ago" in decide(fresh).explanation
+    assert "2 minutes ago" in decide(BAD_RELEASE).explanation

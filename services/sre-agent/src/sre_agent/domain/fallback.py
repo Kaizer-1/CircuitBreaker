@@ -47,8 +47,16 @@ def _nothing(why: str) -> Proposal:
     return Proposal(Tool.NOTHING.value, None, None, why, SOURCE)
 
 
+def _ago(minutes: float | None) -> str:
+    if minutes is None:
+        return "recently"
+    if minutes < 1:
+        return "less than a minute ago"
+    return "1 minute ago" if round(minutes) == 1 else f"{minutes:.0f} minutes ago"
+
+
 def decide(s: Signals) -> Proposal:
-    deployed = f"{s.revision_minutes:.0f} minutes ago" if s.revision_minutes is not None else ""
+    deployed = _ago(s.revision_minutes)
     if s.alert == "MarketDataMemoryGrowth" or (s.memory_rising and s.memory_of_limit > 0.7):
         if s.new_revision:
             return _rollback(s, f"Memory climbs since a new release ({deployed}).")
