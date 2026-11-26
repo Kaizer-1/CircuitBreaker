@@ -120,7 +120,7 @@ def key_of(query: str) -> str:
     if "by (service)" in query:
         return "upstream_errors"
     if "postgres_transaction_seconds" in query:
-        return "database_p95_base" if "offset" in query else "database_p95"
+        return "database_slow_base" if "offset" in query else "database_slow"
     if "circuit_breaker_state" in query:
         return "breaker_open"
     if "consumer_lag" in query:

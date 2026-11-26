@@ -31,7 +31,7 @@ OPS = 'route!~"/healthz|/readyz|/metrics"'
 UPSTREAMS = ("order-service", "portfolio-service", "market-data-service")
 WINDOW_MINUTES = 15
 STEP_SECONDS = 30
-DATABASE_SLOW_SECONDS = 0.2  # portfolio's transaction p95, and at least 5x its normal
+DATABASE_SLOW_PER_SECOND = 0.01  # portfolio transactions over 0.5 s (normally 0), and 5x normal
 # Memory's derivative is never exactly 0 (measured at rest: +0.5 to +1 kB/s); the leak scenario
 # grows 1.3 MB/s. "Rising" means more than 50 kB/s (3 MB a minute).
 RISING_BYTES_PER_SECOND = 50_000
@@ -110,11 +110,16 @@ class Queries:
             'dependency="portfolio-service",state="open"}[30s]))'
         )
 
-    def database_p95(self, window: str = "1m", offset: str = "") -> str:
+    def database_slow(self, window: str = "2m", offset: str = "") -> str:
+        """portfolio-service's database transactions slower than 0.5 s, per second. Normally none:
+        a percentile over ALL transactions hides them, because once order-service's breaker
+        opens only a few reservations reach Postgres while the fast transactions go on (found on
+        staging, 2026-11-26: p95 7.9 ms during the degraded-database scenario)."""
         off = f" offset {offset}" if offset else ""
+        sel = f'namespace="{self.ns}",phase="transaction"'
         return (
-            "histogram_quantile(0.95, sum by (le) (rate(postgres_transaction_seconds_bucket"
-            f'{{namespace="{self.ns}",phase="transaction"}}[{window}]{off})))'
+            f"sum(rate(postgres_transaction_seconds_count{{{sel}}}[{window}]{off}))"
+            f' - sum(rate(postgres_transaction_seconds_bucket{{{sel},le="0.5"}}[{window}]{off}))'
         )
 
     @property
@@ -194,13 +199,15 @@ class EvidenceCollector:
         upstream: str | None = None
         if alert.service == "order-service":
             breaker = await get("prometheus", m.value(q.breaker_open), None)
+        slow_per_minute = None
         if alert.service in ("order-service", "portfolio-service"):
-            now_p95 = await get("prometheus", m.value(q.database_p95()), None)
+            slow = await get("prometheus", m.value(q.database_slow()), None)
             base = await get(
-                "prometheus", m.value(q.database_p95("1h", f"{WINDOW_MINUTES}m")), None
+                "prometheus", m.value(q.database_slow("1h", f"{WINDOW_MINUTES}m")), None
             )
-            if now_p95 is not None:
-                database = now_p95 > max(DATABASE_SLOW_SECONDS, 5 * (base or 0))
+            if slow is not None:
+                slow_per_minute = 60 * slow
+                database = slow > max(DATABASE_SLOW_PER_SECOND, 5 * (base or 0))
         if alert.service == "api-gateway":
             own = await get("prometheus", m.value(q.own_problems_5xx), None)
             all_5xx = await get("prometheus", m.value(q.errors), None)
@@ -293,6 +300,9 @@ class EvidenceCollector:
             facts["breaker_to_portfolio_open"] = bool(breaker)
         if database is not None:
             facts["portfolio_database_slow"] = database
+            facts["portfolio_transactions_over_half_a_second_per_minute"] = round(
+                slow_per_minute or 0, 1
+            )
         if passed_on is not None:
             facts["passed_on_share"] = round(passed_on, 2)
             facts["upstream_with_most_errors"] = upstream

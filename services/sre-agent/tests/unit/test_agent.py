@@ -221,8 +221,8 @@ async def test_the_degraded_database_is_declined_with_a_fixed_reason_and_not_reo
         "rate": 6.0,
         "normal_rate": 7.0,
         "breaker_open": 1.0,
-        "database_p95": 0.9,
-        "database_p95_base": 0.02,
+        "database_slow": 0.08,
+        "database_slow_base": 0.0,
         "errors_by_type": {"DEPENDENCY_UNAVAILABLE": 4.0},
     }
     still = {"on": True}
