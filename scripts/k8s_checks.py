@@ -2329,12 +2329,15 @@ def incidents_since(env: str, since: float) -> list[dict[str, Any]]:
 
 
 def wait_resolved(env: str, service: str, since: float, timeout: float) -> dict[str, Any] | None:
-    """The agent's incident on `service` opened after `since`, once RESOLVED (Q-18)."""
+    """The scenario's own incident: the FIRST one on `service` opened after `since`, once
+    RESOLVED (Q-18). Not the newest: after a panic, the backlog it leaves makes ConsumerLagHigh
+    open a second, information-only incident on the same service (staging, 2026-11-26)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        for item in incidents_since(env, since):
-            if item["service"] == service and item["status"] == "RESOLVED":
-                return dict(chaos_call(env, "GET", f"/v1/incidents/{item['incident_id']}"))
+        mine = [i for i in incidents_since(env, since) if i["service"] == service]
+        first = min(mine, key=lambda i: i["opened_at"], default=None)
+        if first is not None and first["status"] == "RESOLVED":
+            return dict(chaos_call(env, "GET", f"/v1/incidents/{first['incident_id']}"))
         time.sleep(5)
     return None
 
