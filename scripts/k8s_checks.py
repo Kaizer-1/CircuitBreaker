@@ -2484,7 +2484,7 @@ def check_agent(args: argparse.Namespace) -> bool:
             block_internet(env, False)
         if args.approval:
             agent_settings(env, approval_required=False)
-    if "bad-deploy" in args.only and "panic" in args.only:  # the pair, in that order
+    if args.only == ["bad-deploy", "panic"]:  # the pair: overload right after its own rollback
         after = [r for r in runs if r["scenario"] == "TRAFFIC_SPIKE"]
         ok &= verdict(
             all("rollback_deployment" not in r["actions"] for r in after),
