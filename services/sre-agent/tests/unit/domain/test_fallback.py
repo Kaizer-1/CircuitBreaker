@@ -77,6 +77,39 @@ def test_the_leak_is_restarted_and_an_open_breaker_is_left_alone() -> None:
     assert decide(gateway).tool == Tool.NOTHING.value
 
 
+@pytest.mark.parametrize("passed_on", [0.6, 1.0])
+def test_gateway_errors_passed_on_from_order_service_leave_the_gateway_alone(
+    passed_on: float,
+) -> None:
+    """A bad deploy or a panic sell makes the gateway's error alert fire too: its 5xx are
+    order-service's answers, passed on. Rolling back or scaling the gateway would not help."""
+    gateway = Signals(
+        alert="GatewayHighErrorRate",
+        service="api-gateway",
+        request_rate=120.0,
+        normal_rate=9.0,
+        revision_minutes=1,  # even with a new gateway revision running
+        passed_on_share=passed_on,
+        upstream="order-service",
+        replicas=2,
+    )
+    proposal = decide(gateway)
+    assert proposal.tool == Tool.NOTHING.value
+    assert "order-service" in proposal.explanation and "passed on" in proposal.explanation
+
+
+def test_the_gateways_own_internal_errors_after_its_new_release_are_rolled_back() -> None:
+    own = Signals(
+        alert="GatewayHighErrorRate",
+        service="api-gateway",
+        errors_by_code={"INTERNAL_ERROR": 4.0},
+        passed_on_share=0.1,
+        revision_minutes=3,
+        replicas=2,
+    )
+    assert (decide(own).tool, decide(own).service) == (Tool.ROLLBACK.value, "api-gateway")
+
+
 def test_after_the_spike_it_scales_back_and_unknown_alerts_are_escalated() -> None:
     over = Signals(alert="OrderServiceOverProvisioned", service="order-service", replicas=5)
     assert (decide(over).tool, decide(over).replicas) == (Tool.SCALE.value, 2)

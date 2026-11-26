@@ -22,6 +22,7 @@ from sre_agent.domain.signals import Signals
 SOURCE = "rule-based (LLM unavailable)"
 
 ERROR_ALERTS = {"OrderServiceHighErrorRate", "GatewayHighErrorRate", "PortfolioHighErrorRate"}
+PASSED_ON = 0.5  # of a gateway's 5xx answered by an upstream: the upstream's problem
 
 
 def _scale_up(s: Signals, why: str) -> Proposal:
@@ -58,6 +59,13 @@ def decide(s: Signals) -> Proposal:
         )
 
     if s.alert in ERROR_ALERTS or s.alert == "OrderServiceHighLatency":
+        if s.passed_on_share >= PASSED_ON:
+            source = s.upstream or "the services behind it"
+            return _nothing(
+                f"Most of {s.service}'s errors were answered by {source} and only passed on:"
+                f" the problem is in {source}, which has its own incident. Acting on {s.service}"
+                " would not help. Escalating."
+            )
         if s.breaker_open or s.main_error == "DEPENDENCY_UNAVAILABLE":
             return _nothing(
                 f"{s.service}'s errors come from a dependency that is failing (its circuit breaker"

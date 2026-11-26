@@ -2,9 +2,10 @@
 evidence collector (never by the model). The model sees the full evidence; these are its summary.
 
 Telling errors apart (owner's direction, 2026-11-24): a 5xx is a bug (`INTERNAL_ERROR`), overload
-(`OVERLOADED`, the 50-request limit) or a broken dependency (`DEPENDENCY_UNAVAILABLE`, an open
-breaker); and a revision is either new (deployed in the last 15 minutes) or known-good (its pod
-template already ran for a long time without trouble, e.g. the one the agent just rolled back to).
+(`OVERLOADED`, the 50-request limit), a broken dependency (`DEPENDENCY_UNAVAILABLE`, an open
+breaker) or, at the gateway, an upstream's answer passed on; and a revision is either new (its
+pod template first ran in the last 15 minutes) or known-good (it already ran long before, e.g. the
+one the agent just rolled back to).
 """
 
 from dataclasses import dataclass, field
@@ -29,6 +30,11 @@ class Signals:
     replicas: int = 0
     breaker_open: bool = False
     database_slow: bool = False  # portfolio-service's Postgres transactions far above normal
+    # The gateway's 5xx it only passed on (an upstream answered them), as a share of all its 5xx,
+    # and the upstream with the most 5xx of its own. The gateway counts its own errors by code; a
+    # passed-on error is the upstream's, so acting on the gateway would not help.
+    passed_on_share: float = 0.0
+    upstream: str | None = None
 
     @property
     def main_error(self) -> str | None:

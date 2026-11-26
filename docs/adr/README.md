@@ -14,7 +14,7 @@
 | [0006](0006-cqrs-portfolio-read-model.md) | CQRS with a Postgres portfolio read model | Accepted |
 | [0007](0007-kubernetes-kind-and-helm-umbrella.md) | Kubernetes (kind) with a Helm umbrella chart; staging and prod namespaces | Accepted (CD amended by 0014) |
 | [0008](0008-observability-stack.md) | Prometheus, Grafana and Loki for observability | Accepted |
-| [0009](0009-sre-agent-fixed-tool-allowlist.md) | SRE agent with a fixed tool allowlist | Accepted (LLM provider amended by 0013; rollback implementation extended by 0016) |
+| [0009](0009-sre-agent-fixed-tool-allowlist.md) | SRE agent with a fixed tool allowlist | Accepted (LLM provider amended by 0013; rollback implementation extended by 0016; LLM failure amended by 0021) |
 | [0010](0010-terraform-localstack.md) | Terraform against LocalStack | Accepted (scope amended by 0015) |
 | [0011](0011-synchronous-reservation-over-saga.md) | Synchronous reservation instead of an asynchronous saga | Accepted (orphan clean-up amended by 0017) |
 | [0012](0012-prices-in-integer-paise.md) | Money and prices as integer paise | Accepted |
@@ -26,6 +26,7 @@
 | [0018](0018-kubernetes-platform-components.md) | Kubernetes platform components: Traefik, in-repo data stores, kube-prometheus-stack, community Loki, Alloy | Accepted |
 | [0019](0019-sealed-secrets-for-gitops.md) | Sealed Secrets: encrypted Secrets in Git for GitOps (an owner's exception to the design freeze) | Accepted |
 | [0020](0020-chaos-triggers-through-each-targets-own-hook.md) | Chaos triggers through each target's own hook; a fourth scenario the agent must decline (an owner's exception to the design freeze) | Accepted |
+| [0021](0021-rule-based-fallback-when-the-llm-is-unavailable.md) | A rule-based fallback when the LLM is unavailable (an owner's exception to the design freeze) | Accepted |
 
 **Template:** `# NNNN — Title` · Status · Date · Deciders · Context · Decision · Alternatives considered ·
 Consequences (positive / negative) · Viva Notes.

@@ -162,8 +162,8 @@ sees OpenRouter's request/response format, so changing gateway or model touches 
 | Tool choice | `tool_choice: "auto"`, `parallel_tool_calls: false`, and a system-prompt rule: "Always respond by calling exactly one tool." | Forcing a tool call (`"required"`) is not supported by every model and provider behind OpenRouter (recent Claude models reject it), so we don't depend on it. **A reply without a tool call is treated as `do_nothing` + escalate.** Disabling parallel calls means at most one action per decision. |
 | Provider routing | Ask OpenRouter to use only providers that support every parameter in the request (tools included) | Prevents silently landing on a provider that ignores tool definitions. |
 | Argument validation | `strict: true` where the model supports it **and always** our own JSON Schema validation of the returned arguments in code | Not every model enforces strict schemas, so we never trust arguments without checking them ourselves. Invalid arguments → declined by guardrail. |
-| Timeout | 30 s, 1 retry, then the fallback model (if configured) | If OpenRouter or the model is slow or down, fall back to `do_nothing` + escalate: the system is never *worse* because the LLM failed. |
-| Stop reasons | Anything other than a single valid tool call (plain text, refusal, content filter, length cut-off) → `do_nothing` + escalate | Always check why the response stopped before reading it. |
+| Timeout | A **decision deadline of 25 s** for every attempt together; one retry, only after a fast failure (refused connection, HTTP 5xx or 429); the fallback model (if configured) inside the same deadline; at most 60 model calls per hour | If OpenRouter or the model is slow or down, the **rule-based fallback** chooses ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)), through the same guardrails: the system is never *worse* because the LLM failed. Mitigation should start within 30 s of detection, so the model gets 25 s. |
+| Stop reasons | Anything other than one tool call whose arguments parse as JSON (plain text, refusal, content filter, length cut-off, several calls) → the rule-based fallback (ADR-0021). One tool call with bad arguments → the guardrails decline it | Always check why the response stopped before reading it. |
 | Key | `OPENROUTER_API_KEY` from the Kubernetes Secret `openrouter-api-key`: a SealedSecret in Git ([ADR-0019](../adr/0019-sealed-secrets-for-gitops.md)), sealed by `make openrouter-key`, which refuses a key without a credit limit | Never in code; in Git only encrypted. |
 | Data minimisation | Evidence only (metrics, truncated logs, deploy history); nicknames and trader IDs are scrubbed from log lines | Prompts leave our system and pass through OpenRouter and the model provider, so we send only what diagnosis needs. |
 | Spend control | OpenRouter key with a credit limit; the agent stores token usage per call (`sre_agent_llm_tokens_total`) | A runaway loop cannot cost more than the key's limit. |
@@ -187,7 +187,7 @@ sees OpenRouter's request/response format, so changing gateway or model touches 
 | G6 | **Budget:** max 3 executed actions per incident, max 6 per hour overall | Escalate |
 | G7 | `rollback_deployment` needs a previous revision to exist | Decline |
 | G8 | Agent **paused** by admin | Record the proposal only; never execute |
-| G9 | LLM error, timeout, refusal or no tool call | `do_nothing` + escalate |
+| G9 | LLM error, timeout, refusal or no tool call | The rule-based fallback chooses, labelled "rule-based (LLM unavailable)"; its proposal meets G1–G10 like any other ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md); before it: `do_nothing` + escalate) |
 | G10 | `explanation` must be 1–600 characters | Replace with a generic explanation and flag it |
 | G11 | Rollback's Git step: only `deploy/envs/<env>/<service>.yaml` of the *same* service and environment; only a single-file commit; at most one open revert PR per service; branch prefix `sre-agent/`; never merges | Skip step (b), keep the rollback, escalate (`git_reconciliation: FAILED`) |
 
@@ -275,8 +275,10 @@ replica limits, cooldowns and budgets; Kubernetes RBAC limits what the agent's a
 optional human approval step.
 
 **Q: What happens if OpenRouter or the model is down?**
-A: After one retry and the optional fallback model, the agent falls back to `do_nothing` and escalates to the admin. The system is never worse off because the LLM
-failed — Kubernetes' own restarts and the human still work.
+A: After 25 s (one retry, the optional fallback model), fixed rules choose instead ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)):
+they read the error type, whether the running revision is new, and the load, and propose one of the same four tools,
+through the same guardrails, labelled "rule-based (LLM unavailable)". Anything the rules don't recognise is left
+alone and escalated. The system is never worse off because the LLM failed.
 
 **Q: Why is evidence collected by code instead of letting the LLM query Prometheus?**
 A: It keeps the agent's powers exactly equal to the four-tool allowlist, makes every diagnosis reproducible (we store

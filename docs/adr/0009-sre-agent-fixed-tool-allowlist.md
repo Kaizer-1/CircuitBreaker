@@ -3,7 +3,8 @@
 - **Status:** Accepted — LLM provider amended by [ADR-0013](0013-openrouter-llm-gateway.md) (OpenRouter instead of
   calling the Claude API directly); `rollback_deployment`'s implementation extended by
   [ADR-0016](0016-rollback-reconciles-through-git.md) (rollback, then a deterministic `git revert` pull request — still
-  four tools)
+  four tools); LLM failure amended by [ADR-0021](0021-rule-based-fallback-when-the-llm-is-unavailable.md) (rules
+  choose when the model gives no usable tool call, through the same guardrails)
 - **Date:** 2026-11-02
 - **Deciders:** Kaizer Dewaswala (owner), Mohammad Oweis, MD Asif Ali
 
