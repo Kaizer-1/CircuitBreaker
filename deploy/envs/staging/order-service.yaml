@@ -5,9 +5,3 @@ order-service:
   image:
     registry: ghcr.io/kaizer-1
     tag: "d77f505a30b8"
-  # A DELIBERATELY BAD RELEASE for the Phase 7b Git rehearsal (ADR-0016): order-service needs about 60 MiB, so
-  # its new pod is killed for running out of memory, again and again. The SRE agent must roll it back and open a
-  # git revert pull request for this commit.
-  resources:
-    requests: {cpu: 100m, memory: 32Mi}
-    limits: {cpu: 500m, memory: 44Mi}
