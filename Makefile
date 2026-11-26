@@ -152,6 +152,7 @@ platform: ## Platform: cluster, namespaces, Traefik, monitoring, Sealed Secrets,
 	@python3 scripts/k8s.py charts
 	@$(TF) init -input=false >/dev/null
 	@$(TF) apply $(TF_VARS)
+	@python3 scripts/k8s.py argo-agent-token
 
 sync: ## GitOps: ask Argo CD to look at Git now (it polls every 30 s): make sync [env=staging] [s=<service>] [apply=yes]
 	@python3 scripts/k8s.py sync --env $(if $(env),$(env),staging) $(s) $(if $(filter yes,$(apply)),--apply,)

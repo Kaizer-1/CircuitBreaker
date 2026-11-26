@@ -1003,6 +1003,114 @@ def cmd_argocd(_: argparse.Namespace) -> None:
     )
 
 
+ARGO_AGENT_SECRET = "argocd-sre-agent"  # noqa: S105 (the Secret's name, not a value)
+
+
+def argo_api(base: str, method: str, path: str, body: dict | None = None, token: str = "") -> tuple:
+    req = urllib.request.Request(  # noqa: S310 (a local port-forward, http only)
+        f"{base}{path}",
+        method=method,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={
+            "Content-Type": "application/json",
+            **({"Authorization": f"Bearer {token}"} if token else {}),
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 (local port-forward)
+            raw = resp.read()
+            return resp.status, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        return e.code, {}
+
+
+def cmd_argo_agent_token(_: argparse.Namespace) -> None:
+    """The SRE agent's read-only Argo CD token (ADR-0016's pre-check), the platform's third
+    bootstrap secret (ADR-0019): Argo CD signs it with this cluster's own key, so it exists only
+    once this Argo CD does and cannot be sealed into Git beforehand. make platform runs this.
+
+    The account `sre-agent` has an API key only (it cannot log in to the web UI) and the role in
+    infra/platform/argo-cd.yaml: get on the project's Applications, nothing else. A Secret holding
+    a token that still works is kept; otherwise a new token is made, checked (it reads an
+    Application, and is refused a repository listing) and stored as Secret argocd-sre-agent in the
+    environment's namespace. Never in Terraform's state, never in Git."""
+    import socket
+
+    if not ok(kubectl("get", "deployment", "argo-cd-argocd-server", "-n", "argocd")):
+        print("sre-agent Argo CD token: no Argo CD yet, nothing to do")
+        return
+    envs = [e for e in ("staging", "prod") if argo_applications(e)]
+    if not envs:
+        print("sre-agent Argo CD token: Argo CD manages no environment yet, nothing to do")
+        return
+    password = secret_value("argocd", "argocd-initial-admin-secret", "password")
+    if not password:
+        sys.exit("no Argo CD admin password (secret argocd-initial-admin-secret)")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    forward = subprocess.Popen(  # noqa: S603 (fixed command)
+        kubectl("port-forward", "-n", "argocd", "svc/argo-cd-argocd-server", f"{port}:80"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    base = f"http://127.0.0.1:{port}/api/v1"
+    try:
+        for _ in range(40):
+            with socket.socket() as c:
+                if c.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            time.sleep(0.25)
+        status, session = argo_api(
+            base, "POST", "/session", {"username": "admin", "password": password}
+        )
+        if status != 200:
+            sys.exit(f"Argo CD refused the admin login ({status})")
+        admin = session["token"]
+        for env in envs:
+            app = f"/applications/order-service-{env}"
+            kept = secret_value(env, ARGO_AGENT_SECRET, "token")
+            if kept and argo_api(base, "GET", app, token=kept)[0] == 200:
+                print(f"{env}: sre-agent Argo CD token works, kept")
+                continue
+            token_id = f"sre-agent-{env}"
+            argo_api(base, "DELETE", f"/account/sre-agent/token/{token_id}", token=admin)
+            status, made = argo_api(
+                base,
+                "POST",
+                "/account/sre-agent/token",
+                {"name": "sre-agent", "id": token_id},
+                admin,
+            )
+            if status != 200 or not made.get("token"):
+                sys.exit(
+                    f"Argo CD did not make a token for sre-agent ({status}): is the account there?"
+                )
+            token = made["token"]
+            reads = argo_api(base, "GET", app, token=token)[0]
+            repos = argo_api(base, "GET", "/repositories", token=token)
+            if reads != 200 or repos[0] == 200 and repos[1].get("items"):
+                sys.exit(
+                    f"the sre-agent token is not read-only as designed (application {reads},"
+                    f" repositories {repos[0]})"
+                )
+            secret = {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {
+                    "name": ARGO_AGENT_SECRET,
+                    "namespace": env,
+                    "labels": {"app.kubernetes.io/part-of": "circuitbreaker"},
+                },
+                "type": "Opaque",
+                "stringData": {"token": token},
+            }
+            run(kubectl("apply", "-f", "-"), input_text=json.dumps(secret), capture=True)
+            print(f"{env}: sre-agent Argo CD token made (reads Applications, repositories refused)")
+    finally:
+        forward.terminate()
+
+
 def cmd_secret(args: argparse.Namespace) -> None:
     """One value of an environment's Secret (random since Phase 6: SealedSecrets, ADR-0019), e.g.
     the presenter's admin passcode (make k8s-passcode) or the bot secret for make k8s-test-phone."""
@@ -1260,6 +1368,9 @@ def main() -> None:
     )
     sync.set_defaults(func=cmd_sync)
     sub.add_parser("argocd").set_defaults(func=cmd_argocd)
+    sub.add_parser(
+        "argo-agent-token", help="the SRE agent's read-only Argo CD token (make platform)"
+    ).set_defaults(func=cmd_argo_agent_token)
     secret = sub.add_parser("secret", help="print one value of an environment's Secret")
     secret.add_argument("--env", choices=["prod", "staging"], default="prod")
     secret.add_argument("name")

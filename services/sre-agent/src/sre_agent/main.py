@@ -23,6 +23,7 @@ from fastapi import FastAPI
 
 from sre_agent.adapters.cassandra_store import CassandraStore, connect_cassandra
 from sre_agent.adapters.events_kafka import KafkaIncidentSink
+from sre_agent.adapters.gitops import ArgoGitOps, GitHubReverter
 from sre_agent.adapters.kubernetes import ACCOUNT, DryRunPlatform, KubernetesPlatform
 from sre_agent.adapters.loki import LokiLogs
 from sre_agent.adapters.openrouter import OpenRouterClient
@@ -34,7 +35,7 @@ from sre_agent.application.decider import Decider
 from sre_agent.application.feed import FeedHub
 from sre_agent.business_metrics import register_business_metrics
 from sre_agent.config import Settings
-from sre_agent.ports.gitops import NoGitOps
+from sre_agent.ports.gitops import GitOps, NoGitOps
 from sre_agent.ports.observability import Alert
 from sre_agent.ports.platform import Platform
 from sre_agent.ports.store import Store
@@ -155,6 +156,13 @@ async def run_service(app: FastAPI, settings: Settings, http: httpx.AsyncClient)
         tasks.append(asyncio.create_task(llm.learn_parameters()))
     else:
         logger.warning("no OpenRouter key: the rule-based fallback decides (ADR-0021)")
+    gitops: GitOps = NoGitOps()
+    if settings.argocd_url and settings.argo_token:
+        github = settings.github_app
+        reverter = GitHubReverter(http, settings.github_repository, *github) if github else None
+        gitops = ArgoGitOps(http, settings.argocd_url, settings.argo_token, namespace, reverter)
+        if reverter is None:
+            logger.warning("no GitHub App: a Git-delivered bad release needs a manual revert")
     alerts = prometheus or NoAlerts()
     agent = Agent(
         AgentConfig(namespace, settings.approval_default, poll_seconds=settings.poll_seconds),
@@ -162,7 +170,7 @@ async def run_service(app: FastAPI, settings: Settings, http: httpx.AsyncClient)
         collector=EvidenceCollector(namespace, alerts, logs, platform, now),
         decider=Decider(llm, now),
         platform=platform,
-        gitops=NoGitOps(),
+        gitops=gitops,
         store=store,
         sink=sink,
         feed=FeedHub(),

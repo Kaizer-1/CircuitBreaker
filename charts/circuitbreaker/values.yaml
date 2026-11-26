@@ -191,9 +191,18 @@ sre-agent:
     # Configuration, never a setting (SRE agent design section 4). Approval mode: on in prod, off in staging,
     # until an admin changes it (A-14).
     SRE_AGENT_MODEL: anthropic/claude-sonnet-5.5
+    # The rollback's Git step (ADR-0016): Argo CD's read-only pre-check, then a revert pull request by the GitHub App.
+    ARGOCD_URL: http://argo-cd-argocd-server.argocd.svc
+    GITHUB_REPOSITORY: Kaizer-1/CircuitBreaker
   secretEnv:
     CASSANDRA_PASSWORD: {secret: sre-agent-db, key: password}
     OPENROUTER_API_KEY: {secret: openrouter-api-key, key: value}
+    # Optional: without them the Git step reports FAILED ("no Argo CD token" / "no GitHub App") and the rollback stays.
+    # The Argo CD token is made by make platform (scripts/k8s.py argo-agent-token), the App by make github-app.
+    ARGOCD_TOKEN: {secret: argocd-sre-agent, key: token, optional: true}
+    GITHUB_APP_ID: {secret: sre-agent-github-app, key: app-id, optional: true}
+    GITHUB_APP_INSTALLATION_ID: {secret: sre-agent-github-app, key: installation-id, optional: true}
+    GITHUB_APP_PRIVATE_KEY: {secret: sre-agent-github-app, key: private-key, optional: true}
   # Its Role (Terraform environment module): get/list/patch Deployments and their scale, read ReplicaSets and Pods,
   # in its own namespace only. No delete, no exec, no Secrets, no StatefulSets.
   kubernetesApi: true

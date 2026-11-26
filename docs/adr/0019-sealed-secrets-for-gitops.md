@@ -55,6 +55,17 @@ exist **before** Argo CD can read Git:
 
 Both are therefore in Terraform's state, one of the reasons the state file is git-ignored and stays on the laptop.
 
+**A third bootstrap secret (2026-11-26, the owner's decision): the SRE agent's Argo CD token.** The agent's
+rollback reads its Argo CD Application first ([ADR-0016](0016-rollback-reconciles-through-git.md)), with the
+read-only account `sre-agent` (an API token only, no web login; its role may `get` this project's Applications and
+nothing else). Argo CD **signs that token with its own server key, made when this cluster's Argo CD is installed**,
+so the token cannot exist before the cluster does, and a rebuilt cluster invalidates it: it can never be sealed
+into Git ahead of time. `make platform` makes it after Terraform (`scripts/k8s.py argo-agent-token`): it keeps a
+token that still works, else makes one, checks it (it reads an Application and is refused a repository listing)
+and stores it as the Secret `argocd-sre-agent` in each environment's namespace with `kubectl`, so it is in neither
+Git nor Terraform's state. A security-course example of the three kinds of secret here: sealed in Git, a Terraform
+input, and minted by the platform itself.
+
 **Placeholders for Phase 7:** `openrouter-api-key` and `sre-agent-github-app` are sealed now with placeholder
 values, so the charts' references resolve; Phase 7 re-seals them with real values (`make seal env=<env>
 rotate="openrouter-api-key"` after editing the plaintext source).

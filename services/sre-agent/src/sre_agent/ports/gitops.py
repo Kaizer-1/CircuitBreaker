@@ -14,6 +14,7 @@ class SyncState:
     synced: bool
     revision: str | None  # the Git commit Argo CD synced, when Synced
     detail: str
+    branch: str | None = None  # the branch the Application follows (main, or a branch under test)
 
 
 class GitOps(Protocol):

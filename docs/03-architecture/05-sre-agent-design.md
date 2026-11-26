@@ -209,7 +209,9 @@ The rollback's Git step uses two more credentials. Neither is ever shown to the 
   requests: write*. A ruleset protects `main` (a pull request required, and updates to `main` restricted to its bypass
   list: the owner, only by merging a pull request, and CI's deploy key), and the App is **not** on
   the bypass list, so it can open pull requests but never merge them.
-- **Argo CD account `sre-agent`:** read-only (`get` on Applications), for the pre-check.
+- **Argo CD account `sre-agent`:** read-only (`get` on Applications), for the pre-check. An API token only (no web
+  login), made by `make platform` and kept in the Secret `argocd-sre-agent` of each environment ([ADR-0019](../adr/0019-sealed-secrets-for-gitops.md)'s third
+  bootstrap secret).
 
 ### Prompt injection
 
