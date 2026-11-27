@@ -618,3 +618,47 @@ async def test_other_strategies_keep_their_candle_rhythm_after_a_fill() -> None:
     [order_id] = list(bot.open_orders)
     bot.on_stream({"type": "fill", "data": {"order_id": order_id, "order_remaining_quantity": 0}})
     assert asked == []
+
+
+# ------------------------------------------------------------------ the one-sided flow guard
+
+
+def test_two_bids_eaten_quickly_pull_the_bid_for_the_cool_off_then_it_comes_back() -> None:
+    from bot_traders.domain.strategies import OneSidedFlow
+
+    flow = OneSidedFlow()
+    flow.bid_filled_away(100.0, lived=1.0)
+    assert not flow.bid_pulled(100.0)  # one is chance
+    flow.bid_filled_away(104.0, lived=0.5)  # a second within 10 s: one-sided selling
+    assert flow.bid_pulled(104.0) and flow.bid_pulled(133.9)
+    assert not flow.bid_pulled(134.0)  # 30 s later it bids again
+
+
+def test_ordinary_fills_and_spread_out_ones_never_pull_the_bid() -> None:
+    from bot_traders.domain.strategies import OneSidedFlow
+
+    slow = OneSidedFlow()
+    for at in (100.0, 101.0, 102.0):
+        slow.bid_filled_away(at, lived=20.0)  # a bid that rested before its fill
+    assert not slow.bid_pulled(102.0)
+    apart = OneSidedFlow()
+    apart.bid_filled_away(100.0, lived=1.0)
+    apart.bid_filled_away(111.0, lived=1.0)  # more than 10 s later
+    assert not apart.bid_pulled(111.0)
+
+
+def test_a_maker_whose_bid_is_pulled_cancels_it_and_keeps_its_ask() -> None:
+    from collections import deque
+    from random import Random
+
+    from bot_traders.domain.market import Cancel, OpenOrder, Requote
+    from bot_traders.domain.strategies import MarketMaker, TickerView
+
+    bid = OpenOrder("b1", "CALVERA", "BUY", 24_500, 20, 0)
+    view = TickerView(
+        "CALVERA", deque([24_550]), 24_500, 24_600, 1, open_orders=[bid], shares_held=1_000,
+        bid_pulled=True,
+    )  # fmt: skip
+    intents = MarketMaker(8).decide(view, Random(1))  # noqa: S311 (a seeded test, not secrets)
+    assert Cancel("b1", "CALVERA") in intents  # the bid is cancelled
+    assert {i.place.side for i in intents if isinstance(i, Requote)} == {"SELL"}

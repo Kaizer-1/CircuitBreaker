@@ -2594,6 +2594,24 @@ def agent_run(args: argparse.Namespace, name: str, run: int, host: HostWatch) ->
         }
         for o in others
     ]
+    if name == "panic" and incident is not None:
+        ok &= wait_until(
+            "the panic sell to end",
+            lambda: (
+                not any(
+                    e["scenario"] == "TRAFFIC_SPIKE" and e["status"] == "RUNNING"
+                    for e in chaos_call(env, "GET", "/v1/chaos/experiments")["items"]
+                )
+            ),
+            timeout=180,
+        )
+        back = market_two_sided(env)
+        result["two_sided_after_panic_s"] = None if back is None else round(back)
+        ok &= verdict(
+            back is not None,
+            f"after the panic every ticker has a bid and an ask again within {TWO_SIDED_WITHIN} s"
+            f" ({'never' if back is None else f'{back:.0f} s'})",
+        )
     if name == "leak" and result.get("chosen") == "restart_deployment":
         ok &= restart_cures_the_leak(env)
     time.sleep(15)  # one scrape after the last model call
@@ -2637,6 +2655,29 @@ DEMO_STEPS: dict[str, list[tuple[str, str]]] = {
     ],
 }
 DEMO_LEAK_RATE = {"short": 120, "full": 80}  # MB/min: 120 is the fastest rate measured safe (7a)
+TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
+TWO_SIDED_WITHIN = 30  # s after a panic ends: every ticker has a bid and an ask (owner, 2026-11-27)
+
+
+def market_two_sided(env: str, timeout: float = TWO_SIDED_WITHIN) -> float | None:
+    """Seconds until every ticker's book has a bid AND an ask (Q-04), or None after `timeout`.
+    After a panic sell the market makers must quote both sides again, so a phone can sell."""
+    began = time.monotonic()
+    while True:
+        books = [chaos_call(env, "GET", f"/v1/market/{t}/order-book") for t in TICKERS]
+        if all(b.get("best_bid_paise") and b.get("best_ask_paise") for b in books):
+            return time.monotonic() - began
+        if time.monotonic() - began > timeout:
+            one_sided = [
+                t
+                for t, b in zip(TICKERS, books, strict=True)
+                if not (b.get("best_bid_paise") and b.get("best_ask_paise"))
+            ]
+            print(f"    {DIM}still one-sided after {timeout:.0f} s: {one_sided}{RESET}")
+            return None
+        time.sleep(2)
+
+
 PANIC_FIRES_AFTER = 30  # s: its alert fired 38-62 s after the click in every measured run
 
 
@@ -2719,6 +2760,14 @@ def check_demo(args: argparse.Namespace) -> bool:
                     lambda e=earlier: not experiment_running(env, experiments[e]),
                     timeout=480,
                 )
+                if earlier == "panic":  # phones must be able to sell again before the next one
+                    back = market_two_sided(env)
+                    result["two_sided_after_panic_s"] = None if back is None else round(back)
+                    ok &= verdict(
+                        back is not None,
+                        f"after the panic every ticker has a bid and an ask again within"
+                        f" {TWO_SIDED_WITHIN} s ({'never' if back is None else f'{back:.0f} s'})",
+                    )
                 if when.endswith("+cooldown"):
                     ok &= wait_until(
                         "the agent's cooldown on order-service",

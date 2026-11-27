@@ -71,7 +71,9 @@ replaced by the measured time):**
 1. **Start Memory leak.** It grows quietly; its alert comes about 3 minutes later.
 2. **20 seconds later, start Panic sell.** The market drops, order latency climbs on the strip, the agent scales
    order-service to 5 (about 40–60 s after the click) and the strip recovers.
-3. **When Panic sell says "Fixed by the agent", start Portfolio database degraded.** The breaker opens; the agent
+3. **When Panic sell says "Fixed by the agent" and every ticker on the market strip trades again (the dashboard's
+   books have bids again, within 30 s), start Portfolio database degraded.** While it runs, every new order is
+   refused (the breaker is open), so it must not start before the market has two sides. The breaker opens; the agent
    does nothing and escalates, naming the database. Meanwhile the leak fires and the agent restarts
    market-data-service.
 4. **When both have an outcome on the feed, press Reset everything.**

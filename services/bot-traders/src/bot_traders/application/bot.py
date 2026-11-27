@@ -28,7 +28,7 @@ from typing import Any
 
 from bot_traders.domain.ledger import Ledger
 from bot_traders.domain.market import Cancel, Intent, OpenOrder, Place, Requote
-from bot_traders.domain.strategies import BotPlan, MarketMaker, TickerView
+from bot_traders.domain.strategies import BotPlan, MarketMaker, OneSidedFlow, TickerView
 from bot_traders.ports.exchange import Exchange, OrderRefusedError, Session, SessionExpiredError
 
 logger = logging.getLogger("bot")
@@ -103,6 +103,8 @@ class Bot:
         self._reconcile = True  # list open orders (Q-07) on the next refresh
         self._refreshing = asyncio.Lock()
         self._closed: dict[str, None] = {}  # recently finished order IDs, oldest first
+        self._flow: dict[str, OneSidedFlow] = {}  # a market maker's guard, per ticker
+        self._placed_at: dict[str, float] = {}  # when each resting order was placed (clock)
         self.busy: set[str] = set()  # tickers this bot is still acting on
         self._signing_in = asyncio.Lock()
         self._backoff = 0.0  # seconds; 0 while steps work
@@ -190,6 +192,10 @@ class Bot:
         if message.get("type") == "fill" and order_id in self.open_orders:
             remaining = int(data["order_remaining_quantity"])
             if remaining == 0:
+                order, now = self.open_orders[order_id], self._clock()
+                if order.side == "BUY" and isinstance(self.plan_.strategy, MarketMaker):
+                    lived = now - self._placed_at.get(order_id, float("-inf"))
+                    self._flow.setdefault(order.ticker, OneSidedFlow()).bid_filled_away(now, lived)
                 self._forget(order_id)
             else:
                 self.open_orders[order_id].remaining = remaining
@@ -199,6 +205,7 @@ class Bot:
     def _forget(self, order_id: str) -> None:
         """The exchange closed this order (filled, or finished elsewhere)."""
         gone = self.open_orders.pop(order_id, None)
+        self._placed_at.pop(order_id, None)
         if gone is not None and gone.limit_price_paise is not None:
             same_side = (gone.ticker, gone.side)
             if not any((o.ticker, o.side) == same_side for o in self.open_orders.values()):
@@ -227,6 +234,7 @@ class Bot:
             ],
             shares_held=self.ledger.quantity.get(ticker, 0),
             activity=self._activity,
+            bid_pulled=ticker in self._flow and self._flow[ticker].bid_pulled(self._clock()),
         )
         intents = self.plan_.strategy.decide(view, self.rng)
         span = window if window is not None else self._interval
@@ -311,6 +319,7 @@ class Bot:
                 order.quantity,
                 market.candle,
             )
+            self._placed_at[placed["order_id"]] = self._clock()
         self._on_order(self.strategy_name, "placed", order.ticker)
 
 

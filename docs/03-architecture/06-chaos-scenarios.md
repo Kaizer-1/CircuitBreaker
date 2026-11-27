@@ -143,6 +143,12 @@ protection price (last price −10%), which releases its shares, so the burst ne
 never rest, so there is nothing to clean up afterwards. Using 20 accounts keeps each under the gateway's per-bot rate
 limit (50/s), just like a real crowd of many sellers.
 
+**The market must come back** (owner, 2026-11-27). Within 30 s after the panic ends every ticker has a bid and an ask
+again, so a phone can sell (`make demo-chaos` and the agent check test it). The first runs on staging left every
+ticker without a bid for minutes: the market makers had spent all their cash buying the panic's shares. They now pull
+a bid that one-sided selling keeps eating and come back when it stops
+([bot-traders README](../../services/bot-traders/README.md)).
+
 Why this mix and not Phase 5's (70% `GET /v1/orders`, 30% resting 1-share buys): a crowd that panics *sells*, and
 the scenario must be one that more order-service pods actually fix. Phase 5 found `GET /v1/orders` limited by a
 history scan, which scaling did not help; since the open-orders table (2026-11-14) that read costs only what is open,
