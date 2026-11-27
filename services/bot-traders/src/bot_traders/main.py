@@ -10,6 +10,7 @@ CandleClosed from candles.v1.
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 
@@ -138,12 +139,17 @@ def create_app(
             panic_exchange = GatewayExchange(
                 settings.gateway_url, settings.bot_secret.get_secret_value(), panic_client
             )
+
+            def on_sent(kind: str, result: str) -> None:
+                business_metrics.bot_panic_requests_total.labels(kind, result).inc()
+                if result != "dropped":  # an answer (or a timeout) came: the tail moves on
+                    business_metrics.bot_panic_last_answer_timestamp_seconds.set(time.time())
+
             app.state.panic = PanicSell(
-                panic_exchange,
-                rng=bot_rng(settings.bot_random_seed, "panic"),
-                on_sent=lambda kind, result: business_metrics.bot_panic_requests_total.labels(
-                    kind, result
-                ).inc(),
+                panic_exchange, rng=bot_rng(settings.bot_random_seed, "panic"), on_sent=on_sent
+            )
+            business_metrics.bot_panic_requests_in_flight.set_function(
+                lambda: float(app.state.panic.in_flight)
             )
             yield
             await app.state.panic.stop()

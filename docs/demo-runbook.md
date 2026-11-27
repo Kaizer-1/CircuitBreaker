@@ -72,8 +72,8 @@ replaced by the measured time):**
    later.
 2. **20 seconds later, start Panic sell.** The market drops, order latency climbs on the strip, the agent scales
    order-service to 5 (about 40–60 s after the click) and the strip recovers.
-3. **When Panic sell says "Fixed by the agent" and every ticker on the market strip trades again (the dashboard's
-   books have bids again, within 30 s), start Portfolio database degraded.** While it runs, every new order is
+3. **When Panic sell says "Fixed by the agent" and every ticker has bids again (the dashboard's books; within 30 s of
+   the panic's last order, which comes about 20 s after the panic stopped), start Portfolio database degraded.** While it runs, every new order is
    refused (the breaker is open), so it must not start before the market has two sides. The breaker opens; the agent
    does nothing and escalates, naming the database. Meanwhile the leak fires and the agent restarts
    market-data-service.

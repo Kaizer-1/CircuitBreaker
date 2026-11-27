@@ -235,6 +235,7 @@ class Bot:
             shares_held=self.ledger.quantity.get(ticker, 0),
             activity=self._activity,
             bid_pulled=ticker in self._flow and self._flow[ticker].bid_pulled(self._clock()),
+            bid_probing=ticker in self._flow and self._flow[ticker].bid_probing(self._clock()),
         )
         intents = self.plan_.strategy.decide(view, self.rng)
         span = window if window is not None else self._interval

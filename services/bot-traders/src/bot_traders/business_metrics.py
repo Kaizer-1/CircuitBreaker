@@ -12,6 +12,8 @@ class BusinessMetrics:
     bot_order_lateness_seconds: Histogram
     bot_quote_gap_seconds: Histogram
     bot_panic_requests_total: Counter
+    bot_panic_requests_in_flight: Gauge
+    bot_panic_last_answer_timestamp_seconds: Gauge
 
     def timing(self, kind: str, strategy: str, seconds: float) -> None:
         """The bots' own timing (application/bot.py TimingListener)."""
@@ -53,6 +55,19 @@ def register_business_metrics(registry: CollectorRegistry) -> BusinessMetrics:
             " HTTP status, no_answer, or dropped (not sent: too many unanswered). Shows the rate"
             " offered against the rate order-service answered; never read by the SRE agent.",
             ["kind", "result"],
+            registry=registry,
+        ),
+        # When the panic has really ended (owner, 2026-11-27): its burst stops at once, but the
+        # requests it already sent are answered for a while after (the tail). The market must
+        # have two sides within 30 s of the last answer.
+        bot_panic_requests_in_flight=Gauge(
+            "bot_panic_requests_in_flight",
+            "The panic sell's requests sent and not yet answered.",
+            registry=registry,
+        ),
+        bot_panic_last_answer_timestamp_seconds=Gauge(
+            "bot_panic_last_answer_timestamp_seconds",
+            "When the panic sell's latest request was answered (or gave up), Unix time.",
             registry=registry,
         ),
     )

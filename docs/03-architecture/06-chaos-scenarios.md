@@ -147,7 +147,9 @@ never rest, so there is nothing to clean up afterwards. Using 20 accounts keeps 
 limit (50/s), just like a real crowd of many sellers.
 
 **The market must come back** (owner, 2026-11-27). Within 30 s after the panic ends every ticker has a bid and an ask
-again, so a phone can sell (`make demo-chaos` and the agent check test it). The first runs on staging left every
+again, so a phone can sell (`make demo-chaos` and the agent check test it). The panic ends when its **last order is
+answered**: the burst stops with the experiment, but the orders it already sent are answered for a while after (the
+tail, about 20 s on staging, reported separately). The first runs on staging left every
 ticker without a bid for minutes: the market makers had spent all their cash buying the panic's shares. They now pull
 a bid that one-sided selling keeps eating and come back when it stops
 ([bot-traders README](../../services/bot-traders/README.md)).
