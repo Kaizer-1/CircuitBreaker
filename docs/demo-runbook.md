@@ -68,7 +68,8 @@ still open.
 **The chaos part of the demo (the short choreography of `make demo-chaos`; estimated at about 4 minutes, to be
 replaced by the measured time):**
 
-1. **Start Memory leak.** It grows quietly; its alert comes about 3 minutes later.
+1. **Start Memory leak** (100 MB a minute, the button's default). It grows quietly; its alert comes about 3½ minutes
+   later.
 2. **20 seconds later, start Panic sell.** The market drops, order latency climbs on the strip, the agent scales
    order-service to 5 (about 40–60 s after the click) and the strip recovers.
 3. **When Panic sell says "Fixed by the agent" and every ticker on the market strip trades again (the dashboard's
@@ -96,6 +97,7 @@ anything that slips through is off the screen with **B**.
 | A rude name on the leaderboard | — | **B** hides it; add the word to the blocklist file after the demo |
 | Phones cannot open the QR address, or the QR shows an old address | The laptop rejoined the hotspot: `ipconfig getifaddr en0`; Kubernetes: `make k8s-status` | Compose: `PUBLIC_BASE_URL=http://<LAN IP>:5173 docker compose up -d --no-deps web`; Kubernetes: `make k8s-set-url url=http://<LAN IP>` |
 | An order fails on a phone | The toast says why (no connection, the exchange's reason, an exchange error with its HTTP status, or an app error); the laptop's browser console on the same address shows the full error | No connection: the phone left the hotspot. Exchange error: `make status` / `make k8s-status` |
+| The agent opens incidents about 10 s late, after the laptop slept | Prometheus' rule evaluation lags its own timestamps: `curl -s localhost:9090/api/v1/query --data-urlencode 'query=min_over_time((timestamp(prometheus_rule_group_last_evaluation_timestamp_seconds) - prometheus_rule_group_last_evaluation_timestamp_seconds)[10m:10s])'` shows a group above about 5 s | Restart Prometheus: `kubectl -n observability delete pod prometheus-kube-prometheus-stack-prometheus-0` (its data is on a volume and survives). Found on 2026-11-27: after a night's sleep the Docker VM's clock was corrected while Prometheus kept its schedule, so every alert became visible about 10 s after its own firing time. Step 0's morning restart avoids it |
 | Something is broken and there is no time to fix it | — | Fall back to the last known-good version (§4) |
 
 ## 4. Fallback: the last known-good version
