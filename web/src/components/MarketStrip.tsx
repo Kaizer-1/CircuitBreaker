@@ -68,7 +68,7 @@ export function MarketStrip({
           </dd>
         </div>
         <Number
-          label="Market-data memory"
+          label="Market-data mem."
           value={v?.market_data_memory_of_limit}
           show={(m) => `${Math.round(m * 100)}%`}
           alarm={(m) => m > MEMORY_ALERT}

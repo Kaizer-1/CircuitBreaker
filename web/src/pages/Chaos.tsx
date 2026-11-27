@@ -234,7 +234,6 @@ function Screen({ token, onExpired }: { token: string; onExpired: () => void }) 
               <thead>
                 <tr>
                   <th>Scenario</th>
-                  <th>What breaks</th>
                   <th>The right fix</th>
                   <th>State</th>
                   <th aria-label="Action" />
@@ -251,8 +250,10 @@ function Screen({ token, onExpired }: { token: string; onExpired: () => void }) 
                       className={on ? 'running' : undefined}
                       data-testid={s.scenario}
                     >
-                      <th scope="row">{s.name}</th>
-                      <td className="what">{s.description}</td>
+                      <th scope="row">
+                        {s.name}
+                        <small className="what">{s.description}</small>
+                      </th>
                       <td>{FIXES[s.expected_fix] ?? s.expected_fix}</td>
                       <td className={`state${on ? ' down' : ready.waiting ? ' waiting' : ''}`}>
                         {ready.text}

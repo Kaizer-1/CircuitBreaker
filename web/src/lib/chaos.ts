@@ -68,6 +68,8 @@ const OUTCOMES: Record<Exclude<ExperimentStatus, 'RUNNING'>, string> = {
   EXPIRED: 'Timed out',
 }
 
+const NBSP = '\u00a0' // a number and its unit stay on one line
+
 /** One line for a scenario's state on the panel. */
 export function stateLine(e: Experiment | undefined, now: number): string {
   if (!e) return 'Ready'
@@ -75,11 +77,12 @@ export function stateLine(e: Experiment | undefined, now: number): string {
     const left = countdown((Date.parse(e.ends_at) - now) / 1000)
     const detected =
       e.time_to_detect_seconds !== null
-        ? ` · ${e.incident_id} detected in ${e.time_to_detect_seconds} s`
+        ? ` · ${e.incident_id} detected in ${e.time_to_detect_seconds}${NBSP}s`
         : ' · waiting for the agent'
     return `Running · ${left} left${detected}`
   }
-  const recovered = e.time_to_recover_seconds !== null ? ` in ${e.time_to_recover_seconds} s` : ''
+  const recovered =
+    e.time_to_recover_seconds !== null ? ` in ${e.time_to_recover_seconds}${NBSP}s` : ''
   return `${OUTCOMES[e.status]}${recovered}`
 }
 
