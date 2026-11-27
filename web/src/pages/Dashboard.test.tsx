@@ -12,6 +12,11 @@ vi.mock('./presenterHooks', () => ({
   useHealth: () => 'all systems healthy',
   useRowsThatFit: (_panel: unknown, max: number) => max,
 }))
+const feed = vi.hoisted(() => ({ state: null as unknown }))
+vi.mock('../incidents/hooks', async () => {
+  const { emptyFeed } = await import('../lib/incidents')
+  return { useIncidentFeed: () => [feed.state ?? emptyFeed, 'live'] }
+})
 vi.mock('../market/hooks', async (original) => {
   const real = await original<typeof import('../market/hooks')>()
   const market = () => [emptyMarket, 'live']
@@ -91,5 +96,54 @@ describe.each(BOTH)('the dashboard leaderboard (%s theme)', (theme) => {
     expect(screen.queryByRole('region', { name: 'Leaderboard' })).toBeNull()
     fireEvent.keyDown(window, { key: 'B' })
     expect(screen.getByRole('region', { name: 'Leaderboard' })).toBeInTheDocument()
+  })
+})
+
+describe.each(BOTH)('the dashboard status bar (%s skin)', (theme) => {
+  beforeEach(() => showTheme(theme))
+  afterEach(() => {
+    feed.state = null
+  })
+
+  it('shows the open incident in one line, and nothing once there is none', async () => {
+    const { applyFeed, emptyFeed } = await import('../lib/incidents')
+    const opened = {
+      incident_id: 'INC-0007',
+      alert_name: 'OrderServiceHighErrorRate',
+      service: 'order-service',
+      severity: 'critical' as const,
+      status: 'OPEN' as const,
+      resolution: null,
+      summary: 'order-service errors at 38%',
+      opened_at: '2026-11-20T05:12:00.000Z',
+      resolved_at: null,
+      time_to_recover_seconds: null,
+      actions_taken: [],
+    }
+    let state = applyFeed(emptyFeed, { type: 'incident_opened', data: opened }, 0)
+    state = applyFeed(
+      state,
+      {
+        type: 'incident_update',
+        data: {
+          incident_id: 'INC-0007',
+          entry: {
+            at: '2026-11-20T05:12:09.000Z',
+            kind: 'EXECUTED',
+            message: 'Rolled order-service back to revision 7. The rollout has started.',
+          },
+        },
+      },
+      0,
+    )
+    feed.state = state
+    render(<Dashboard />)
+    expect(screen.getByTestId('incident-line')).toHaveTextContent(
+      'INC-0007 order-service: action: Rolled order-service back to revision 7',
+    )
+    cleanup()
+    feed.state = null
+    render(<Dashboard />)
+    expect(screen.queryByTestId('incident-line')).toBeNull()
   })
 })

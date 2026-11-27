@@ -39,7 +39,7 @@ export function FKeys({ active }: { active: Screen }) {
         <b>F5</b>TIME TRAVEL
       </a>
       <a href="/chaos" className={active === 'chaos' ? 'on' : ''} onClick={go('/chaos')}>
-        <b>F6</b>CHAOS
+        <b>F6</b>CONTROL
       </a>
       {active === 'market' && (
         <span>
@@ -75,7 +75,7 @@ export function Sections({ active }: { active: Screen }) {
         aria-current={active === 'chaos' ? 'page' : undefined}
         onClick={go('/chaos')}
       >
-        Chaos
+        Control room
       </a>
       <a href="/status">System</a>
     </nav>

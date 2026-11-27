@@ -1,0 +1,311 @@
+// The SRE agent through api-gateway (api/sre-agent.yaml): Q-18 one incident, Q-20 settings with the
+// guardrails' budget, A-14 the approval toggle, A-15 approve or decline; and the live feed Q-19
+// (api/README.md "Q-19"), whose state is kept here as plain functions so it can be tested alone.
+import { call } from './market'
+
+export type TimelineKind =
+  | 'OPENED'
+  | 'EVIDENCE_COLLECTED'
+  | 'DIAGNOSIS'
+  | 'PROPOSED'
+  | 'APPROVED'
+  | 'DECLINED'
+  | 'EXECUTED'
+  | 'VERIFIED'
+  | 'RESOLVED'
+  | 'ESCALATED'
+  | 'AFTER_EFFECT'
+
+export interface TimelineEntry {
+  at: string
+  kind: TimelineKind
+  message: string
+}
+
+export interface IncidentSummary {
+  incident_id: string
+  alert_name: string
+  service: string
+  severity: 'warning' | 'critical'
+  status: 'OPEN' | 'AWAITING_APPROVAL' | 'RESOLVED'
+  resolution: 'RECOVERED' | 'AUTO_CLEARED' | 'ESCALATED' | null
+  summary: string
+  opened_at: string
+  resolved_at: string | null
+  time_to_recover_seconds: number | null
+  actions_taken: string[]
+  fired_at?: string | null
+  mitigated_at?: string | null
+  recovered_at?: string | null
+}
+
+export interface Remediation {
+  remediation_id: string
+  action: string
+  target_service: string | null
+  parameters: { replicas?: number; to_revision?: number }
+  explanation: string
+  model: string
+  status: 'PROPOSED' | 'APPROVED' | 'DECLINED' | 'EXECUTED' | 'FAILED'
+  requires_approval: boolean
+}
+
+export interface Incident extends IncidentSummary {
+  pending_remediation: Remediation | null
+  timeline: TimelineEntry[]
+}
+
+export interface AgentSettings {
+  environment: string
+  approval_required: boolean
+  paused: boolean
+  model: string
+  budget?: { actions_left_this_hour: number; cooldown_seconds_by_service: Record<string, number> }
+}
+
+export interface Vitals {
+  at: string
+  service: string
+  requests_per_second: number | null
+  error_ratio: number | null
+  p95_seconds: number | null
+  replicas: { desired: number | null; ready: number | null }
+  market_data_memory_of_limit: number | null
+}
+
+export const agent = {
+  incident: (token: string, id: string) => call<Incident>('GET', `/v1/incidents/${id}`, token),
+  settings: (token: string) => call<AgentSettings>('GET', '/v1/agent/settings', token),
+  setApproval: (token: string, on: boolean) =>
+    call<AgentSettings>('PUT', '/v1/agent/settings', token, { approval_required: on }),
+  decide: (token: string, id: string, decision: 'APPROVE' | 'DECLINE', comment?: string) =>
+    call<Incident>('POST', `/v1/incidents/${id}/decision`, token, {
+      decision,
+      ...(comment ? { comment } : {}),
+    }),
+}
+
+// ------------------------------------------------------------------ the feed's state
+
+export interface FeedIncident {
+  summary: IncidentSummary
+  entries: TimelineEntry[] // oldest first
+  pending: Remediation | null // waiting for the presenter's decision (approval mode)
+}
+
+export interface FeedState {
+  incidents: Record<string, FeedIncident>
+  vitals: Vitals | null
+  vitalsReceivedAt: number | null // the browser's clock, when the last vitals arrived
+}
+
+export const emptyFeed: FeedState = { incidents: {}, vitals: null, vitalsReceivedAt: null }
+
+export type FeedMessage =
+  | { type: 'snapshot'; data: IncidentSummary[] }
+  | { type: 'incident_opened'; data: IncidentSummary }
+  | { type: 'incident_update'; data: { incident_id: string; entry: TimelineEntry } }
+  | { type: 'approval_required'; data: { incident_id: string; remediation: Remediation } }
+  | { type: 'incident_resolved'; data: IncidentSummary }
+  | { type: 'vitals'; data: Vitals }
+
+function upsert(state: FeedState, summary: IncidentSummary): FeedState {
+  const known = state.incidents[summary.incident_id]
+  const pending = summary.status === 'AWAITING_APPROVAL' ? (known?.pending ?? null) : null
+  return {
+    ...state,
+    incidents: {
+      ...state.incidents,
+      [summary.incident_id]: { summary, entries: known?.entries ?? [], pending },
+    },
+  }
+}
+
+/** One feed message applied; `receivedAt` is when it arrived (Date.now()). */
+export function applyFeed(state: FeedState, message: FeedMessage, receivedAt: number): FeedState {
+  switch (message.type) {
+    case 'snapshot': {
+      // A fresh connection: the snapshot is the truth; entries already seen are kept.
+      const incidents: Record<string, FeedIncident> = {}
+      for (const s of message.data) {
+        const known = state.incidents[s.incident_id]
+        incidents[s.incident_id] = {
+          summary: s,
+          entries: known?.entries ?? [],
+          pending: s.status === 'AWAITING_APPROVAL' ? (known?.pending ?? null) : null,
+        }
+      }
+      return { ...state, incidents }
+    }
+    case 'incident_opened':
+    case 'incident_resolved':
+      return upsert(state, message.data)
+    case 'incident_update': {
+      const { incident_id, entry } = message.data
+      const known = state.incidents[incident_id]
+      if (!known) return state // its incident_opened (or the snapshot) brings the summary
+      if (known.entries.some((e) => e.at === entry.at && e.message === entry.message)) return state
+      // A decision ends the wait (only incident_resolved carries a new summary).
+      const decided = entry.kind === 'APPROVED' || entry.kind === 'DECLINED'
+      const summary =
+        decided && known.summary.status === 'AWAITING_APPROVAL'
+          ? { ...known.summary, status: 'OPEN' as const }
+          : known.summary
+      return {
+        ...state,
+        incidents: {
+          ...state.incidents,
+          [incident_id]: {
+            summary,
+            entries: [...known.entries, entry],
+            pending: decided ? null : known.pending,
+          },
+        },
+      }
+    }
+    case 'approval_required': {
+      const known = state.incidents[message.data.incident_id]
+      if (!known) return state
+      return {
+        ...state,
+        incidents: {
+          ...state.incidents,
+          [message.data.incident_id]: {
+            ...known,
+            summary: { ...known.summary, status: 'AWAITING_APPROVAL' },
+            pending: message.data.remediation,
+          },
+        },
+      }
+    }
+    case 'vitals':
+      return { ...state, vitals: message.data, vitalsReceivedAt: receivedAt }
+  }
+}
+
+/** Fill in an incident's timeline from Q-18 (a screen that connected after it opened). */
+export function withIncident(state: FeedState, incident: Incident): FeedState {
+  const known = state.incidents[incident.incident_id]
+  const entries = [
+    ...incident.timeline,
+    ...(known?.entries ?? []).filter(
+      (e) => !incident.timeline.some((t) => t.at === e.at && t.message === e.message),
+    ),
+  ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+  return {
+    ...state,
+    incidents: {
+      ...state.incidents,
+      [incident.incident_id]: {
+        summary: known?.summary ?? incident,
+        entries,
+        pending:
+          incident.status === 'AWAITING_APPROVAL'
+            ? incident.pending_remediation
+            : (known?.pending ?? null),
+      },
+    },
+  }
+}
+
+/** Newest first. */
+export function incidentsNewestFirst(state: FeedState): FeedIncident[] {
+  return Object.values(state.incidents).sort(
+    (a, b) => Date.parse(b.summary.opened_at) - Date.parse(a.summary.opened_at),
+  )
+}
+
+export function openIncidents(state: FeedState): FeedIncident[] {
+  return incidentsNewestFirst(state).filter((i) => i.summary.status !== 'RESOLVED')
+}
+
+// ------------------------------------------------------------------ vitals: fresh or stale
+
+/** After this long without a vitals message the strip greys out (owner, 2026-11-27). */
+export const VITALS_STALE_MS = 15_000
+
+export function vitalsStale(state: FeedState, now: number): boolean {
+  return state.vitalsReceivedAt === null || now - state.vitalsReceivedAt > VITALS_STALE_MS
+}
+
+// ------------------------------------------------------------------ how a line reads
+
+const LABELS: Record<TimelineKind, string> = {
+  OPENED: 'Opened',
+  EVIDENCE_COLLECTED: 'Evidence',
+  DIAGNOSIS: 'Diagnosis',
+  PROPOSED: 'Proposed',
+  APPROVED: 'Approved',
+  DECLINED: 'Declined',
+  EXECUTED: 'Action',
+  VERIFIED: 'Check',
+  RESOLVED: 'Resolved',
+  ESCALATED: 'Escalated',
+  AFTER_EFFECT: 'After-effect',
+}
+
+/** The kind's label and its tone (a colour token on the screen). */
+export function lineOf(entry: TimelineEntry): {
+  label: string
+  tone: 'bad' | 'good' | 'act' | 'warn' | 'quiet'
+} {
+  const label = LABELS[entry.kind] ?? entry.kind
+  switch (entry.kind) {
+    case 'OPENED':
+      return { label, tone: 'bad' }
+    case 'RESOLVED':
+      return { label, tone: 'good' }
+    case 'EXECUTED':
+    case 'APPROVED':
+      return { label, tone: 'act' }
+    case 'ESCALATED':
+    case 'DECLINED':
+    case 'PROPOSED':
+      return { label, tone: 'warn' }
+    default:
+      return { label, tone: 'quiet' }
+  }
+}
+
+/** The incident's headline outcome: "Recovered in 41 s", "Escalated to a person", … */
+export function outcomeOf(summary: IncidentSummary): string {
+  if (summary.status === 'AWAITING_APPROVAL') return 'Waiting for the presenter'
+  if (summary.status !== 'RESOLVED') return 'In progress'
+  switch (summary.resolution) {
+    case 'RECOVERED':
+      return summary.time_to_recover_seconds !== null
+        ? `Recovered in ${summary.time_to_recover_seconds} s`
+        : 'Recovered'
+    case 'AUTO_CLEARED':
+      return 'Cleared by itself'
+    case 'ESCALATED':
+      return 'Escalated to a person'
+    default:
+      return 'Resolved'
+  }
+}
+
+/** The one line for the dashboard's status bar: the newest open incident, or null. */
+export function statusLine(state: FeedState): string | null {
+  const open = openIncidents(state)
+  const top = open[0]
+  if (!top) return null
+  const last = top.entries.filter((e) => e.kind !== 'EVIDENCE_COLLECTED').at(-1)
+  const what = top.pending
+    ? 'waiting for the presenter'
+    : last
+      ? `${lineOf(last).label.toLowerCase()}: ${firstSentence(last.message)}`
+      : top.summary.summary
+  const more = open.length > 1 ? ` (+${open.length - 1} more)` : ''
+  return `${top.summary.incident_id} ${top.summary.service}: ${what}${more}`
+}
+
+function firstSentence(text: string): string {
+  const cut = text.search(/[.!?](\s|$)/)
+  return cut > 0 ? text.slice(0, cut) : text
+}
+
+/** Seconds left of the agent's cooldown on a service, 0 if none. */
+export function cooldownOf(settings: AgentSettings | null, service: string): number {
+  return settings?.budget?.cooldown_seconds_by_service[service] ?? 0
+}

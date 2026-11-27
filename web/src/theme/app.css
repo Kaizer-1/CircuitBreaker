@@ -1496,3 +1496,277 @@ td:first-child {
   width: 14em;
   font-weight: 600;
 }
+
+/* ================================================================ the control room (presenter) */
+/* The Chaos Panel becomes the control room (owner, 2026-11-27): a market strip under the status
+   strip, then two columns, the scenarios (and chaos-service's record) left, the agent's live feed
+   right. One table and one list, no cards; every step's kind is a word and a colour, no icons. */
+.control .chaos-scenarios table {
+  font-size: 1em;
+}
+.control .chaos-scenarios .what {
+  max-width: 22em;
+}
+.chaos-scenarios .state.waiting {
+  color: var(--accent-text);
+}
+.market-strip {
+  display: flex;
+  align-items: stretch;
+  gap: 1.5em;
+  padding: 0.35em var(--pad);
+  border-bottom: var(--frame);
+  font-variant-numeric: tabular-nums;
+}
+:root[data-theme='terminal'] .market-strip {
+  margin: 0 var(--gap);
+  border: var(--frame);
+  background: var(--surface);
+}
+.market-strip .tickers {
+  display: flex;
+  gap: 1.4em;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  align-items: baseline;
+}
+.market-strip .tickers li {
+  display: flex;
+  gap: 0.45em;
+  align-items: baseline;
+  white-space: nowrap;
+}
+.market-strip .tickers b {
+  font-family: var(--font-label);
+  letter-spacing: var(--label-tracking);
+}
+.market-strip .num {
+  font-family: var(--font-num);
+  text-align: right;
+}
+.market-strip .up {
+  color: var(--up);
+}
+.market-strip .down {
+  color: var(--down);
+}
+.market-strip .vitals {
+  display: flex;
+  gap: 1.4em;
+  margin: 0 0 0 auto;
+  padding-left: 1.4em;
+  border-left: var(--frame);
+  align-items: baseline;
+}
+.market-strip .vitals div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.market-strip .vitals dt {
+  font-family: var(--font-label);
+  font-size: 0.66em;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.market-strip .vitals dd {
+  margin: 0;
+  font-size: 1.25em;
+  font-weight: 600;
+}
+/* Stale (no vitals for 15 s): every number grey, and the note says since when. */
+.market-strip .vitals.stale dd,
+.market-strip .vitals.stale dd.down {
+  color: var(--text-3);
+  font-weight: 400;
+}
+.market-strip .vitals .stale-note {
+  align-self: center;
+  font-family: var(--font-label);
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.control-main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: var(--gap);
+}
+:root[data-theme='terminal'] .control-main {
+  margin: 0 var(--gap) var(--gap);
+}
+:root[data-theme='terminal'] .control-main .chaos-scenarios,
+:root[data-theme='terminal'] .control-main .chaos-timeline {
+  margin: 0;
+}
+.control-left {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+.control-feed {
+  min-height: 0;
+  overflow: hidden;
+}
+.agent-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em 1.2em;
+  padding: 0.35em var(--pad);
+  border-bottom: var(--rule);
+  font-family: var(--font-label);
+  font-size: 0.82em;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.agent-line b {
+  font-family: var(--font-num);
+  color: var(--text);
+  letter-spacing: 0;
+}
+.agent-line .up {
+  color: var(--up);
+}
+.agent-line .down {
+  color: var(--down);
+}
+.agent-line .waiting {
+  color: var(--accent-text);
+}
+.chaos-button.small {
+  min-height: 36px;
+  min-width: 0;
+  padding: 0.2em 0.8em;
+  font-size: 0.85em;
+}
+.feed,
+.feed .steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.feed {
+  overflow: hidden;
+  padding: 0 var(--pad);
+}
+.feed-empty {
+  padding: 0.6em var(--pad);
+  color: var(--text-3);
+}
+.feed-item {
+  padding: 0.45em 0;
+  border-bottom: var(--rule);
+}
+.feed-item header {
+  display: flex;
+  gap: 0.8em;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.feed-item header b {
+  font-family: var(--title-font);
+  font-weight: var(--title-weight);
+}
+.feed-item header .service {
+  font-weight: 600;
+}
+.feed-item header .alert {
+  color: var(--text-3);
+  font-family: var(--font-label);
+  font-size: 0.8em;
+  letter-spacing: var(--label-tracking);
+}
+.feed-item header .outcome {
+  margin-left: auto;
+  font-family: var(--font-label);
+  font-size: 0.85em;
+  font-weight: 700;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+}
+.feed .num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.feed .steps {
+  margin-top: 0.2em;
+}
+.feed .step {
+  display: grid;
+  grid-template-columns: 5.2em 7.6em minmax(0, 1fr);
+  gap: 0.6em;
+  padding: 0.08em 0;
+  line-height: 1.35;
+}
+.feed .step .kind {
+  font-family: var(--font-label);
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  padding-top: 0.15em;
+}
+.feed .step.quiet .kind,
+.feed .step.quiet .message {
+  color: var(--text-2);
+}
+.feed .bad,
+.feed .step.bad .kind {
+  color: var(--down);
+}
+.feed .good,
+.feed .step.good .kind {
+  color: var(--up);
+}
+.feed .act,
+.feed .step.act .kind,
+.feed .warn,
+.feed .step.warn .kind {
+  color: var(--accent-text);
+}
+.feed-item.closed .steps {
+  opacity: 0.8;
+}
+.feed-item.reset header b {
+  color: var(--accent-text);
+}
+.feed-item.reset p {
+  margin: 0.15em 0 0 6em;
+  color: var(--text-2);
+}
+.feed .decide {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  margin-top: 0.4em;
+  padding: 0.4em 0.6em;
+  border: 2px solid var(--accent);
+}
+.feed .decide span {
+  margin-right: auto;
+}
+/* The dashboard's status-bar line for the open incident. */
+.statusbar .incident {
+  color: var(--down);
+  max-width: 50em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-ui);
+  font-weight: 600;
+}

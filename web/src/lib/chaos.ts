@@ -82,3 +82,37 @@ export function stateLine(e: Experiment | undefined, now: number): string {
   const recovered = e.time_to_recover_seconds !== null ? ` in ${e.time_to_recover_seconds} s` : ''
   return `${OUTCOMES[e.status]}${recovered}`
 }
+
+/** The agent's budget as the panel needs it: Q-20's numbers and how long ago they were read. */
+export interface AgentBudget {
+  actions_left_this_hour: number
+  cooldown_seconds_by_service: Record<string, number>
+  read_ms_ago: number
+}
+
+/**
+ * A scenario's state with the agent's guardrails in view (owner, 2026-11-27): while the service the
+ * agent would fix is in its 5-minute cooldown, or the hourly budget is used up, the agent would
+ * refuse to act, so the panel says the scenario is waiting and for how long. A scenario the agent
+ * answers by doing nothing (the database decline) never waits.
+ */
+export function readinessLine(
+  s: Scenario,
+  e: Experiment | undefined,
+  budget: AgentBudget | null,
+  now: number,
+): { text: string; waiting: boolean } {
+  const base = stateLine(e, now)
+  if (e?.status === 'RUNNING' || s.expected_fix === 'do_nothing' || !budget)
+    return { text: base, waiting: false }
+  const left =
+    (budget.cooldown_seconds_by_service[s.target_service] ?? 0) - budget.read_ms_ago / 1000
+  const wait =
+    left >= 1
+      ? `agent cooldown ${countdown(left)}`
+      : budget.actions_left_this_hour <= 0
+        ? "the agent's hourly budget is used up"
+        : null
+  if (!wait) return { text: base, waiting: false }
+  return { text: e ? `${base} · waiting: ${wait}` : `Waiting: ${wait}`, waiting: true }
+}

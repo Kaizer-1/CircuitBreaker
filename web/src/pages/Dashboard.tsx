@@ -9,7 +9,9 @@ import { Leaderboard } from '../components/Leaderboard'
 import { FKeys, PresenterGate, Sections } from '../components/PresenterNav'
 import { QrCode } from '../components/QrCode'
 import { ThemeToggle } from '../components/ThemeToggle'
+import { useIncidentFeed } from '../incidents/hooks'
 import { joinUrl, joinUrlWarning } from '../lib/config'
+import { statusLine } from '../lib/incidents'
 import {
   arrow,
   clock,
@@ -46,6 +48,8 @@ function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
   >
   const now = useNow()
   const health = useHealth(token, onExpired)
+  const [feed] = useIncidentFeed(token) // the open incident, one line in the status bar
+  const incident = statusLine(feed)
   const tape = useRef<HTMLElement>(null)
   // Projector safety: the presenter can take the leaderboard off the screen (remembered here).
   const [boardShown, setBoardShown] = useState(loadLeaderboardShown)
@@ -276,6 +280,11 @@ function Board({ token, onExpired }: { token: string; onExpired: () => void }) {
 
       <footer className="statusbar">
         <span className={health === 'all systems healthy' ? 'up' : 'down'}>● {health}</span>
+        {incident && (
+          <span className="incident" data-testid="incident-line">
+            ● {incident}
+          </span>
+        )}
         <span>
           Streams <b>{live}/5</b> {state !== 'live' && '· reconnecting'}
         </span>
