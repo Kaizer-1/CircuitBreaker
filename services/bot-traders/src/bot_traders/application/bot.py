@@ -310,6 +310,12 @@ class Bot:
         bare_since = self._bare.pop((order.ticker, order.side), None)
         if order.limit_price_paise is not None and bare_since is not None:
             self._on_timing("quote_gap", self.strategy_name, self._clock() - bare_since)
+        # A maker's bid that closed before its answer came was eaten at once: under load the
+        # fill overtakes the answer (staging, 2026-11-27), and the bot never listed the bid.
+        maker_bid = order.side == "BUY" and isinstance(self.plan_.strategy, MarketMaker)
+        if maker_bid and order.limit_price_paise is not None and placed["order_id"] in self._closed:
+            flow = self._flow.setdefault(order.ticker, OneSidedFlow())
+            flow.bid_filled_away(self._clock(), lived=0.0)
         if order.limit_price_paise is not None and placed["order_id"] not in self._closed:
             self.open_orders[placed["order_id"]] = OpenOrder(
                 placed["order_id"],

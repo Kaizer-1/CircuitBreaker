@@ -92,9 +92,9 @@ def test_within_30_s_of_a_panic_every_ticker_has_a_bid_and_an_ask_and_keeps_them
 def test_market_makers_keep_most_of_their_cash_through_a_panic(panic: PanicRun) -> None:
     """The root cause on staging: they spent it all buying the panic's shares (1% left), then
     could post no bid. They pull a bid that one-sided selling keeps eating, and keep enough to
-    quote again at once (43% with a 20 s cool-off; the bar leaves room for another seed)."""
+    quote again at once (36% with a 15 s cool-off: about six rounds of bids on every ticker)."""
     start = STARTING_CASH * len(MAKERS)
-    assert panic.makers_cash_at_end > 0.4 * start, (
+    assert panic.makers_cash_at_end > 0.3 * start, (
         f"the market makers have ₹{panic.makers_cash_at_end / 100:,.0f} of"
         f" ₹{start / 100:,.0f} left after the panic"
     )

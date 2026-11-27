@@ -89,12 +89,16 @@ for minutes after the panic sell: every ticker's bid was gone. The panic sells a
 makers' bids, and a maker re-quotes a filled bid at once, so the four makers kept buying until their ₹20,00,000 was spent
 (their own ledger then skipped the bids it could no longer fund); with no cash they could post no bid, so no phone could
 sell. Now if two of a maker's bids on a ticker are filled away within 3 s of being placed, within 10 s, it posts no bid
-there for 20 s (it keeps its ask), then bids once more (`OneSidedFlow`, `domain/strategies.py`): the way a dealer steps
+there for 15 s (it keeps its ask), then bids once more (`OneSidedFlow`, `domain/strategies.py`): the way a dealer steps
 back from a market that only moves against it. In the simulation (`tests/unit/test_panic_market.py`: the 20 bots and the
-real panic at 110 requests/s for 150 s, as long as the agent's fix took on staging) the makers keep about 43% of their
-cash instead of 1%, and every ticker has a bid and an ask within 10 s of the panic's end (at most 25 s: the cool-off and
-one candle); in a normal hour they average 3.91 bids per ticker instead of 3.99. (A 30 s cool-off kept 74% of the cash,
-but on staging one ticker then had no bid for 32 s after the panic: over the owner's 30 s.) `make demo-chaos` and the agent check test it live: within 30 s after a
+real panic at 110 requests/s for 150 s, as long as the agent's fix took on staging) the makers keep about 36% of their
+cash instead of 1%, and every ticker has a bid and an ask at every candle after the panic (at most about 20 s: the
+cool-off and one candle); in a normal hour they average 3.94 bids per ticker instead of 3.99. (A 30 s cool-off kept 74%
+of the cash, but bids then came back after 32 s: over the owner's 30 s.) **Under load the fill overtakes the answer**
+(staging, 2026-11-27): order-service answered a placement in about 2 s while a panic sell ate the new bid within
+milliseconds, so the bid's close reached the bot first; the bot had not listed the bid yet, never saw it eaten, and the
+guard never tripped (the makers' ledger kept skipping bids for lack of cash). A maker's bid that closed before its answer
+came back now counts as eaten at once. `make demo-chaos` and the agent check test it live: within 30 s after a
 panic ends, every ticker has a bid and an ask.
 
 **The strategy interface is the extension point.** A strategy is any object with a `name` and

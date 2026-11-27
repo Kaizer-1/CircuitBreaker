@@ -630,8 +630,8 @@ def test_two_bids_eaten_quickly_pull_the_bid_for_the_cool_off_then_it_comes_back
     flow.bid_filled_away(100.0, lived=1.0)
     assert not flow.bid_pulled(100.0)  # one is chance
     flow.bid_filled_away(104.0, lived=0.5)  # a second within 10 s: one-sided selling
-    assert flow.bid_pulled(104.0) and flow.bid_pulled(123.9)
-    assert not flow.bid_pulled(124.0)  # 20 s later it bids again
+    assert flow.bid_pulled(104.0) and flow.bid_pulled(118.9)
+    assert not flow.bid_pulled(119.0)  # 15 s later it bids again
 
 
 def test_ordinary_fills_and_spread_out_ones_never_pull_the_bid() -> None:
@@ -662,3 +662,30 @@ def test_a_maker_whose_bid_is_pulled_cancels_it_and_keeps_its_ask() -> None:
     intents = MarketMaker(8).decide(view, Random(1))  # noqa: S311 (a seeded test, not secrets)
     assert Cancel("b1", "CALVERA") in intents  # the bid is cancelled
     assert {i.place.side for i in intents if isinstance(i, Requote)} == {"SELL"}
+
+
+async def test_a_bid_eaten_before_its_answer_arrives_still_counts_for_the_guard() -> None:
+    """Staging, 2026-11-27: under the panic, order-service answered in about 2 s while a panic sell
+    ate a fresh bid within milliseconds, so the bid's close reached the bot BEFORE the answer to its
+    placement. The bot never listed the bid, never saw it eaten, and the guard never tripped: the
+    makers spent their cash anyway. A bid that closed before its answer counts as eaten at once."""
+    from bot_traders.application.bot import Bot, MarketState
+
+    exchange = SimExchange(VirtualTime())
+    bot = Bot(roster()[0], exchange, seeded(), clock=exchange.time.clock, sleep=exchange.time.sleep)
+    await bot.login()
+    await bot.refresh()
+    market = MarketState([24550], best_bid=24500, best_ask=24600)
+    real_place = exchange.place
+
+    async def eaten_before_the_answer(session: Session, order: Place) -> dict[str, Any]:
+        placed = await real_place(session, order)
+        if order.side == "BUY":
+            bot.on_stream({"type": "order_closed", "data": {"order_id": placed["order_id"]}})
+        return placed
+
+    exchange.place = eaten_before_the_answer  # type: ignore[method-assign,assignment]
+    for _ in range(2):
+        await bot.execute(Place("CALVERA", "BUY", 5, 24500), market)
+    intents = [intent for _, intent in bot.decide("CALVERA", market)]
+    assert not any(isinstance(i, Requote) and i.place.side == "BUY" for i in intents)
