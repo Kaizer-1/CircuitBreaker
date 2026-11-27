@@ -44,7 +44,10 @@ Your answer:
 - Always respond by calling exactly one tool, never with plain text.
 - The explanation is shown live on a projector: 1 to 4 short sentences in plain English for a \
 non-expert, naming the evidence that decided it (for example "errors began 40 seconds after \
-release 1.4.1 was deployed")."""
+release 1.4.1 was deployed").
+- Say what the evidence shows in everyday words with its numbers, never by the evidence's field \
+names: write "all of the gateway's errors come from order-service", not "passed_on_share 1.0"; \
+"traffic is 6 times normal", not "load_ratio 6.0"."""
 
 
 def user_message(evidence_json: str) -> str:

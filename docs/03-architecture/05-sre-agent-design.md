@@ -369,6 +369,15 @@ fake cluster's series and pods realistic, and closed one gap in the prompt: a ro
 with a new release** (errors, crashes or memory climbing), not only internal errors. The second run was 57 of 57. The
 last two cases came from staging ([§11](#11-measured-on-staging)): each is a situation the agent first got wrong there.
 
+**Plain words (owner, 2026-11-27).** The explanation is read from a projector, so the prompt asks for the evidence in
+everyday words with its numbers, never its field names ("all of those errors come from order-service", not
+"passed_on_share 1.0"). The evaluation checks every explanation for the evidence's snake_case field names (error codes
+such as `INTERNAL_ERROR` are the system's vocabulary, not field names) and fails if one is used; `python -m
+eval.compare OLD NEW` compares two runs case by case and fails if any decision changed. Before and after the prompt
+line, same 23 cases: decisions identical in every case (63 of 63 right both times, rules 23 of 23); explanations
+quoting a field name 1 → 0 of 63; numbers cited per explanation 4.9 → 5.4 (more concrete, not vaguer), words 54 → 60;
+cost per decision $0.0091 → $0.0093.
+
 What it does not show: these are 23 situations we designed, with one model. Staging is the end-to-end test.
 
 ## 11. Measured on staging

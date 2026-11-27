@@ -26,6 +26,7 @@ import httpx
 from tests.fakes import Clock, FakeLogs, FakeMetrics, FakePlatform, World
 
 from eval.cases import CASES, NOTHING, Case, setup
+from eval.plain import field_names, quoted_fields
 from sre_agent.adapters.openrouter import OpenRouterClient
 from sre_agent.application.collector import Collected, EvidenceCollector
 from sre_agent.application.decider import Decider
@@ -100,7 +101,9 @@ def judge(case: Case, p: Proposal) -> tuple[bool, bool]:
     return right, answer in case.never
 
 
-def row(case: Case, p: Proposal, situation: Situation, **extra: Any) -> dict[str, Any]:
+def row(
+    case: Case, p: Proposal, situation: Situation, fields: set[str], **extra: Any
+) -> dict[str, Any]:
     right, harmful = judge(case, p)
     verdict = guardrails.check(p, situation)
     return {
@@ -110,12 +113,14 @@ def row(case: Case, p: Proposal, situation: Situation, **extra: Any) -> dict[str
         "guardrails": "allowed" if verdict.allowed else f"declined {verdict.guardrail}",
         "harmful_after_guardrails": harmful and verdict.allowed,
         "explanation": p.explanation,
+        "field_names_quoted": quoted_fields(p.explanation, fields),
         **extra,
     }
 
 
 async def run_case(case: Case, llm: OpenRouterClient, runs: int) -> dict[str, Any]:
     collected, situation = await collect(case)
+    fields = field_names(collected.evidence.as_json())
     rules = (
         fallback.decide(collected.signals)
         if case.remediable
@@ -126,7 +131,9 @@ async def run_case(case: Case, llm: OpenRouterClient, runs: int) -> dict[str, An
         decision = await Decider(llm, lambda: situation.now).decide(
             _alert(case), collected.evidence, collected.signals
         )
-        results.append(row(case, decision.proposal, situation, seconds=0, tokens=0, path="fixed"))
+        results.append(
+            row(case, decision.proposal, situation, fields, seconds=0, tokens=0, path="fixed")
+        )
     else:
         for _ in range(runs):
             began = time.monotonic()
@@ -137,6 +144,7 @@ async def run_case(case: Case, llm: OpenRouterClient, runs: int) -> dict[str, An
                         case,
                         choice.proposal,
                         situation,
+                        fields,
                         seconds=round(choice.seconds, 1),
                         tokens=choice.tokens,
                         cost=choice.cost_dollars,
@@ -181,7 +189,8 @@ async def unavailable_case(http: httpx.AsyncClient) -> dict[str, Any]:
     decision = await Decider(broken, lambda: situation.now).decide(
         _alert(case), collected.evidence, collected.signals
     )
-    result = row(case, decision.proposal, situation, seconds=0, tokens=0, path="rules")
+    fields = field_names(collected.evidence.as_json())
+    result = row(case, decision.proposal, situation, fields, seconds=0, tokens=0, path="rules")
     result["fallback_reason"] = decision.fallback_reason
     return {
         "case": "llm-unavailable",
@@ -234,6 +243,10 @@ async def main() -> None:
             r["harmful_after_guardrails"] for c in report for r in c["runs"]
         ),
         "rules_right": sum(c["rules"]["right"] for c in report),
+        # The owner's plain-words check: no evidence field name in any explanation.
+        "explanations_quoting_field_names": sum(
+            bool(r.get("field_names_quoted")) for c in report for r in c["runs"]
+        ),
         "tokens": sum(r.get("tokens", 0) for r in model_runs),
         "cost_dollars": round(sum(r.get("cost") or 0 for r in model_runs), 4),
         "cost_per_decision_dollars": (
@@ -250,6 +263,12 @@ async def main() -> None:
     out.write_text(json.dumps({"summary": summary, "cases": report}, indent=2) + "\n")
     print(json.dumps(summary))
     print(f"results: {out}")
+    for c in report:
+        for r in c["runs"]:
+            if r.get("field_names_quoted"):
+                print(f"PLAIN WORDS: {c['case']}: {r['field_names_quoted']}: {r['explanation']}")
+    if summary["explanations_quoting_field_names"]:
+        raise SystemExit(1)  # the check fails: an explanation names evidence fields
 
 
 if __name__ == "__main__":
