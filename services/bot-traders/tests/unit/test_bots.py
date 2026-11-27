@@ -689,3 +689,44 @@ async def test_a_bid_eaten_before_its_answer_arrives_still_counts_for_the_guard(
         await bot.execute(Place("CALVERA", "BUY", 5, 24500), market)
     intents = [intent for _, intent in bot.decide("CALVERA", market)]
     assert not any(isinstance(i, Requote) and i.place.side == "BUY" for i in intents)
+
+
+def test_after_the_cool_off_a_maker_probes_with_one_share_and_backs_off_if_it_is_eaten() -> None:
+    """Probe bids (owner, 2026-11-27): staging's makers lost their cash over many panics, a full
+    bid at a time; a 1-share probe costs a share and tells whether the selling is over."""
+    from bot_traders.domain.strategies import OneSidedFlow
+
+    flow = OneSidedFlow()
+    flow.bid_filled_away(100.0, lived=1.0)
+    flow.bid_filled_away(102.0, lived=1.0)  # tripped: no bid until 117
+    assert flow.bid_pulled(110.0) and not flow.bid_probing(110.0)
+    assert flow.bid_probing(117.0) and flow.bid_probing(131.9)  # 1-share probes for 15 s
+    assert not flow.bid_probing(132.0) and not flow.bid_pulled(132.0)  # then full bids again
+    flow.bid_filled_away(120.0, lived=0.5)  # a probe eaten at once: the selling goes on
+    assert flow.bid_pulled(120.0) and flow.bid_pulled(134.9) and flow.bid_probing(135.0)
+
+
+def test_a_probing_maker_bids_one_share_and_a_full_bid_replaces_the_probe_after() -> None:
+    from collections import deque
+    from random import Random
+
+    from bot_traders.domain.market import OpenOrder, Requote
+    from bot_traders.domain.strategies import MarketMaker, TickerView
+
+    def bids(view: TickerView) -> list[Requote]:
+        intents = MarketMaker(8).decide(view, Random(1))  # noqa: S311 (a seeded test)
+        return [i for i in intents if isinstance(i, Requote) and i.place.side == "BUY"]
+
+    view = TickerView("CALVERA", deque([24_550]), 24_500, 24_600, 1, shares_held=1_000)
+    view.bid_probing = True
+    (first,) = bids(view)
+    assert first.place.quantity == 1
+    price = first.place.limit_price_paise
+    assert price is not None
+    probe = OpenOrder("p1", "CALVERA", "BUY", price, 1, 1)  # resting at exactly that price
+    still = TickerView("CALVERA", deque([24_550]), 24_500, 24_600, 2, [probe], shares_held=1_000)
+    still.bid_probing = True
+    assert bids(still) == []  # while probing, the probe stays
+    calm = TickerView("CALVERA", deque([24_550]), 24_500, 24_600, 2, [probe], shares_held=1_000)
+    (full,) = bids(calm)
+    assert full.place.quantity > 1 and full.cancels[0].order_id == "p1"  # it makes way
