@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: chaos-service API
-  version: 1.1.0
+  version: 1.1.1
   summary: Run controlled chaos experiments.
   description: |
     Owned by the **Release & Reliability Team** (Mohammad Oweis). Admin only (api-gateway enforces the `admin`
@@ -55,7 +55,7 @@ paths:
                     target_service: market-data-service
                     expected_fix: restart_deployment
                     default_duration_seconds: 600
-                    default_parameters: {rate_mb_per_minute: 80}
+                    default_parameters: {rate_mb_per_minute: 100}
                   - scenario: TRAFFIC_SPIKE
                     name: Panic sell
                     description: The bots panic and dump shares at market, 110 requests per second at order-service through the gateway, more than 2 replicas can serve.
@@ -380,7 +380,7 @@ components:
           type: integer
           minimum: 1
           maximum: 200
-          description: MEMORY_LEAK only (default 80).
+          description: MEMORY_LEAK only (default 100 since 1.1.1; it was 80).
         requests_per_second:
           type: integer
           minimum: 50

@@ -219,7 +219,8 @@ Phase 7 (the SRE agent): incidents carry the approved timing fields (`fired_at`,
 Q-20 the remaining hourly budget and cooldowns (sre-agent spec 1.1.0); a backlog alert right after a working fix is
 attached to that incident as an `AFTER_EFFECT` timeline entry instead of opening a new one, the gateway's alert that only
 passes an upstream's errors on is a `SYMPTOM` entry on the upstream's incident, and the feed (Q-19) sends `vitals` for
-the control room (sre-agent spec 1.2.0).
+the control room (sre-agent spec 1.2.0). The memory leak's default rate became 100 MB a minute, the live demo's
+(chaos-service spec 1.1.1; [chaos scenarios §3.2](../docs/03-architecture/06-chaos-scenarios.md)).
 
 ## Error code catalog
 

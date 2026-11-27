@@ -91,8 +91,9 @@ in logs. → rollback."
 out of memory, and trading continues unaffected throughout.
 
 **Injection:** `chaos-service` calls `POST /internal/v1/faults` on market-data-service with
-`{"fault": "MEMORY_LEAK", "rate_mb_per_minute": 80}` (a parameter; 80 is the default since Phase 7: at the first
-design's 40 MB a minute the pod, idling at about 60 MiB, needed about 8 minutes to reach the alert's 70% line). The
+`{"fault": "MEMORY_LEAK", "rate_mb_per_minute": 100}` (a parameter; 100 is the default since 2026-11-27, the live
+demo's rate, below; it was 80 from Phase 7, and at the first design's 40 MB a minute the pod, idling at about 60 MiB,
+needed about 8 minutes to reach the alert's 70% line). The
 service keeps another `rate / 60` MiB every second in a list nobody reads (a realistic "cache that never evicts"
 bug), in anonymous memory with every page written, so the container's working set climbs in a straight line. It
 grows on a timer, not per WebSocket broadcast as first designed, so the rate does not depend on how many charts are
@@ -106,10 +107,12 @@ it for good, because the leak lives only in the process (tested: memory stays fl
 | 120 MB/min | 175–191 s (32 s) | about 45 s | 2 of 2 |
 | 160 MB/min | 147–155 s (30–32 s) | about 26 s | 2 of 2 |
 
-After the restart the alert cleared within 8–18 s and memory stayed flat for 2 minutes in every run. The agent needs
-about 55 s once the alert fires (detect within 10 s, act within 30 s, then about 15 s of rollout), so **80 MB a minute
-stays the default**: a faster leak makes the demo shorter but could be killed by Kubernetes before the agent's restart.
-The wait is used: the demo runs the bad deploy and the panic sell while the leak grows. The internal fault endpoint exists **only** when the service is started with
+After the restart the alert cleared within 8–18 s and memory stayed flat for 2 minutes in every run. A faster leak
+makes the demo shorter but leaves less room before Kubernetes would kill the pod for its memory, and then Kubernetes,
+not the agent, would fix it. **With the agent acting** (Phase 7c, staging): at 120 MB a minute market-data reached
+**90.9%** of its limit before the agent's restart replaced it (9% left), at 80 MB a minute 84.3%. The owner's line is
+about 10%, so the default (the Chaos Panel's button, the live demo) is **100 MB a minute**, and `make demo-chaos
+mode=full` keeps 80. The internal fault endpoint exists **only** when the service is started with
 `CHAOS_HOOKS_ENABLED=true` (staging and the demo prod; disabled in any real deployment) and is reachable only from
 chaos-service (network policy).
 

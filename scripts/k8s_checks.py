@@ -2654,7 +2654,10 @@ DEMO_STEPS: dict[str, list[tuple[str, str]]] = {
         ("db", "after panic"),
     ],
 }
-DEMO_LEAK_RATE = {"short": 120, "full": 80}  # MB/min: 120 is the fastest rate measured safe (7a)
+# MB/min. Short: 100, not 120: at 120 market-data reached 90.9% of its memory limit on staging
+# before the agent's restart replaced it (9% headroom; owner's line: ~10%, or Kubernetes' OOM kill
+# would fix it instead of the agent). Full: the 7a calibration's 80 (peak 84%).
+DEMO_LEAK_RATE = {"short": 100, "full": 80}
 TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
 TWO_SIDED_WITHIN = 30  # s after a panic ends: every ticker has a bid and an ask (owner, 2026-11-27)
 
