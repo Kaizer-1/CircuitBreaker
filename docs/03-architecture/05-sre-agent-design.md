@@ -271,6 +271,14 @@ The feed (`WS /v1/ws/incidents`, Q-19) streams every step as a short human-reada
 11:07:05  🟢 INC-0007 resolved in 94 s. Errors back to 0.2%.
 ```
 
+**Vitals for the control room** (owner, 2026-11-27). Every 5 s the feed also carries a `vitals` message:
+order-service's request rate, error ratio, p95 latency and replicas, and how full market-data-service's memory is,
+read from Prometheus with the evidence collector's own queries, so the audience's market strip shows what the agent
+sees. They are for screens only: a separate publisher (`application/vitals.py`) writes them to the feed, and nothing
+in the agent reads the feed, so its own vitals can never come back to it as evidence (a test runs the same bad
+deploy with and without them and compares what the model is shown). When Prometheus does not answer, no vitals are
+sent: the control room greys the strip out after 15 s ("stale since …") instead of freezing on old numbers.
+
 ## 8. Metrics the agent exposes
 
 | Metric | Meaning |

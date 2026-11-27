@@ -174,6 +174,7 @@ on), `1011` market data is starting or the event store stopped answering.
 | server → client | `incident_update` | `{ incident_id, entry: TimelineEntry }` — every diagnosis, proposal, decision, action |
 | server → client | `approval_required` | `{ incident_id, remediation: Remediation }` — only when approval mode is on |
 | server → client | `incident_resolved` | `IncidentSummary` with `resolution` and `time_to_recover_seconds` |
+| server → client | `vitals` | Every 5 s, and right after the snapshot while the last one is under 15 s old (since sre-agent 1.2.0): `{ at, service: "order-service", requests_per_second, error_ratio, p95_seconds, replicas: { desired, ready }, market_data_memory_of_limit }`, each `null` when Prometheus has no value. The numbers the agent sees, for the control room's market strip; none when Prometheus does not answer, so a screen greys the strip out after 15 s without one. Display only: never part of an incident's evidence |
 
 ```json
 {"type": "incident_update", "data": {"incident_id": "INC-0007", "entry": {"at": "2026-11-20T11:06:01.398Z", "kind": "EXECUTED", "message": "Rolled back order-service to revision 7. 2/2 pods ready."}}}
@@ -216,7 +217,8 @@ portfolio-service gained the "database degraded" chaos hook A-21/A-22 (portfolio
 first spec, the panic-sell hook A-23/A-24 (bot-traders spec 1.0.0).
 Phase 7 (the SRE agent): incidents carry the approved timing fields (`fired_at`, `mitigated_at`, `recovered_at`) and
 Q-20 the remaining hourly budget and cooldowns (sre-agent spec 1.1.0); a backlog alert right after a working fix is
-attached to that incident as an `AFTER_EFFECT` timeline entry instead of opening a new one (sre-agent spec 1.2.0).
+attached to that incident as an `AFTER_EFFECT` timeline entry instead of opening a new one, and the feed (Q-19) sends
+`vitals` for the control room (sre-agent spec 1.2.0).
 
 ## Error code catalog
 

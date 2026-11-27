@@ -12,7 +12,9 @@ info:
     `RemediationExecuted` and `IncidentResolved` to `incidents.v1`.
 
     This HTTP API lets people read incidents, approve or decline proposed fixes and change settings. The live
-    incident feed is the WebSocket `/v1/ws/incidents` (Q-19), documented in api/README.md.
+    incident feed is the WebSocket `/v1/ws/incidents` (Q-19), documented in api/README.md; since 1.2.0 it also
+    sends `vitals` (order-service's rate, errors, p95 and replicas, market-data's memory) for the control room,
+    display only, never evidence.
     There is deliberately **no** endpoint to change the model or the tool allowlist.
 servers:
   - url: http://localhost:8006

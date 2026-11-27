@@ -258,6 +258,10 @@ async def incident_feed(websocket: WebSocket) -> None:
             i.to_summary() for i in resolved[:RESOLVED_IN_SNAPSHOT]
         ]
         await websocket.send_json({"type": "snapshot", "data": snapshot})
+        vitals = getattr(websocket.app.state, "vitals", None)
+        current = vitals.current() if vitals is not None else None
+        if current is not None:  # a fresh screen need not wait for the next poll
+            await websocket.send_json(current)
         receiver = asyncio.create_task(_drain(websocket))
         try:
             while not receiver.done():
