@@ -257,19 +257,25 @@ keyspace.
 
 ## 7. Outputs: the incident feed
 
-The feed (`WS /v1/ws/incidents`, Q-19) streams every step as a short human-readable message:
+The feed (`WS /v1/ws/incidents`, Q-19) streams every step as a short human-readable message, each with its kind
+(the control room shows the kind as a label and a colour, no icons):
 
 ```text
-11:05:31  🔴 INC-0007 opened — order-service errors at 38% (normally under 1%).
-11:05:44  🧠 Diagnosis — Errors jumped about 40 seconds after release 1.4.1 (revision 8) was deployed.
-             Memory and traffic are normal and the logs show a new exception. Most likely a bad release.
-11:05:44  🛠️ Proposed: roll back order-service to revision 7.  [Approve] [Decline]
-11:05:58  ✅ Approved by presenter.
-11:06:01  ⏪ Rolled back order-service to revision 7. 2/2 pods ready.
-11:06:02  🔀 Git check: revision 8 did not come from Git (Argo CD showed live drift), so Git already matches.
-             No revert PR needed.
-11:07:05  🟢 INC-0007 resolved in 94 s. Errors back to 0.2%.
+11:05:31  OPENED        INC-0007 order-service errors at 38% (normally under 1%).
+11:05:34  DIAGNOSIS     Errors jumped right after release 1.4.1 (revision 8) started; it has never run 15 minutes
+                        in a row. Traffic and memory are normal. Rolling back to release 0.5.0 is the smallest fix.
+11:05:34  PROPOSED      Proposed: roll back order-service to revision 7.   [Approve] [Decline]  (approval mode)
+11:05:41  APPROVED      Approved by presenter.
+11:05:43  EXECUTED      Rolled order-service back from revision 8 to revision 7; the rollout has started.
+11:05:43  EXECUTED      Git: no revert needed. The Application was OutOfSync before the rollback: the bad revision
+                        was a change made outside Git, and the rollback brought the cluster back to what Git says.
+11:07:05  RESOLVED      Recovered: OrderServiceHighErrorRate cleared 34 s after the incident opened and stayed
+                        clear for 60 s.
 ```
+
+A rule-based decision says so at the start of its diagnosis ("Rule-based (LLM unavailable: …)"); an after-effect
+of a fix is an `AFTER_EFFECT` line on the incident it follows ("ConsumerLagHigh (3,000 now) after the scale: an
+expected after-effect, draining; no action").
 
 **Vitals for the control room** (owner, 2026-11-27). Every 5 s the feed also carries a `vitals` message:
 order-service's request rate, error ratio, p95 latency and replicas, and how full market-data-service's memory is,

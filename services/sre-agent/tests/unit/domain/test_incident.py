@@ -39,6 +39,40 @@ def test_approval_then_execution_then_recovery() -> None:
         "OPENED", "PROPOSED", "APPROVED", "EXECUTED", "RESOLVED"]  # fmt: skip
 
 
+@pytest.mark.parametrize(
+    ("git", "line"),
+    [
+        (
+            {
+                "status": "PR_OPENED",
+                "pull_request_url": "https://github.com/x/y/pull/25",
+                "reason": "From Git (894b0c42af73): revert pull request opened.",
+            },
+            "Git: From Git (894b0c42af73): revert pull request opened."
+            " https://github.com/x/y/pull/25 (a person merges it).",
+        ),
+        (
+            {"status": "NOT_NEEDED", "pull_request_url": None, "reason": "It was OutOfSync."},
+            "Git: no revert needed. It was OutOfSync.",
+        ),
+        (
+            {"status": "FAILED", "pull_request_url": None, "reason": "Manual git revert needed."},
+            "Git: Manual git revert needed.",
+        ),
+    ],
+)
+def test_a_rollback_says_on_the_feed_what_its_git_step_did(git: dict[str, str], line: str) -> None:
+    """The feed shows only the timeline: the Git step's result must be on it (SRE design 7)."""
+    i = opened()
+    p = Proposal(Tool.ROLLBACK.value, "order-service", None, "Bad release.", "llm:m")
+    r, _ = i.propose(p, p.explanation, {"to_revision": 7}, False, T0)
+    i.executed(r.remediation_id, True, "Rolled back.", T0, git_reconciliation=git)
+    assert [(e.kind.value, e.message) for e in i.timeline[-2:]] == [
+        ("EXECUTED", "Rolled back."),
+        ("EXECUTED", line),
+    ]
+
+
 def test_do_nothing_is_a_decision_not_an_action_and_escalation_has_no_recovery_time() -> None:
     i = opened()
     p = Proposal(Tool.NOTHING.value, None, None, "Cause elsewhere.", "fixed rule")

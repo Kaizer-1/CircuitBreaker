@@ -59,6 +59,16 @@ def iso(at: datetime | None) -> str | None:
     return at.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def git_line(git: dict[str, Any]) -> str:
+    """The rollback's Git step (ADR-0016) as one feed line: the screen shows only the timeline."""
+    reason = str(git.get("reason") or "").strip()
+    if git.get("status") == "PR_OPENED":
+        return f"Git: {reason} {git.get('pull_request_url')} (a person merges it)."
+    if git.get("status") == "NOT_NEEDED":
+        return f"Git: no revert needed. {reason}"
+    return f"Git: {reason}"
+
+
 def parse_time(value: str | None) -> datetime | None:
     return None if value is None else datetime.fromisoformat(value.replace("Z", "+00:00"))
 
@@ -378,6 +388,8 @@ class Incident:
         if succeeded and r.action != Tool.NOTHING and self.mitigated_at is None:
             self.mitigated_at = at
         self.note(Kind.EXECUTED, details, at)
+        if git_reconciliation and r.action == Tool.ROLLBACK:
+            self.note(Kind.EXECUTED, git_line(git_reconciliation), at)
         data = {
             "incident_id": self.incident_id,
             "remediation_id": remediation_id,
