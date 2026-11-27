@@ -210,6 +210,12 @@ does not trust; `make test-phone url=http://<LAN IP>` uses the real address. Com
 secure-only API (`vi.stubGlobal`) to show the page works without it. And an error is never swallowed: log it with
 `console.error` and tell the person the real reason in plain words.
 
+**A WebSocket a service serves is tested on real uvicorn too** (added 2026-11-27). Starlette's `TestClient` speaks
+WebSocket by itself, so API tests pass even when the image cannot serve one: uvicorn accepts an upgrade only with a
+WebSocket library installed (`websockets`, a **runtime** dependency, not a dev one), and without it answers 404. The
+SRE agent's live feed (Q-19) passed every test in 7b and never connected on Kubernetes; market-data met the same in
+Phase 3. A test starts the app on real uvicorn and sends a raw upgrade request: it must get `101`.
+
 ## 7. Standard operational endpoints
 
 Every service exposes these on port 8000 (not in the OpenAPI specs, not routed by the gateway). The readiness body is
