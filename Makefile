@@ -21,7 +21,7 @@ TRIVY_IMAGE := aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a
 .PHONY: help doctor setup infra up down reset demo-reset bots bots-stop mock ps logs build lint fmt test test-integration test-deep test-e2e demo-trade status \
         k8s-up k8s-down k8s-status k8s-set-url k8s-images k8s-reset k8s-bots k8s-bots-stop k8s-demo-trade k8s-passcode k8s-test-phone \
         test-alerts test-k8s k8s-check k8s-lint test-phone \
-        platform platform-plan sync argocd seal sealing-cert sealing-key-backup ghcr-token openrouter-key github-app github-rules-check agent-eval agent-decide k8s-prepull scan promote
+        platform platform-plan sync argocd seal sealing-cert sealing-key-backup ghcr-token openrouter-key github-app github-rules-check agent-eval agent-decide demo-chaos k8s-prepull scan promote
 
 help: ## List the available targets
 	@echo "CircuitBreaker: make <target> [s=<service>]"
@@ -246,6 +246,9 @@ test-k8s: ## Kubernetes smoke test: k8s-up, every pod ready, demo trade, bots 2 
 
 k8s-check: ## Kubernetes checks: make k8s-check c=netpol|kill|scale|alerts|url|chaos|agent [args="..."] (they change the system on purpose)
 	@python3 scripts/k8s_checks.py --env $(if $(env),$(env),prod) $(c) $(args)
+
+demo-chaos: ## The demo's chaos choreography, the SRE agent fixing each: make demo-chaos [mode=short|full] [env=prod] [label=...]
+	@python3 scripts/k8s_checks.py --env $(if $(env),$(env),prod) demo --mode $(if $(mode),$(mode),short) $(if $(label),--label $(label),)
 
 agent-decide: ## SRE agent: approve or decline its waiting proposal, as the presenter: make agent-decide d=approve|decline [env=staging] [comment="..."]
 	@python3 scripts/k8s_checks.py --env $(if $(env),$(env),staging) decide $(d) $(if $(comment),--comment "$(comment)",)
