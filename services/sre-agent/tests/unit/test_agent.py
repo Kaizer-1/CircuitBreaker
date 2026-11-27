@@ -653,3 +653,38 @@ async def test_a_declined_incident_keeps_its_symptoms_while_its_cause_lasts(worl
     await keep_ticking(rig, 150)  # the breaker's alert cleared at 120 s; the gateway goes on
     gateway = [i for i in rig.store.incidents.values() if i.service == "api-gateway"]
     assert len(gateway) == 1
+
+
+async def test_a_symptom_belongs_to_the_active_root_not_a_just_recovered_one(world: World) -> None:
+    """Staging, 2026-11-27: the panic sell's incident had recovered (its 10-minute window still
+    open) when the database decline was escalated; the gateway's errors that followed were
+    attached to the recovered panic incident and handed over a minute later, as a second
+    incident. The active root (the declined one whose alert still fires) comes first."""
+    bad_deploy(world)
+    start = world.clock.now()
+
+    def since(w: World) -> float:
+        return (w.clock.now() - start).total_seconds()
+
+    rig = Rig(world)
+    (first,) = await rig.run()  # the rollback, recovered: a recovery window on order-service
+    assert first.resolution and first.resolution.value == "RECOVERED"
+    later = since(world)
+    world.rules.append(
+        Rule(
+            "OrderServiceCircuitOpen",
+            "order-service",
+            remediable=False,
+            firing=lambda w: later + 10 <= since(w) < later + 400,
+            value=lambda w: 1.0,
+        )
+    )
+    # The gateway fires after the decline was escalated (on staging it was escalated at once).
+    gateway_passing_on(world, firing=lambda w: later + 60 <= since(w) < later + 400)
+    await keep_ticking(rig, 250)
+    incidents = sorted(rig.store.incidents.values(), key=lambda i: i.incident_id)
+    assert [i.service for i in incidents] == ["order-service", "order-service"]  # no gateway one
+    decline = incidents[1]
+    assert decline.resolution and decline.resolution.value == "ESCALATED"
+    assert any(e.kind.value == "SYMPTOM" for e in decline.timeline)
+    assert not any(e.kind.value == "SYMPTOM" for e in first.timeline)

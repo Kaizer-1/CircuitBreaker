@@ -166,7 +166,8 @@ class Agent:
         self._recovery: dict[str, tuple[Incident, datetime, str]] = {}  # service -> its window
         self._after_effects: dict[tuple[str, str], AfterEffect] = {}
         self._handed_over: set[tuple[str, str]] = set()
-        self._symptoms: dict[tuple[str, str], Incident] = {}  # (alert, service) -> its root
+        # (alert, service) -> its root incident and the upstream it passes on
+        self._symptoms: dict[tuple[str, str], tuple[Incident, str]] = {}
         self._waiting: dict[tuple[str, str], datetime] = {}  # a symptom waiting for its root
         self._idle_root: dict[tuple[str, str], datetime] = {}  # a symptom's root no longer active
         self._escalated_root: dict[str, Incident] = {}  # by service: its last escalated incident
@@ -300,27 +301,47 @@ class Agent:
             return False
         if share is None or share < PASSED_ON or upstream is None:
             return False  # the gateway's own errors
-        root = self._open.get(upstream)
+        root = self._active_root(upstream)
         window = self._recovery.get(upstream)
         if root is None and window is not None and now < window[1]:
-            root = window[0]
-        escalated = self._escalated_root.get(upstream)
-        if root is None and escalated is not None and self._root_alert_firing(escalated):
-            root = escalated  # declined: its cause is still there, so are its symptoms
+            root = window[0]  # just recovered: an after-effect of it, most likely
         if root is not None:
             self._waiting.pop((alert.name, alert.service), None)
-            self._symptoms[(alert.name, alert.service)] = root
-            root.note(
-                Kind.SYMPTOM,
-                f"{alert.name} on {alert.service}: a symptom of {root.incident_id}."
-                f" {round(100 * share)}% of the gateway's errors are {upstream}'s answers, passed"
-                " on; no action.",
-                now,
-            )
-            await self._emit(root, [])
+            await self._attach_symptom(alert.name, alert.service, root, upstream, share, now)
             return True
         first = self._waiting.setdefault((alert.name, alert.service), now)
         return (now - first).total_seconds() < self._cfg.symptom_wait_seconds
+
+    def _active_root(self, upstream: str) -> Incident | None:
+        """The incident whose cause is there now: an open one, or one the agent declined whose
+        alert still fires (staging, 2026-11-27: an active root comes before a just-recovered
+        one, or the gateway's errors during the database decline went to the panic's incident)."""
+        root = self._open.get(upstream)
+        escalated = self._escalated_root.get(upstream)
+        if root is None and escalated is not None and self._root_alert_firing(escalated):
+            root = escalated
+        return root
+
+    async def _attach_symptom(
+        self,
+        name: str,
+        service: str,
+        root: Incident,
+        upstream: str,
+        share: float | None,
+        now: datetime,
+    ) -> None:
+        self._symptoms[(name, service)] = (root, upstream)
+        passed = f" {round(100 * share)}% of the gateway's errors are" if share is not None else ""
+        root.note(
+            Kind.SYMPTOM,
+            f"{name} on {service}: a symptom of {root.incident_id}.{passed}"
+            f" {upstream}'s answers, passed on; no action."
+            if share is not None
+            else f"{name} on {service}: a symptom of {root.incident_id}; no action.",
+            now,
+        )
+        await self._emit(root, [])
 
     def _root_alert_firing(self, incident: Incident) -> bool:
         return any(
@@ -329,7 +350,7 @@ class Agent:
 
     async def _watch_symptoms(self, alerts: list[Alert], now: datetime) -> None:
         firing = {(a.name, a.service): a for a in alerts}
-        for key, root in list(self._symptoms.items()):
+        for key, (root, upstream) in list(self._symptoms.items()):
             if key not in firing:
                 del self._symptoms[key]
                 self._idle_root.pop(key, None)
@@ -341,6 +362,13 @@ class Agent:
             ):
                 self._idle_root.pop(key, None)
                 continue  # its root is still active
+            newer = self._active_root(upstream)
+            if newer is not None and newer is not root:  # a new cause took over: move it there
+                self._idle_root.pop(key, None)
+                root.note(Kind.SYMPTOM, f"{key[0]} on {key[1]} moved to {newer.incident_id}.", now)
+                await self._emit(root, [])
+                await self._attach_symptom(key[0], key[1], newer, upstream, None, now)
+                continue
             idle = self._idle_root.setdefault(key, now)
             if (now - idle).total_seconds() < self._cfg.symptom_grace_seconds:
                 continue
