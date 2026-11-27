@@ -1,6 +1,6 @@
 """Data minimisation: no trader IDs, nicknames or tokens leave the system; lines are cut."""
 
-from sre_agent.domain.evidence import MAX_LINE, Evidence, scrub
+from sre_agent.domain.evidence import MAX_LINE, Evidence, scrub, times
 
 
 def test_trader_ids_nicknames_and_tokens_are_scrubbed() -> None:
@@ -36,3 +36,16 @@ def test_injected_instructions_stay_data_and_the_summary_reads_the_facts() -> No
     summary = e.summary()
     assert summary.startswith("Errors 38.0%") and "INTERNAL_ERROR 3.1/s" in summary
     assert "Revision 9 (release 1.4.1, new)" in summary and "412 times" in summary
+
+
+def test_the_summary_reads_as_plain_sentences() -> None:
+    """On the projector: "(once)", not "(1 times)"; the error types inside the errors' sentence."""
+    e = Evidence(
+        alert={"name": "OrderServiceCircuitOpen", "service": "order-service"},
+        facts={"error_ratio": 0.266, "errors_per_second_by_type": {"DEPENDENCY_UNAVAILABLE": 29.5}},
+        logs={"top_errors": [{"message": "consumer loop error, retrying in 1 s", "count": 1}]},
+    )
+    summary = e.summary()
+    assert summary.startswith("Errors 26.6% (DEPENDENCY_UNAVAILABLE 29.5/s). ")
+    assert summary.endswith("retrying in 1 s (once).")
+    assert times(2) == "twice" and times(7) == "7 times"

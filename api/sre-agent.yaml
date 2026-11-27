@@ -428,11 +428,14 @@ components:
           $ref: './shared/common.yaml#/components/schemas/Timestamp'
         kind:
           type: string
-          enum: [OPENED, EVIDENCE_COLLECTED, DIAGNOSIS, PROPOSED, APPROVED, DECLINED, EXECUTED, VERIFIED, RESOLVED, ESCALATED, AFTER_EFFECT]
+          enum: [OPENED, EVIDENCE_COLLECTED, DIAGNOSIS, PROPOSED, APPROVED, DECLINED, EXECUTED, VERIFIED, RESOLVED, ESCALATED, AFTER_EFFECT, SYMPTOM]
           description: |
             `AFTER_EFFECT` (since 1.2.0): a backlog alert (`ConsumerLagHigh`) on the same service within 10 minutes
             after this incident's fix worked, attached here instead of opening a new incident: draining, drained,
             or handed to a person when it stops going down or the 10 minutes end.
+            `SYMPTOM` (since 1.2.0): another service's alert this incident causes, attached here instead of opening
+            an incident of its own: the gateway's error alert while most of its errors are this service's answers,
+            passed on ("a symptom of INC-0007 … no action"), and when it clears or outlives this incident.
         message:
           type: string
           description: Plain-English line shown on the incident feed.

@@ -374,28 +374,92 @@ async def test_incidents_left_open_by_a_restart_are_handed_to_a_person(world: Wo
     assert rig.sink.types("INC-0003") == ["IncidentResolved"]
 
 
-async def test_one_incident_per_service_and_the_gateway_is_left_alone(world: World) -> None:
-    bad_deploy(world)
+def gateway_passing_on(world: World, own: float = 0.0, firing: Any = None) -> None:
+    """The gateway's 5xx: 6/s in all, `own` of them its own problems, the rest order-service's
+    answers passed on."""
     world.deploy("api-gateway", (4, 300, "gw:1", "r0"))
     world.metrics["api-gateway"] = {
         "rate": 20.0,
         "normal_rate": 18.0,
         "errors": 6.0,
-        "own_problems_5xx": 0.0,
-        "upstream_errors": {"order-service": 3.1, "portfolio-service": 0.0},
+        "own_problems_5xx": own,
+        "upstream_errors": {"order-service": 6.0 - own, "portfolio-service": 0.0},
     }
-    world.rules.append(Rule("GatewayHighErrorRate", "api-gateway"))
+    extra = {"firing": firing} if firing is not None else {}
+    world.rules.append(Rule("GatewayHighErrorRate", "api-gateway", **extra))
+
+
+async def test_the_gateways_passed_on_errors_are_a_symptom_line_on_the_root_incident(
+    world: World,
+) -> None:
+    """Owner, 2026-11-27: not an incident of its own, but "symptom of INC-x, no action" under the
+    incident that causes it; it clears with its cause."""
+    bad_deploy(world)
+    gateway_passing_on(world, firing=lambda w: (w.since_action("order-service") or -1) < 30)
     world.rules.append(
         Rule("ConsumerLagHigh", "order-service", severity="warning", remediable=False)
     )
     rig = Rig(world)
     incidents = await rig.run()
-    by_service = {i.service: i for i in incidents}
-    assert set(by_service) == {"api-gateway", "order-service"}
-    assert by_service["order-service"].alert_name == "OrderServiceHighErrorRate"
+    await keep_ticking(rig, 60)
+    assert [i.service for i in incidents] == ["order-service"]  # no gateway incident
     assert rig.platform.calls == ["rollback order-service 8"]
-    gateway = by_service["api-gateway"].remediations[0]
-    assert gateway.action == "do_nothing" and "passed on" in gateway.explanation
+    symptoms = [e.message for e in incidents[0].timeline if e.kind.value == "SYMPTOM"]
+    assert symptoms[0].startswith("GatewayHighErrorRate on api-gateway: a symptom of INC-0001.")
+    assert "100% of the gateway's errors are order-service's answers" in symptoms[0]
+    assert symptoms[-1] == "GatewayHighErrorRate on api-gateway cleared with its cause."
+
+
+async def test_a_gateway_alert_that_fires_first_waits_for_its_roots_incident(
+    world: World,
+) -> None:
+    bad_deploy(world)
+    gateway_passing_on(world)
+    order_rule = world.rules[0]
+    first = world.clock.now()
+    world.rules[0] = Rule(
+        order_rule.name,
+        order_rule.service,
+        summary=order_rule.summary,
+        firing=lambda w: (w.clock.now() - first).total_seconds() >= 20 and order_rule.firing(w),
+    )
+    rig = Rig(world)
+    await rig.agent.start()
+    await keep_ticking(rig, 40)  # the gateway fired 20 s before order-service did
+    assert [i.service for i in rig.store.incidents.values()] == ["order-service"]
+    (root,) = rig.store.incidents.values()
+    assert any(e.kind.value == "SYMPTOM" for e in root.timeline)
+
+
+async def test_the_gateways_own_errors_open_its_own_incident_at_once(world: World) -> None:
+    gateway_passing_on(world, own=6.0)  # INTERNAL_ERROR in the gateway itself
+    rig = Rig(world)
+    incidents = await rig.run()
+    assert [i.service for i in incidents] == ["api-gateway"]
+
+
+async def test_passed_on_errors_with_no_root_incident_get_their_own_after_a_minute(
+    world: World,
+) -> None:
+    gateway_passing_on(world)  # order-service answers errors, but its own alert never fires
+    rig = Rig(world)
+    await rig.agent.start()
+    await keep_ticking(rig, 30)
+    assert not rig.store.incidents  # waiting for a root
+    await keep_ticking(rig, 40)
+    assert [i.service for i in rig.store.incidents.values()] == ["api-gateway"]
+
+
+async def test_a_symptom_that_outlives_its_root_is_handed_to_a_person(world: World) -> None:
+    bad_deploy(world)
+    gateway_passing_on(world)  # keeps firing after order-service recovered
+    rig = Rig(world)
+    (root,) = await rig.run()
+    assert root.resolution and root.resolution.value == "RECOVERED"
+    await keep_ticking(rig, 90)
+    gateway = [i for i in rig.store.incidents.values() if i.service == "api-gateway"]
+    assert len(gateway) == 1
+    assert any("still fires after INC-0001 was resolved" in e.message for e in root.timeline)
 
 
 async def test_a_model_do_nothing_watches_and_auto_clears(world: World) -> None:

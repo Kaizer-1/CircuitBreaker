@@ -51,6 +51,7 @@ class Kind(StrEnum):
     RESOLVED = "RESOLVED"
     ESCALATED = "ESCALATED"
     AFTER_EFFECT = "AFTER_EFFECT"  # a backlog alert after a fix: draining, drained, handed over
+    SYMPTOM = "SYMPTOM"  # another service's alert caused by this incident: attached, cleared
 
 
 def iso(at: datetime | None) -> str | None:

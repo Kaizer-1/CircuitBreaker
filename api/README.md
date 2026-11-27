@@ -217,8 +217,9 @@ portfolio-service gained the "database degraded" chaos hook A-21/A-22 (portfolio
 first spec, the panic-sell hook A-23/A-24 (bot-traders spec 1.0.0).
 Phase 7 (the SRE agent): incidents carry the approved timing fields (`fired_at`, `mitigated_at`, `recovered_at`) and
 Q-20 the remaining hourly budget and cooldowns (sre-agent spec 1.1.0); a backlog alert right after a working fix is
-attached to that incident as an `AFTER_EFFECT` timeline entry instead of opening a new one, and the feed (Q-19) sends
-`vitals` for the control room (sre-agent spec 1.2.0).
+attached to that incident as an `AFTER_EFFECT` timeline entry instead of opening a new one, the gateway's alert that only
+passes an upstream's errors on is a `SYMPTOM` entry on the upstream's incident, and the feed (Q-19) sends `vitals` for
+the control room (sre-agent spec 1.2.0).
 
 ## Error code catalog
 

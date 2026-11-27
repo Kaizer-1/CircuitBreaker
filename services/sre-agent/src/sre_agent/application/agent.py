@@ -19,12 +19,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from sre_agent.application.collector import Collected, EvidenceCollector
+from sre_agent.application.collector import GATEWAY, Collected, EvidenceCollector
 from sre_agent.application.decider import Decider, Decision
 from sre_agent.application.feed import FeedHub
 from sre_agent.business_metrics import BusinessMetrics
 from sre_agent.domain import guardrails
 from sre_agent.domain.actions import APPLICATION_SERVICES, Tool
+from sre_agent.domain.fallback import PASSED_ON
 from sre_agent.domain.guardrails import Situation
 from sre_agent.domain.incident import (
     Event,
@@ -104,6 +105,12 @@ class AgentConfig:
     # long, not a new incident; it is handed to a person if it stops improving (owner, 2026-11-27).
     after_effect_seconds: float = 600.0
     drain_check_seconds: float = 60.0  # it must have gone down over this long
+    # The gateway's error alert, when its errors are an upstream's answers passed on, is a SYMPTOM
+    # of that upstream's incident (owner, 2026-11-27): a line on the root incident, not an incident
+    # of its own. Fired before the root's incident opened: it waits this long for it.
+    symptom_wait_seconds: float = 60.0
+    # Still firing this long after its root incident was resolved: handed to a person.
+    symptom_grace_seconds: float = 60.0
     # How long to wait for the alert to clear after each kind of action. Scaling is measured: new
     # pods take 20-60 s to be ready, traffic moves over within ~60 s more, and the latency alert
     # clears 22-28 s after the real recovery (chaos scenarios 3.3), so it gets 4 minutes.
@@ -159,6 +166,8 @@ class Agent:
         self._recovery: dict[str, tuple[Incident, datetime, str]] = {}  # service -> its window
         self._after_effects: dict[tuple[str, str], AfterEffect] = {}
         self._handed_over: set[tuple[str, str]] = set()
+        self._symptoms: dict[tuple[str, str], Incident] = {}  # (alert, service) -> its root
+        self._waiting: dict[tuple[str, str], datetime] = {}  # a symptom waiting for its root
         self.settings = AgentSettings(
             environment=config.environment,
             approval_required=config.approval_by_default,
@@ -249,14 +258,20 @@ class Agent:
         self._escalated &= keys  # a cleared alert may open an incident again
         self._handed_over &= keys
         await self._watch_after_effects(alerts, now)
+        await self._watch_symptoms(alerts, now)
+        self._waiting = {k: t for k, t in self._waiting.items() if k in keys}
         by_service: dict[str, list[Alert]] = {}
         for alert in alerts:
             if alert.service in APPLICATION_SERVICES:  # never a data store
                 by_service.setdefault(alert.service, []).append(alert)
-        for service, group in sorted(by_service.items()):
+        # The gateway last: an upstream's incident it may be a symptom of opens first.
+        for service, group in sorted(by_service.items(), key=lambda kv: (kv[0] == GATEWAY, kv[0])):
             if service in self._open:
                 continue
             group = [a for a in group if (a.name, service) not in self._after_effects]
+            group = [a for a in group if (a.name, service) not in self._symptoms]
+            if service == GATEWAY:
+                group = [a for a in group if not await self._symptom_of_upstream(a, now)]
             window = self._recovery.get(service)
             if window is not None and now < window[1]:
                 for alert in [a for a in group if a.name in AFTER_EFFECT_ALERTS]:
@@ -269,6 +284,61 @@ class Agent:
             if (lead.name, service) in self._escalated:
                 continue
             await self._open_incident(lead)
+
+    # ------------------------------------------------------------------ symptoms
+
+    async def _symptom_of_upstream(self, alert: Alert, now: datetime) -> bool:
+        """True if this gateway alert is (or may soon be) a symptom of an upstream's incident:
+        attached to it, or waiting for it to open. False: an incident of its own."""
+        if (alert.name, alert.service) in self._handed_over:
+            return False
+        try:
+            share, upstream = await self._collector.passed_on(alert.service)
+        except Exception:  # Prometheus not answering: decide as before, with its own incident
+            return False
+        if share is None or share < PASSED_ON or upstream is None:
+            return False  # the gateway's own errors
+        root = self._open.get(upstream)
+        window = self._recovery.get(upstream)
+        if root is None and window is not None and now < window[1]:
+            root = window[0]
+        if root is not None:
+            self._waiting.pop((alert.name, alert.service), None)
+            self._symptoms[(alert.name, alert.service)] = root
+            root.note(
+                Kind.SYMPTOM,
+                f"{alert.name} on {alert.service}: a symptom of {root.incident_id}."
+                f" {round(100 * share)}% of the gateway's errors are {upstream}'s answers, passed"
+                " on; no action.",
+                now,
+            )
+            await self._emit(root, [])
+            return True
+        first = self._waiting.setdefault((alert.name, alert.service), now)
+        return (now - first).total_seconds() < self._cfg.symptom_wait_seconds
+
+    async def _watch_symptoms(self, alerts: list[Alert], now: datetime) -> None:
+        firing = {(a.name, a.service): a for a in alerts}
+        for key, root in list(self._symptoms.items()):
+            if key not in firing:
+                del self._symptoms[key]
+                root.note(Kind.SYMPTOM, f"{key[0]} on {key[1]} cleared with its cause.", now)
+                await self._emit(root, [])
+                continue
+            ended = root.resolved_at
+            if ended is None or (now - ended).total_seconds() < self._cfg.symptom_grace_seconds:
+                continue
+            del self._symptoms[key]
+            self._handed_over.add(key)
+            root.note(
+                Kind.SYMPTOM,
+                f"{key[0]} on {key[1]} still fires after {root.incident_id} was resolved:"
+                " handed to a person as an incident of its own.",
+                now,
+            )
+            await self._emit(root, [])
+            if key[1] not in self._open:
+                await self._open_incident(firing[key])
 
     # ------------------------------------------------------------------ after-effects
 
