@@ -7,11 +7,13 @@
 // No icons: each step's kind is a word and a colour (the design rules).
 import { clock } from '../lib/format'
 import {
+  asides,
   type FeedIncident,
   type FeedState,
   incidentsNewestFirst,
   lineOf,
   outcomeOf,
+  splitSentence,
 } from '../lib/incidents'
 
 export interface ResetLine {
@@ -98,17 +100,30 @@ function Incident({
         <span className="alert">{s.alert_name}</span>
         <span className={`outcome ${tone}`}>{outcomeOf(s)}</span>
       </header>
+      {asides(incident.entries).map((a) => (
+        <p key={`${a.kind}-${a.subject}`} className={`aside ${a.kind.toLowerCase()}`}>
+          <span className="kind">{a.kind === 'SYMPTOM' ? 'Symptom' : 'After-effect'}</span>
+          {a.kind === 'SYMPTOM' ? `${a.subject}: symptom of ${s.incident_id}` : a.subject} ·{' '}
+          {a.state}
+        </p>
+      ))}
       <ol className="steps">
-        {incident.entries.map((e, n) => {
-          const { label, tone: t } = lineOf(e)
-          return (
-            <li key={`${e.at}-${n}`} className={`step ${t}`}>
-              <span className="num">{clock(new Date(e.at))}</span>
-              <span className="kind">{label}</span>
-              <span className="message">{e.message}</span>
-            </li>
-          )
-        })}
+        {incident.entries
+          .filter((e) => e.kind !== 'SYMPTOM' && e.kind !== 'AFTER_EFFECT')
+          .map((e, n) => {
+            const { label, tone: t } = lineOf(e)
+            const [headline, reasoning] = splitSentence(e.message)
+            return (
+              <li key={`${e.at}-${n}`} className={`step ${t}`}>
+                <span className="num">{clock(new Date(e.at))}</span>
+                <span className="kind">{label}</span>
+                <span className="message">
+                  <b>{headline}</b>
+                  {reasoning && <small className="reasoning">{reasoning}</small>}
+                </span>
+              </li>
+            )
+          })}
       </ol>
       {incident.pending && (
         <div className="decide" role="group" aria-label={`Decide on ${s.incident_id}`}>

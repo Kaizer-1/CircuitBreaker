@@ -2,6 +2,9 @@
 // decision, after-effects as their own kind, the dashboard's one line, and vitals going stale.
 import {
   applyFeed,
+  asides,
+  openLabel,
+  splitSentence,
   cooldownOf,
   emptyFeed,
   type FeedMessage,
@@ -92,7 +95,7 @@ test('the snapshot is the truth on a new connection; a timeline read later fills
     type: 'incident_resolved',
     data: { ...resolved, time_to_recover_seconds: 38 },
   })
-  expect(outcomeOf(s.incidents['INC-0052']!.summary)).toBe('Recovered in 38 s')
+  expect(outcomeOf(s.incidents['INC-0052']!.summary)).toBe('Recovered 38\u00a0s after detection')
   expect(statusLine(s)).toBeNull() // nothing open: no line on the dashboard
 })
 
@@ -133,4 +136,49 @@ test('a service with no cooldown has 0 left', () => {
   expect(cooldownOf(settings, 'order-service')).toBe(120)
   expect(cooldownOf(settings, 'market-data-service')).toBe(0)
   expect(cooldownOf(null, 'order-service')).toBe(0)
+})
+
+test('symptoms and after-effects fold into one line per alert, and steps split into a headline', () => {
+  const at = '2026-11-26T21:23:30.000Z'
+  const entries = [
+    {
+      at,
+      kind: 'SYMPTOM' as const,
+      message:
+        "GatewayHighErrorRate on api-gateway: a symptom of INC-0052. 100% of the gateway's errors are order-service's answers, passed on; no action.",
+    },
+    {
+      at,
+      kind: 'AFTER_EFFECT' as const,
+      message: 'ConsumerLagHigh (3000 now) after the scale: an expected after-effect, draining.',
+    },
+    {
+      at,
+      kind: 'SYMPTOM' as const,
+      message: 'GatewayHighErrorRate on api-gateway cleared with its cause.',
+    },
+  ]
+  expect(asides(entries)).toEqual([
+    {
+      kind: 'SYMPTOM',
+      subject: 'GatewayHighErrorRate on api-gateway',
+      state: 'cleared with its cause',
+      at,
+    },
+    { kind: 'AFTER_EFFECT', subject: 'ConsumerLagHigh', state: 'draining, no action', at },
+  ])
+  expect(splitSentence('Errors 19.0% (OVERLOADED 18.2/s). Revision 58, known-good.')).toEqual([
+    'Errors 19.0% (OVERLOADED 18.2/s).',
+    'Revision 58, known-good.',
+  ])
+  expect(splitSentence('Scaled order-service from 2 to 5 replicas')).toEqual([
+    'Scaled order-service from 2 to 5 replicas',
+    '',
+  ])
+})
+
+test('the dashboard says how many incidents are open instead of "all systems healthy"', () => {
+  expect(openLabel(emptyFeed)).toBeNull()
+  const one = apply(emptyFeed, { type: 'incident_opened', data: OPENED })
+  expect(openLabel(one)).toBe('1 incident open')
 })

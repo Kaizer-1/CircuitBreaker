@@ -168,6 +168,10 @@ describe.each(BOTH)('the chaos panel (%s skin)', (theme) => {
     render(<Chaos />)
     const panic = await screen.findByTestId('TRAFFIC_SPIKE')
     expect(within(panic).getByText('Waiting: agent cooldown 1:20')).toBeInTheDocument()
+    expect(within(panic).getByRole('button', { name: 'Not yet' })).toBeDisabled() // not a Start
+    expect(
+      within(screen.getByTestId('PORTFOLIO_DB_DEGRADED')).getByRole('button'),
+    ).toHaveTextContent('Start')
     expect(within(screen.getByTestId('PORTFOLIO_DB_DEGRADED')).getByText('Ready')).toBeVisible()
     const line = screen.getByRole('status', { name: "The agent's settings and budget" })
     expect(line).toHaveTextContent('4 of 6 actions left this hour')
@@ -203,6 +207,10 @@ describe.each(BOTH)('the chaos panel (%s skin)', (theme) => {
   })
 
   test('start, a refused start with its reason, stop and reset all reach chaos-service', async () => {
+    live.settings = {
+      ...SETTINGS,
+      budget: { actions_left_this_hour: 6, cooldown_seconds_by_service: {} },
+    }
     const start = vi.spyOn(chaos, 'start')
     start.mockResolvedValueOnce({ ...LEAK, scenario: 'BAD_DEPLOY' })
     start.mockRejectedValueOnce(

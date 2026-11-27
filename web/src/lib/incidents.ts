@@ -15,6 +15,7 @@ export type TimelineKind =
   | 'RESOLVED'
   | 'ESCALATED'
   | 'AFTER_EFFECT'
+  | 'SYMPTOM'
 
 export interface TimelineEntry {
   at: string
@@ -242,6 +243,7 @@ const LABELS: Record<TimelineKind, string> = {
   RESOLVED: 'Resolved',
   ESCALATED: 'Escalated',
   AFTER_EFFECT: 'After-effect',
+  SYMPTOM: 'Symptom',
 }
 
 /** The kind's label and its tone (a colour token on the screen). */
@@ -267,14 +269,15 @@ export function lineOf(entry: TimelineEntry): {
   }
 }
 
-/** The incident's headline outcome: "Recovered in 41 s", "Escalated to a person", … */
+/** The incident's headline outcome, every time with its starting point:
+ * "Recovered 49 s after detection" (detection = the incident opened). */
 export function outcomeOf(summary: IncidentSummary): string {
   if (summary.status === 'AWAITING_APPROVAL') return 'Waiting for the presenter'
   if (summary.status !== 'RESOLVED') return 'In progress'
   switch (summary.resolution) {
     case 'RECOVERED':
       return summary.time_to_recover_seconds !== null
-        ? `Recovered in ${summary.time_to_recover_seconds} s`
+        ? `Recovered ${summary.time_to_recover_seconds}${NBSP}s after detection`
         : 'Recovered'
     case 'AUTO_CLEARED':
       return 'Cleared by itself'
@@ -301,8 +304,49 @@ export function statusLine(state: FeedState): string | null {
 }
 
 function firstSentence(text: string): string {
+  return splitSentence(text)[0].replace(/[.!?]$/, '')
+}
+
+const NBSP = '\u00a0' // a number and its unit stay on one line
+
+/** A step's first sentence (shown bold, one line) and the rest (its reasoning, smaller). */
+export function splitSentence(text: string): [string, string] {
   const cut = text.search(/[.!?](\s|$)/)
-  return cut > 0 ? text.slice(0, cut) : text
+  if (cut < 0) return [text, '']
+  return [text.slice(0, cut + 1), text.slice(cut + 1).trim()]
+}
+
+/** "1 incident open", "2 incidents open" — the dashboard's status, or null when none is. */
+export function openLabel(state: FeedState): string | null {
+  const n = openIncidents(state).length
+  return n ? `${n} incident${n > 1 ? 's' : ''} open` : null
+}
+
+export interface Aside {
+  kind: 'SYMPTOM' | 'AFTER_EFFECT'
+  subject: string // "GatewayHighErrorRate on api-gateway", or the after-effect's alert
+  state: string // what became of it, in a few words
+  at: string // the latest line's time
+}
+
+/** Symptom and after-effect lines folded into one line each per alert: they hang under the
+ * root incident, collapsed, instead of standing between its steps (owner, 2026-11-27). */
+export function asides(entries: TimelineEntry[]): Aside[] {
+  const byKey = new Map<string, Aside>()
+  for (const e of entries) {
+    if (e.kind !== 'SYMPTOM' && e.kind !== 'AFTER_EFFECT') continue
+    const subject = e.message.match(/^(\S+ on \S+|\S+)/)?.[1] ?? e.message
+    const key = `${e.kind}|${subject.split(' ')[0]}`
+    const state = /cleared|drained/.test(e.message)
+      ? 'cleared with its cause'
+      : /handed to a person/.test(e.message)
+        ? 'handed to a person'
+        : e.kind === 'SYMPTOM'
+          ? 'no action'
+          : 'draining, no action'
+    byKey.set(key, { kind: e.kind, subject: subject.replace(/:$/, ''), state, at: e.at })
+  }
+  return [...byKey.values()]
 }
 
 /** Seconds left of the agent's cooldown on a service, 0 if none. */

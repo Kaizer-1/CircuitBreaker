@@ -77,12 +77,14 @@ export function stateLine(e: Experiment | undefined, now: number): string {
     const left = countdown((Date.parse(e.ends_at) - now) / 1000)
     const detected =
       e.time_to_detect_seconds !== null
-        ? ` · ${e.incident_id} detected in ${e.time_to_detect_seconds}${NBSP}s`
+        ? ` · ${e.incident_id} detected ${e.time_to_detect_seconds}${NBSP}s after start`
         : ' · waiting for the agent'
     return `Running · ${left} left${detected}`
   }
   const recovered =
-    e.time_to_recover_seconds !== null ? ` in ${e.time_to_recover_seconds}${NBSP}s` : ''
+    e.time_to_recover_seconds !== null
+      ? ` · resolved ${e.time_to_recover_seconds}${NBSP}s after start`
+      : ''
   return `${OUTCOMES[e.status]}${recovered}`
 }
 
@@ -104,8 +106,13 @@ export function readinessLine(
   e: Experiment | undefined,
   budget: AgentBudget | null,
   now: number,
+  recoveredAfterDetection: number | null = null, // from the agent's feed, when it has the incident
 ): { text: string; waiting: boolean } {
-  const base = stateLine(e, now)
+  const after =
+    recoveredAfterDetection !== null && e?.status === 'REMEDIATED'
+      ? ` · recovered ${recoveredAfterDetection}${NBSP}s after detection`
+      : ''
+  const base = stateLine(e, now) + after
   if (e?.status === 'RUNNING' || s.expected_fix === 'do_nothing' || !budget)
     return { text: base, waiting: false }
   const left =

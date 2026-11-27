@@ -1798,3 +1798,40 @@ td:first-child {
   font-family: var(--font-ui);
   font-weight: 600;
 }
+
+/* A scenario the agent would refuse to act on yet (its cooldown): clearly not a Start. */
+.chaos-button.not-yet,
+:root[data-theme='terminal'] .chaos-button.not-yet {
+  background: transparent;
+  color: var(--text-3);
+  border-color: var(--text-3);
+  border-style: dashed;
+  opacity: 1;
+  cursor: not-allowed;
+}
+/* A feed step: its first sentence bold on one line, the reasoning below, smaller. */
+.feed .step .message b {
+  display: block;
+  font-weight: 600;
+}
+.feed .step .reasoning {
+  display: block;
+  font-size: 0.84em;
+  line-height: 1.3;
+  color: var(--text-2);
+}
+/* Symptoms and after-effects: one collapsed line each under the incident's header. */
+.feed-item .aside {
+  margin: 0.15em 0 0 5.8em;
+  font-size: 0.84em;
+  color: var(--text-2);
+}
+.feed-item .aside .kind {
+  margin-right: 0.6em;
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: 0.85em;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-3);
+}

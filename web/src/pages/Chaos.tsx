@@ -243,7 +243,14 @@ function Screen({ token, onExpired }: { token: string; onExpired: () => void }) 
                 {scenarios.map((s) => {
                   const e = latest.get(s.scenario as ScenarioId)
                   const on = e?.status === 'RUNNING'
-                  const ready = readinessLine(s, e, budget, now.getTime())
+                  const incident = e?.incident_id ? feed.incidents[e.incident_id] : undefined
+                  const ready = readinessLine(
+                    s,
+                    e,
+                    budget,
+                    now.getTime(),
+                    incident?.summary.time_to_recover_seconds ?? null,
+                  )
                   return (
                     <tr
                       key={s.scenario}
@@ -271,11 +278,16 @@ function Screen({ token, onExpired }: { token: string; onExpired: () => void }) 
                         ) : (
                           <button
                             type="button"
-                            className="chaos-button"
-                            disabled={busy !== null}
+                            className={`chaos-button${ready.waiting ? ' not-yet' : ''}`}
+                            disabled={busy !== null || ready.waiting}
+                            title={ready.waiting ? ready.text : undefined}
                             onClick={() => void start(s)}
                           >
-                            {busy === s.scenario ? 'Starting…' : 'Start'}
+                            {busy === s.scenario
+                              ? 'Starting…'
+                              : ready.waiting
+                                ? 'Not yet'
+                                : 'Start'}
                           </button>
                         )}
                       </td>

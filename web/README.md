@@ -76,20 +76,25 @@ The screen where the audience watches a fault, its impact and the agent's fix (o
 - **The SRE agent** (right, `components/IncidentFeed.tsx`): approval on or off (A-14, a button), the actions the hourly
   budget still allows and each service's cooldown (Q-20, polled every 2 s); then every incident, newest first, with
   its steps in order, each step's kind a word and a colour (Opened, Evidence, Diagnosis, Proposed, Approved, Action,
-  Check, Resolved, Escalated, After-effect), and **Approve** / **Decline** while approval mode holds a proposal
+  Check, Resolved, Escalated) with its first sentence in bold and the reasoning below it, smaller; another service's
+  alert it caused (a **symptom**, such as the gateway passing order-service's errors on) and a backlog draining after
+  the fix (an **after-effect**) fold into one short line each under the incident; outcomes name their starting
+  point ("Recovered 49 s after detection"); and **Approve** / **Decline** while approval mode holds a proposal
   (A-15). A screen that connects after an incident opened reads its earlier steps from Q-18. The presenter's resets
   (from chaos-service) are merged into the same list: the agent itself never reads chaos-service, only this screen
   shows the two side by side.
 
-The dashboard's status bar shows the newest open incident in one line ("INC-0007 order-service: action: Rolled
-order-service back…").
+The dashboard's status bar says how many incidents are open ("1 incident open", in place of "all systems healthy")
+and shows the newest in one line ("INC-0007 order-service: action: Rolled order-service back…"); symptoms are not
+incidents, so only root causes appear.
 
 The four chaos scenarios ([chaos scenarios](../docs/03-architecture/06-chaos-scenarios.md), ADR-0020) as one table, not
 a grid of cards: what each breaks, the fix that is right for it (rollback, restart, scale, or do nothing and escalate),
 its state (ready; running with the time left and, once the SRE agent opened an incident, how fast it was detected; or
 how it ended; while the agent's cooldown on the service it would fix runs, or its hourly budget is used up,
-**Waiting: agent cooldown 1:20** with the time left, because the agent would refuse to act until then) and a **Start**
-/ **Stop** button. **Reset everything** (A-20) ends every experiment and undoes every
+**Waiting: agent cooldown 1:20** with the time left, because the agent would refuse to act until then; its button then
+says **Not yet** and cannot be pressed) and a **Start** / **Stop** button. Times name their starting point: "resolved
+156 s after start · recovered 49 s after detection". **Reset everything** (A-20) ends every experiment and undoes every
 fault, including replicas the agent added. A start chaos-service refuses (another experiment already affects that
 service: `409`) shows its reason in the status strip. Below, chaos-service's own timeline (and the presenter's
 resets), newest first. Polled every 2 s (Q-21, Q-22). Reached by the terminal skin's on-screen **F6 CONTROL** key or
