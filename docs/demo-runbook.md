@@ -45,9 +45,27 @@ the cluster, not both (`make down` first): together they do not fit in Docker's 
 | 3b | `make k8s-test-phone` | A phone's view of prod with prod's own bot secret, as on the Compose path |
 | 3c | **Warm-up spike, in approval mode:** in the control room (`/chaos`) press **Turn approval on**; run `make k8s-check c=scale`; it must say PASS (2 replicas above 500 ms, 5 replicas back below it). The agent proposes a fix for the latency alert: press **Decline**. Then **Turn approval off**. If the check fails, wait a few minutes, check step 0, and run it once more | The traffic spike at its calibrated 110 requests/s, once, before anyone watches. In the calibration the only run where 5 replicas did not recover (861 ms) was the first one after Redpanda had restarted; the four after it passed. It stops the bots for about 5 minutes and starts them again. With approval on, the declined proposal uses none of the agent's hourly budget (6 actions) and starts no cooldown, so the demo has all of them (owner, 2026-11-24) |
 | 3d | **Rehearse at least 60 minutes before presenting:** `make demo-chaos` (the short demo) three times and `make demo-chaos mode=full` once; each must say all passed and print the whole sequence's time | The demo's own sequence, with the agent fixing each scenario by itself, on that day's laptop. Each run uses 2–3 of the agent's 6 actions an hour (and the scale-down after a panic sell): after 60 minutes they are all back, and every cooldown is long over. It refuses to run in approval mode |
+| 3e | **After the final rehearsal, once: `CONFIRM=yes make k8s-data-reset env=prod`** (a person runs it). Then let the bots trade **at least 5 minutes** before showing time travel | A brand-new market in prod: the rehearsals' orders, trades, portfolios, test traders and incidents are gone, every account is back at its seed, and the leaderboard is empty. The cluster, Argo CD, the sealed secrets and the images stay, and so do the agent's action log, cooldowns and hourly budget (wiping them would lift the guardrails; owner's decision 9), so the "60 minutes before presenting" rule still holds. Time travel's history starts at the reset. Measured: see the table below. It checks itself: nothing reserved, every book empty, every account at its seed, no incidents, the agent's budget unchanged |
 | 4 | `make test-k8s` is **not** for the audience (it starts the bots itself); use `python3 scripts/k8s.py run bots_check.py 120` and `python3 scripts/k8s.py run time_travel_check.py 5 5` | The same checks as the Compose path, through port-forwards |
 | 5 | Projector: `http://<LAN IP>/dashboard?theme=paper` and the control room (`/chaos`, F6 CONTROL); a second tab: Grafana `http://localhost:3000`, dashboard *CircuitBreaker — Incident view* (and *Business*) | The control room is where the chaos is started and the agent's fix is watched; the Incident view shows the same scenarios as six large panels with every deploy, experiment and agent action marked. Both say *prod* |
 | 6 | Optional demo moment: *Follow an order*: place an order on a phone, paste its correlation ID (or pick one from *Orders placed*) | One order's journey through four services, from one query |
+
+**What `make k8s-data-reset env=<env>` does to each store of that environment** (all of them together: wiping some
+but not others would break invariants such as "the money reserved matches the open orders"). Services are stopped by
+scaling to 0 and started at the chart's counts, never by a rollout restart, so no new ReplicaSet appears and the
+running releases keep their known-good history (the agent's rollback rule).
+
+| Store | Wiped | Kept |
+|---|---|---|
+| Cassandra `matching_engine` (the event store) | every table: events, snapshots, days, processed commands, publish cursor | the keyspace and its schema |
+| Cassandra `order_service` | orders (by id, trader, open, idempotency key), order events, outbox and cursor, processed events | `data_migrations` (a schema step that already ran) |
+| Cassandra `market_data` | candles, trades, last prices | — |
+| Cassandra `sre_agent` | `incidents`, `incidents_by_day` (the incident history) | `action_log` (the hourly budget and cooldowns), `incident_counter`, `agent_settings` (the approval toggle) |
+| Cassandra's volume | — | kept: the agent's log lives in it |
+| Postgres `portfolio` | accounts, holdings, reservations, settlements, last prices, processed events, chaos faults (all reseeded at start: 20 bots, 10 load accounts, no humans) | `schema_migrations` |
+| Redpanda topics | `orders.v1`, `matching.v1`, `candles.v1` and their `.dlq`, recreated empty; their four consumer groups | `incidents.v1` and its `.dlq` (the agent's own events), chaos-service's group |
+| In memory (engine books, read models, bots, chaos-service's experiments, the agent's open incidents) | gone with the scale to 0 | — |
+| Prometheus, Loki, Grafana, Argo CD, sealed secrets, images, the operator settings (QR address, bots on/off) | — | all |
 
 If something goes wrong on Kubernetes: `make k8s-status` (pods, Argo CD's Applications, memory); a pod stuck `0/1` →
 `kubectl -n prod logs <pod>`; a service misbehaving → `kubectl -n prod rollout restart deployment/<service>` (rolling,
