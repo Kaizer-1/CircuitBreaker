@@ -43,9 +43,10 @@ the cluster, not both (`make down` first): together they do not fit in Docker's 
 | 3 | `make k8s-bots`, wait 5 minutes | The market moves; time travel has a history |
 | 3a | `make k8s-status`: the last lines show the QR code's address and warn if it is localhost or not this laptop's current address | Fix with `make k8s-set-url url=http://<LAN IP>` (only the web pod restarts; no data touched) |
 | 3b | `make k8s-test-phone` | A phone's view of prod with prod's own bot secret, as on the Compose path |
-| 3c | **Warm-up spike:** `make k8s-check c=scale`; it must say PASS (2 replicas above 500 ms, 5 replicas back below it). If it fails, wait a few minutes, check step 0, and run it once more | The traffic spike at its calibrated 110 requests/s, once, before anyone watches. In the calibration the only run where 5 replicas did not recover (861 ms) was the first one after Redpanda had restarted; the four after it passed. It stops the bots for about 5 minutes and starts them again |
+| 3c | **Warm-up spike, in approval mode:** in the control room (`/chaos`) press **Turn approval on**; run `make k8s-check c=scale`; it must say PASS (2 replicas above 500 ms, 5 replicas back below it). The agent proposes a fix for the latency alert: press **Decline**. Then **Turn approval off**. If the check fails, wait a few minutes, check step 0, and run it once more | The traffic spike at its calibrated 110 requests/s, once, before anyone watches. In the calibration the only run where 5 replicas did not recover (861 ms) was the first one after Redpanda had restarted; the four after it passed. It stops the bots for about 5 minutes and starts them again. With approval on, the declined proposal uses none of the agent's hourly budget (6 actions) and starts no cooldown, so the demo has all of them (owner, 2026-11-24) |
+| 3d | **Rehearse at least 60 minutes before presenting:** `make demo-chaos` (the short demo) three times and `make demo-chaos mode=full` once; each must say all passed and print the whole sequence's time | The demo's own sequence, with the agent fixing each scenario by itself, on that day's laptop. Each run uses 2–3 of the agent's 6 actions an hour (and the scale-down after a panic sell): after 60 minutes they are all back, and every cooldown is long over. It refuses to run in approval mode |
 | 4 | `make test-k8s` is **not** for the audience (it starts the bots itself); use `python3 scripts/k8s.py run bots_check.py 120` and `python3 scripts/k8s.py run time_travel_check.py 5 5` | The same checks as the Compose path, through port-forwards |
-| 5 | Projector: `http://<LAN IP>/dashboard?theme=paper`; a second screen or tab: Grafana `http://localhost:3000`, dashboard *CircuitBreaker — Business* | The circuit breaker panel is the first thing Grafana shows |
+| 5 | Projector: `http://<LAN IP>/dashboard?theme=paper` and the control room (`/chaos`, F6 CONTROL); a second tab: Grafana `http://localhost:3000`, dashboard *CircuitBreaker — Incident view* (and *Business*) | The control room is where the chaos is started and the agent's fix is watched; the Incident view shows the same scenarios as six large panels with every deploy, experiment and agent action marked. Both say *prod* |
 | 6 | Optional demo moment: *Follow an order*: place an order on a phone, paste its correlation ID (or pick one from *Orders placed*) | One order's journey through four services, from one query |
 
 If something goes wrong on Kubernetes: `make k8s-status` (pods, Argo CD's Applications, memory); a pod stuck `0/1` →
@@ -62,6 +63,23 @@ still open.
 |---|---|
 | Dashboard | 1–5 choose the ticker shown big; **B** (or the header button) hides or shows the leaderboard |
 | Time travel | Terminal: on-screen **F5 TIME TRAVEL**; paper: **Time travel** under the masthead. Drag the timeline or click a ▲ ▼ marker; **Space** plays and pauses; speed 1× to 60×; **Verify against live** for the proof; **L** or **Back to live** |
+| Control room | Terminal: on-screen **F6 CONTROL**; paper: **Control room**. Scenarios left (**Start** / **Stop**, **Reset everything**), the agent's live feed right (**Approve** / **Decline** only in approval mode, which stays **off** for the demo), the market strip on top |
+
+**The chaos part of the demo (the short choreography of `make demo-chaos`; estimated at about 4 minutes, to be
+replaced by the measured time):**
+
+1. **Start Memory leak.** It grows quietly; its alert comes about 3 minutes later.
+2. **20 seconds later, start Panic sell.** The market drops, order latency climbs on the strip, the agent scales
+   order-service to 5 (about 40–60 s after the click) and the strip recovers.
+3. **When Panic sell says "Fixed by the agent", start Portfolio database degraded.** The breaker opens; the agent
+   does nothing and escalates, naming the database. Meanwhile the leak fires and the agent restarts
+   market-data-service.
+4. **When both have an outcome on the feed, press Reset everything.**
+
+The bad deploy and the Git revert pull request are shown by the recorded backup video (rehearsed with
+`make demo-chaos mode=full`), not live: every order-service scenario affects order-service, so chaos-service runs them
+one after another, and with the agent's 5-minute cooldown on order-service the full sequence takes about 8.5 minutes
+(estimated).
 
 Projector safety: offensive nicknames are refused at join (a word list, [api-gateway README](../services/api-gateway/README.md#nickname-blocklist-projector-safety));
 anything that slips through is off the screen with **B**.
@@ -152,6 +170,17 @@ seconds and turns "it was slow on the day" into something we can rule out before
 A: Measured: in the calibration, the one run where 5 replicas did not bring latency back below 500 ms was the first
 after Redpanda had restarted; the next four passed. Running the spike once beforehand both warms the system and proves,
 on that day's laptop, that the scenario will resolve, so the live run is not the first one.
+
+**Q: Why is the live chaos sequence shorter than the rehearsed one?**
+A: Every scenario but the leak affects order-service, and two experiments may run at once only on different
+services, so they go one after another; after the agent acts on order-service it may not act there again for 5
+minutes (a guardrail nobody can lift at run time). The full sequence, with the bad deploy, therefore takes about
+8.5 minutes. The live demo has 7 minutes in all, so it shows the leak, the panic sell and the database decline
+overlapping (about 4 minutes) and the bad deploy with its Git revert on a recorded video.
+
+**Q: Why run the warm-up spike in approval mode?**
+A: The agent would scale order-service itself, using one of its six actions an hour and starting the 5-minute
+cooldown just before the demo. In approval mode it only proposes; the presenter declines, and nothing is used.
 
 **Q: Why run Compose or the cluster, not both?**
 A: The cluster with monitoring uses about 4.3 GiB of process memory and Compose about 1.8 GiB, plus Docker's page
