@@ -4,4 +4,4 @@
 bot-traders:
   image:
     registry: ghcr.io/kaizer-1
-    tag: "7da4f07d0562"
+    tag: "005d31e240d1"
