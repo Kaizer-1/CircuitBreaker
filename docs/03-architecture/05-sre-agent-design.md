@@ -296,6 +296,10 @@ sent: the control room greys the strip out after 15 s ("stale since …") instea
 | `sre_agent_llm_latency_seconds`, `sre_agent_llm_errors_total`, `sre_agent_llm_tokens_total{model}`, `sre_agent_llm_cost_dollars_total{model}` | LLM health and spend (the cost is what OpenRouter reports for each call: `usage.include`) |
 | `sre_agent_actions_left_this_hour`, `sre_agent_cooldown_seconds{service}` (gauges) | What the guardrails still allow (G6's hourly budget, G5's cooldowns), for the projector's Incident view; read-only, never settable |
 
+Each executed action is also one log line, `action executed` (incident, action, service, outcome, details), which the
+Grafana **Incident view** (`observability/dashboards/incident-view.json`) marks on its panels beside every deploy and
+every chaos experiment.
+
 ## 9. Running outside Kubernetes
 
 In Docker Compose (local dev) there is no Kubernetes API. The agent uses a **platform adapter** interface with two

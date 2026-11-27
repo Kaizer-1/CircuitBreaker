@@ -481,9 +481,20 @@ class Agent:
                 self._actions.append(record)
                 with contextlib.suppress(Exception):
                     await self._store.record_action(record)
+        outcome = "SUCCEEDED" if succeeded else "FAILED"
         if self._metrics is not None:
-            outcome = "SUCCEEDED" if succeeded else "FAILED"
             self._metrics.sre_agent_actions_total.labels(r.action, incident.service, outcome).inc()
+        # One line per action: Grafana's Incident view marks each on its panels (an annotation).
+        logger.info(
+            "action executed",
+            extra={
+                "incident_id": incident.incident_id,
+                "action": r.action,
+                "target_service": incident.service,
+                "outcome": outcome,
+                "details": details,
+            },
+        )
         events = incident.executed(r.remediation_id, succeeded, details, executed_at, git)
         await self._emit(incident, events)
         if not succeeded:
@@ -491,8 +502,6 @@ class Agent:
                 incident, Resolution.ESCALATED, "The action failed: a person takes over."
             )
             return True
-        if git is not None and git.get("status") == "FAILED":
-            incident.note(Kind.VERIFIED, f"Manual git revert needed: {git['reason']}", self._now())
         recovered = await self._wait_clear(lead, self._cfg.verify_seconds[r.action])
         self._acting.discard(incident.service)
         if recovered is not None:
