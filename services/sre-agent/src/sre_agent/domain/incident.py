@@ -50,6 +50,7 @@ class Kind(StrEnum):
     VERIFIED = "VERIFIED"
     RESOLVED = "RESOLVED"
     ESCALATED = "ESCALATED"
+    AFTER_EFFECT = "AFTER_EFFECT"  # a backlog alert after a fix: draining, drained, handed over
 
 
 def iso(at: datetime | None) -> str | None:

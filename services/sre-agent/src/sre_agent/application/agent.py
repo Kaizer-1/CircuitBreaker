@@ -66,9 +66,16 @@ def lead_alert(alerts: list[Alert]) -> Alert:
     return min(alerts, key=rank)
 
 
+# Only an alert that measures a backlog can be an after-effect: a backlog drains by itself once the
+# fix works. An open circuit breaker or a dead-lettered message is a new problem whenever it comes
+# (the live demo's database decline starts minutes after the panic sell's scale-up: found while
+# planning it, 2026-11-27).
+AFTER_EFFECT_ALERTS = frozenset({"ConsumerLagHigh"})
+
+
 @dataclass
 class AfterEffect:
-    """An information-only alert expected after a fix, watched on the incident it follows."""
+    """A backlog alert expected after a fix, watched on the incident it follows."""
 
     incident: Incident
     since: datetime
@@ -92,9 +99,9 @@ class AgentConfig:
     approval_timeout_seconds: float = 300.0
     hold_seconds: float = 60.0  # the alert must stay clear this long to count as recovered
     max_rounds: int = 3
-    # After a successful fix, an information-only alert on the same service (ConsumerLagHigh while
-    # the backlog of a panic drains) is an expected after-effect of THAT incident for this long,
-    # not a new incident; it is handed to a person if it stops improving (owner, 2026-11-27).
+    # After a successful fix, a backlog alert on the same service (ConsumerLagHigh while the backlog
+    # of a panic drains: AFTER_EFFECT_ALERTS) is an expected after-effect of THAT incident for this
+    # long, not a new incident; it is handed to a person if it stops improving (owner, 2026-11-27).
     after_effect_seconds: float = 600.0
     drain_check_seconds: float = 60.0  # it must have gone down over this long
     # How long to wait for the alert to clear after each kind of action. Scaling is measured: new
@@ -224,7 +231,17 @@ class Agent:
 
     # ------------------------------------------------------------------ the loop
 
+    def _publish_budget(self) -> None:
+        if self._metrics is None:
+            return
+        budget = self.budget()
+        self._metrics.sre_agent_actions_left_this_hour.set(budget["actions_left_this_hour"])
+        cooldowns = budget["cooldown_seconds_by_service"]
+        for service in sorted(APPLICATION_SERVICES):
+            self._metrics.sre_agent_cooldown_seconds.labels(service).set(cooldowns.get(service, 0))
+
     async def tick(self) -> None:
+        self._publish_budget()
         alerts = await self._alerts.firing_alerts()
         self._firing = alerts
         now = self._now()
@@ -242,7 +259,7 @@ class Agent:
             group = [a for a in group if (a.name, service) not in self._after_effects]
             window = self._recovery.get(service)
             if window is not None and now < window[1]:
-                for alert in [a for a in group if not a.remediable]:
+                for alert in [a for a in group if a.name in AFTER_EFFECT_ALERTS]:
                     if (alert.name, service) not in self._handed_over:
                         await self._attach(window, alert, now)
                 group = [a for a in group if (a.name, service) not in self._after_effects]
@@ -264,7 +281,7 @@ class Agent:
         level = f" ({alert.value:.0f} now)" if alert.value is not None else ""
         minutes = (ends - now).total_seconds() / 60
         incident.note(
-            Kind.VERIFIED,
+            Kind.AFTER_EFFECT,
             f"{alert.name}{level} after the {action.replace('_deployment', '')}: an expected"
             f" after-effect, draining; no action. Watched for up to {minutes:.0f} min.",
             now,
@@ -278,7 +295,7 @@ class Agent:
             if alert is None:
                 seconds = round((now - effect.since).total_seconds())
                 incident.note(
-                    Kind.VERIFIED,
+                    Kind.AFTER_EFFECT,
                     f"{key[0]} cleared after {seconds} s: the after-effect drained.",
                     now,
                 )
@@ -297,7 +314,7 @@ class Agent:
                 continue
             del self._after_effects[key]
             self._handed_over.add(key)
-            incident.note(Kind.VERIFIED, f"{key[0]} {why}: handed to a person.", now)
+            incident.note(Kind.AFTER_EFFECT, f"{key[0]} {why}: handed to a person.", now)
             await self._emit(incident, [])
             if alert.service not in self._open:
                 await self._open_incident(alert)

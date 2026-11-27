@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: sre-agent API
-  version: 1.1.0
+  version: 1.2.0
   summary: Incidents, remediation approvals and agent settings.
   description: |
     Owned by **Kaizer Dewaswala** (SRE agent role, enabling; in collaboration with the Release & Reliability Team).
@@ -426,7 +426,11 @@ components:
           $ref: './shared/common.yaml#/components/schemas/Timestamp'
         kind:
           type: string
-          enum: [OPENED, EVIDENCE_COLLECTED, DIAGNOSIS, PROPOSED, APPROVED, DECLINED, EXECUTED, VERIFIED, RESOLVED, ESCALATED]
+          enum: [OPENED, EVIDENCE_COLLECTED, DIAGNOSIS, PROPOSED, APPROVED, DECLINED, EXECUTED, VERIFIED, RESOLVED, ESCALATED, AFTER_EFFECT]
+          description: |
+            `AFTER_EFFECT` (since 1.2.0): a backlog alert (`ConsumerLagHigh`) on the same service within 10 minutes
+            after this incident's fix worked, attached here instead of opening a new incident: draining, drained,
+            or handed to a person when it stops going down or the 10 minutes end.
         message:
           type: string
           description: Plain-English line shown on the incident feed.

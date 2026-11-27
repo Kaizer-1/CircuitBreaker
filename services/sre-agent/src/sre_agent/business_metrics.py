@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from prometheus_client import CollectorRegistry, Counter, Histogram
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,8 @@ class BusinessMetrics:
     sre_agent_llm_errors_total: Counter
     sre_agent_llm_tokens_total: Counter
     sre_agent_llm_cost_dollars_total: Counter
+    sre_agent_actions_left_this_hour: Gauge
+    sre_agent_cooldown_seconds: Gauge
 
 
 def register_business_metrics(registry: CollectorRegistry) -> BusinessMetrics:
@@ -62,6 +64,20 @@ def register_business_metrics(registry: CollectorRegistry) -> BusinessMetrics:
             "sre_agent_llm_cost_dollars",
             "What OpenRouter charged for the agent's model calls (US dollars), by model.",
             ["model"],
+            registry=registry,
+        ),
+        # The guardrails' budget, for the projector's Incident view (owner, 2026-11-24): read-only,
+        # there is no runtime override.
+        sre_agent_actions_left_this_hour=Gauge(
+            "sre_agent_actions_left_this_hour",
+            "Actions the hourly budget still allows (G6).",
+            registry=registry,
+        ),
+        sre_agent_cooldown_seconds=Gauge(
+            "sre_agent_cooldown_seconds",
+            "Seconds left of a service's cooldown after the agent's last action on it (G5);"
+            " 0: none.",
+            ["service"],
             registry=registry,
         ),
     )

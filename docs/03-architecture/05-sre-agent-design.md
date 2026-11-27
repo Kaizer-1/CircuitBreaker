@@ -115,12 +115,15 @@ instead of acting ([chaos scenarios §5](06-chaos-scenarios.md#5-alert-rules-pro
 **After-effects of a fix (owner's decision, 2026-11-27).** A panic sell leaves order-service with a backlog of
 events, so `ConsumerLagHigh` fires a minute after the agent's scale-up has already fixed the overload. That is not a
 new problem, and a separate "escalated" incident right after a successful fix would mislead the audience; hiding it
-would be worse. So for **10 minutes after an incident recovers through an action**, an information-only alert on
-the same service is attached to *that* incident as an expected after-effect ("ConsumerLagHigh (3,000 now) after the
-scale: an expected after-effect, draining; no action") and watched through the alert's own value. It is noted as
-drained when it clears; it becomes its own incident and goes to a person if its value stops going down for a
-minute, or if it still fires when the 10 minutes end. An alert the agent can act on, after a recovery, is a new
-problem and opens its own incident as before.
+would be worse. So for **10 minutes after an incident recovers through an action**, a **backlog** alert on the
+same service (`ConsumerLagHigh`) is attached to *that* incident as an expected after-effect (timeline kind
+`AFTER_EFFECT`: "ConsumerLagHigh (3,000 now) after the scale: an expected after-effect, draining; no action") and
+watched through the alert's own value. It is noted as drained when it clears; it becomes its own incident and goes
+to a person if its value stops going down for a minute, or if it still fires when the 10 minutes end. Only a
+backlog drains by itself once the fix works: an open circuit breaker or a dead-lettered message in that window is a
+new problem and opens its own incident at once (the live demo's database decline starts minutes after the panic
+sell's scale-up; the first version held it back as an "after-effect" for a minute). So does an alert the agent can
+act on.
 
 **Phase 7 must demonstrate this:** with portfolio-service broken, `OrderServiceCircuitOpen` fires and the incident
 feed shows the agent choosing **not** to act on order-service and escalating, with its explanation. It is a key viva
@@ -277,6 +280,7 @@ The feed (`WS /v1/ws/incidents`, Q-19) streams every step as a short human-reada
 | `sre_agent_declined_total{by,reason}` | Guardrail/admin declines |
 | `sre_agent_time_to_recover_seconds` (histogram) | MTTR source |
 | `sre_agent_llm_latency_seconds`, `sre_agent_llm_errors_total`, `sre_agent_llm_tokens_total{model}`, `sre_agent_llm_cost_dollars_total{model}` | LLM health and spend (the cost is what OpenRouter reports for each call: `usage.include`) |
+| `sre_agent_actions_left_this_hour`, `sre_agent_cooldown_seconds{service}` (gauges) | What the guardrails still allow (G6's hourly budget, G5's cooldowns), for the projector's Incident view; read-only, never settable |
 
 ## 9. Running outside Kubernetes
 

@@ -6,11 +6,13 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from prometheus_client import CollectorRegistry
 
 from sre_agent.application.agent import Agent, AgentConfig, lead_alert
 from sre_agent.application.collector import EvidenceCollector
 from sre_agent.application.decider import Decider
 from sre_agent.application.feed import FeedHub
+from sre_agent.business_metrics import BusinessMetrics, register_business_metrics
 from sre_agent.domain.actions import Proposal, Tool
 from sre_agent.domain.fallback import SOURCE
 from sre_agent.domain.incident import Incident, NotPendingError
@@ -38,6 +40,7 @@ class Rig:
         approval: bool = False,
         logs: FakeLogs | None = None,
         approval_timeout: float = 300.0,
+        business: BusinessMetrics | None = None,
         **config: Any,
     ) -> None:
         self.world, self.clock = world, world.clock
@@ -61,6 +64,7 @@ class Rig:
             feed=FeedHub(),
             now=self.clock.now,
             sleep=self.clock.sleep,
+            metrics=business,
         )
 
     async def run(self) -> list[Incident]:
@@ -466,7 +470,7 @@ async def test_lag_draining_after_a_scale_up_is_an_after_effect_of_that_incident
     (incident,) = await rig.run()
     await keep_ticking(rig, 300)
     assert len(rig.store.incidents) == 1  # no second incident
-    notes = [e.message for e in incident.timeline if e.kind.value == "VERIFIED"]
+    notes = [e.message for e in incident.timeline if e.kind.value == "AFTER_EFFECT"]
     assert any("ConsumerLagHigh" in n and "expected after-effect" in n for n in notes)
     assert any("drained" in n for n in notes)
     assert incident.resolution and incident.resolution.value == "RECOVERED"
@@ -509,3 +513,47 @@ async def test_a_remediable_alert_after_recovery_is_a_new_problem_not_an_after_e
     await rig.run()
     await keep_ticking(rig, 60)
     assert len(rig.store.incidents) == 2
+
+
+async def test_an_open_breaker_after_a_scale_up_is_its_own_incident_at_once(world: World) -> None:
+    """The live demo's short choreography: the database decline starts about 3 minutes after the
+    panic sell's scale-up recovered. An open breaker is no backlog draining away: it must open its
+    own incident, declined at once, not wait as an 'after-effect' of the scale."""
+    overload_after_rollback(world)
+    world.rules.append(
+        Rule(
+            "OrderServiceCircuitOpen",
+            "order-service",
+            remediable=False,
+            firing=lambda w: 180 <= (w.since_action("order-service") or -1) < 400,
+            value=lambda w: 1.0,
+        )
+    )
+    rig = Rig(world)
+    (first,) = await rig.run()
+    await keep_ticking(rig, 150)
+    assert len(rig.store.incidents) == 2
+    second = sorted(rig.store.incidents.values(), key=lambda i: i.incident_id)[-1]
+    assert second.alert_name == "OrderServiceCircuitOpen"
+    assert second.resolution and second.resolution.value == "ESCALATED"
+    assert second.opened_at - first.timeline[0].at < timedelta(seconds=200)  # no minute's wait
+    assert not any(e.kind.value == "AFTER_EFFECT" for e in first.timeline)
+
+
+async def test_the_budget_and_each_cooldown_are_published_for_the_incident_view(
+    world: World,
+) -> None:
+    """Grafana's Incident view shows what the guardrails still allow (owner, 2026-11-24)."""
+    bad_deploy(world)
+    registry = CollectorRegistry()
+    rig = Rig(world, business=register_business_metrics(registry))
+    await rig.run()
+    await keep_ticking(rig, 60)
+
+    def value(name: str, **labels: str) -> float | None:
+        return registry.get_sample_value(name, labels)
+
+    assert value("sre_agent_actions_left_this_hour") == 5
+    cooldown = value("sre_agent_cooldown_seconds", service="order-service")
+    assert cooldown is not None and 0 < cooldown < 300  # the rollback was minutes ago
+    assert value("sre_agent_cooldown_seconds", service="market-data-service") == 0
