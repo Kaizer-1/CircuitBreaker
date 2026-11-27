@@ -1808,6 +1808,7 @@ td:first-child {
   border-style: dashed;
   opacity: 1;
   cursor: not-allowed;
+  white-space: nowrap;
 }
 /* A feed step: its first sentence bold on one line, the reasoning below, smaller. */
 .feed .step .message b {

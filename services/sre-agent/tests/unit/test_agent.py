@@ -621,3 +621,35 @@ async def test_the_budget_and_each_cooldown_are_published_for_the_incident_view(
     cooldown = value("sre_agent_cooldown_seconds", service="order-service")
     assert cooldown is not None and 0 < cooldown < 300  # the rollback was minutes ago
     assert value("sre_agent_cooldown_seconds", service="market-data-service") == 0
+
+
+async def test_a_declined_incident_keeps_its_symptoms_while_its_cause_lasts(world: World) -> None:
+    """Staging, 2026-11-27: the database decline is escalated at once (nothing the agent may do),
+    but its cause is still there, so the gateway's passed-on errors 25 s later are its symptom,
+    not a second incident; a minute after the breaker's alert clears they are handed over."""
+    world.deploy("order-service", (8, 120, "order-service:good", "release 0.5.0 (a1)"))
+    world.metrics["order-service"] = {"rate": 60.0, "normal_rate": 13.0, "error_ratio": 0.3}
+    start = world.clock.now()
+
+    def since(w: World) -> float:
+        return (w.clock.now() - start).total_seconds()
+
+    world.rules.append(
+        Rule(
+            "OrderServiceCircuitOpen",
+            "order-service",
+            remediable=False,
+            firing=lambda w: since(w) < 120,
+            value=lambda w: 1.0,
+        )
+    )
+    gateway_passing_on(world, firing=lambda w: 25 <= since(w) < 300)
+    rig = Rig(world)
+    (decline,) = await rig.run()
+    assert decline.resolution and decline.resolution.value == "ESCALATED"
+    await keep_ticking(rig, 60)
+    assert len(rig.store.incidents) == 1  # the gateway is a symptom, not an incident
+    assert any(e.kind.value == "SYMPTOM" for e in decline.timeline)
+    await keep_ticking(rig, 150)  # the breaker's alert cleared at 120 s; the gateway goes on
+    gateway = [i for i in rig.store.incidents.values() if i.service == "api-gateway"]
+    assert len(gateway) == 1

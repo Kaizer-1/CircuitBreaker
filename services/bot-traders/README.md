@@ -89,11 +89,12 @@ for minutes after the panic sell: every ticker's bid was gone. The panic sells a
 makers' bids, and a maker re-quotes a filled bid at once, so the four makers kept buying until their ₹20,00,000 was spent
 (their own ledger then skipped the bids it could no longer fund); with no cash they could post no bid, so no phone could
 sell. Now if two of a maker's bids on a ticker are filled away within 3 s of being placed, within 10 s, it posts no bid
-there for 30 s (it keeps its ask), then bids once more (`OneSidedFlow`, `domain/strategies.py`): the way a dealer steps
+there for 20 s (it keeps its ask), then bids once more (`OneSidedFlow`, `domain/strategies.py`): the way a dealer steps
 back from a market that only moves against it. In the simulation (`tests/unit/test_panic_market.py`: the 20 bots and the
-real panic at 110 requests/s for 150 s, as long as the agent's fix took on staging) the makers keep about 74% of their
-cash instead of 1%, and every ticker has a bid and an ask from the first candle after the panic; in a normal hour they
-average 3.88 bids per ticker instead of 3.99. `make demo-chaos` and the agent check test it live: within 30 s after a
+real panic at 110 requests/s for 150 s, as long as the agent's fix took on staging) the makers keep about 43% of their
+cash instead of 1%, and every ticker has a bid and an ask within 10 s of the panic's end (at most 25 s: the cool-off and
+one candle); in a normal hour they average 3.91 bids per ticker instead of 3.99. (A 30 s cool-off kept 74% of the cash,
+but on staging one ticker then had no bid for 32 s after the panic: over the owner's 30 s.) `make demo-chaos` and the agent check test it live: within 30 s after a
 panic ends, every ticker has a bid and an ask.
 
 **The strategy interface is the extension point.** A strategy is any object with a `name` and

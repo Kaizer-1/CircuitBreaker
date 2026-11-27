@@ -630,8 +630,8 @@ def test_two_bids_eaten_quickly_pull_the_bid_for_the_cool_off_then_it_comes_back
     flow.bid_filled_away(100.0, lived=1.0)
     assert not flow.bid_pulled(100.0)  # one is chance
     flow.bid_filled_away(104.0, lived=0.5)  # a second within 10 s: one-sided selling
-    assert flow.bid_pulled(104.0) and flow.bid_pulled(133.9)
-    assert not flow.bid_pulled(134.0)  # 30 s later it bids again
+    assert flow.bid_pulled(104.0) and flow.bid_pulled(123.9)
+    assert not flow.bid_pulled(124.0)  # 20 s later it bids again
 
 
 def test_ordinary_fills_and_spread_out_ones_never_pull_the_bid() -> None:

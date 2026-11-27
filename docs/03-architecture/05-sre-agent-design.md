@@ -128,12 +128,13 @@ act on.
 **Symptoms under their cause (owner, 2026-11-27).** A bad deploy or a panic sell in order-service also makes
 `GatewayHighErrorRate` fire, because the gateway passes order-service's errors on. That is not a second problem, so
 it is not a second incident: when most (≥ 50%) of the gateway's 5xx are an upstream's own answers passed on and that
-upstream has an open incident (or one that recovered less than 10 minutes ago), the gateway's alert becomes a
+upstream has an open incident (or one that recovered less than 10 minutes ago, or one the agent declined whose alert
+still fires: its cause is still there), the gateway's alert becomes a
 `SYMPTOM` line on it ("GatewayHighErrorRate on api-gateway: a symptom of INC-0056. 100% of the gateway's errors are
 order-service's answers, passed on; no action"), and another when it clears with its cause. If it fires before its
 root's incident has opened (both alerts fire within seconds), it waits up to 60 s for it. It gets an incident of its
 own when its errors are the gateway's own, when no upstream incident opens within the minute, or when it still fires
-a minute after its root was resolved (handed to a person). The dashboard therefore shows root causes only.
+a minute after its root stopped (recovered, or its alert cleared; handed to a person). The dashboard therefore shows root causes only.
 
 **Phase 7 must demonstrate this:** with portfolio-service broken, `OrderServiceCircuitOpen` fires and the incident
 feed shows the agent choosing **not** to act on order-service and escalating, with its explanation. It is a key viva

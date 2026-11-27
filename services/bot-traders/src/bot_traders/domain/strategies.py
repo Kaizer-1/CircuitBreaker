@@ -24,13 +24,13 @@ wiggle as a trend. Now the worst of 12 simulated hours is 5.3% (most stay within
 `scripts/bots_check.py` holds every ticker within ±10% of its reference.
 - **Market makers pull a bid that one-sided selling keeps eating** (2026-11-27): if two of a maker's
   bids on a ticker are filled away within 3 s of being placed, within 10 s, it posts no bid there
-  for 30 s (it keeps its ask), then bids once; if that is eaten at once too, it waits again. In a
+  for 20 s (it keeps its ask), then bids once; if that is eaten at once too, it waits again. In a
   panic sell every new bid is hit as soon as it appears: in the simulation the four makers spent
   ₹19,82,000 of their ₹20,00,000 buying the panic's shares (staging showed the same: bids skipped
   for lack of cash), and with no cash they could post no bid at all, so no phone could sell after
-  the panic. Now they keep about 74% of it and every ticker has a bid and an ask from the first
-  candle after the panic. In a normal simulated hour the makers average 3.88 bids per ticker
-  instead of 3.99 (asks unchanged).
+  the panic. Now they keep about 43% of it and every ticker has a bid and an ask within 10 s of
+  the panic's end (at most 25 s: the cool-off and one candle; the owner's limit is 30 s). In a
+  normal simulated hour the makers average 3.91 bids per ticker instead of 3.99 (asks unchanged).
 - **Mean reversion** sells above and buys below its moving average (LIMIT orders): pulls back.
 - **Noise** places small random orders: keeps trades flowing when nothing else does.
 """
@@ -65,7 +65,7 @@ class OneSidedFlow:
     quick_seconds: float = 3.0
     window_seconds: float = 10.0
     trips_after: int = 2  # bids eaten quickly within the window
-    cool_off_seconds: float = 30.0
+    cool_off_seconds: float = 20.0
     _emptied: deque[float] = field(default_factory=deque)
     _pulled_until: float = float("-inf")
 

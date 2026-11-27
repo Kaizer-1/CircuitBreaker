@@ -2669,7 +2669,11 @@ def market_two_sided(env: str, timeout: float = TWO_SIDED_WITHIN) -> float | Non
     while True:
         books = [chaos_call(env, "GET", f"/v1/market/{t}/order-book") for t in TICKERS]
         if all(b.get("best_bid_paise") and b.get("best_ask_paise") for b in books):
-            return time.monotonic() - began
+            took = time.monotonic() - began
+            if took <= timeout:
+                return took
+            print(f"    {DIM}two-sided again only after {took:.0f} s{RESET}")
+            return None
         if time.monotonic() - began > timeout:
             one_sided = [
                 t

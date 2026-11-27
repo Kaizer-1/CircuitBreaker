@@ -168,6 +168,8 @@ class Agent:
         self._handed_over: set[tuple[str, str]] = set()
         self._symptoms: dict[tuple[str, str], Incident] = {}  # (alert, service) -> its root
         self._waiting: dict[tuple[str, str], datetime] = {}  # a symptom waiting for its root
+        self._idle_root: dict[tuple[str, str], datetime] = {}  # a symptom's root no longer active
+        self._escalated_root: dict[str, Incident] = {}  # by service: its last escalated incident
         self.settings = AgentSettings(
             environment=config.environment,
             approval_required=config.approval_by_default,
@@ -302,6 +304,9 @@ class Agent:
         window = self._recovery.get(upstream)
         if root is None and window is not None and now < window[1]:
             root = window[0]
+        escalated = self._escalated_root.get(upstream)
+        if root is None and escalated is not None and self._root_alert_firing(escalated):
+            root = escalated  # declined: its cause is still there, so are its symptoms
         if root is not None:
             self._waiting.pop((alert.name, alert.service), None)
             self._symptoms[(alert.name, alert.service)] = root
@@ -317,18 +322,30 @@ class Agent:
         first = self._waiting.setdefault((alert.name, alert.service), now)
         return (now - first).total_seconds() < self._cfg.symptom_wait_seconds
 
+    def _root_alert_firing(self, incident: Incident) -> bool:
+        return any(
+            (a.name, a.service) == (incident.alert_name, incident.service) for a in self._firing
+        )
+
     async def _watch_symptoms(self, alerts: list[Alert], now: datetime) -> None:
         firing = {(a.name, a.service): a for a in alerts}
         for key, root in list(self._symptoms.items()):
             if key not in firing:
                 del self._symptoms[key]
+                self._idle_root.pop(key, None)
                 root.note(Kind.SYMPTOM, f"{key[0]} on {key[1]} cleared with its cause.", now)
                 await self._emit(root, [])
                 continue
-            ended = root.resolved_at
-            if ended is None or (now - ended).total_seconds() < self._cfg.symptom_grace_seconds:
+            if root.resolved_at is None or (
+                root.resolution is Resolution.ESCALATED and self._root_alert_firing(root)
+            ):
+                self._idle_root.pop(key, None)
+                continue  # its root is still active
+            idle = self._idle_root.setdefault(key, now)
+            if (now - idle).total_seconds() < self._cfg.symptom_grace_seconds:
                 continue
             del self._symptoms[key]
+            del self._idle_root[key]
             self._handed_over.add(key)
             root.note(
                 Kind.SYMPTOM,
@@ -711,6 +728,8 @@ class Agent:
 
     async def _resolve(self, incident: Incident, resolution: Resolution, message: str) -> None:
         events = incident.resolve(resolution, message, self._now())
+        if resolution is Resolution.ESCALATED:
+            self._escalated_root[incident.service] = incident
         if events and self._metrics is not None:
             self._metrics.sre_agent_incidents_total.labels(
                 incident.alert_name, resolution.value
