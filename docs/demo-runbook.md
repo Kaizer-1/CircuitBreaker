@@ -127,7 +127,8 @@ section 4), so a tag still names exactly the code that was verified.
 
 | Tag | Verified | Runs on |
 |---|---|---|
-| **`v0.6-demoable`** (preferred) | Phase 6: the platform from `make platform` (Terraform), Argo CD deploying both environments from Git, Sealed Secrets, CI images on GHCR (prepulled for the offline hotspot), the first prod release through `make promote` (PR #12, 9 of 9 smoke tests); plus everything in `v0.5.3-demoable`. CI green. Same data as `v0.5.3-demoable` | Compose **and** the GitOps cluster |
+| **`v0.7-demoable`** (preferred) | Phase 7: chaos-service with four scenarios and the control room, the SRE agent (the model picks one of four tools, guardrails in code, the rule-based fallback, approval mode, the Git revert step), the Grafana *Incident view*, `make demo-chaos` and `make k8s-data-reset`; plus everything in `v0.6-demoable`. CI green (run 46142381070). **Verified on staging** (the short demo 235–250 s over seven runs, the full sequence 542 s, the evaluation 69 of 69). **At this tag prod still runs the Phase 6 images** (`a3e1a35f85c2`: no agent, no chaos) until the Phase 8 promotion; once prod is promoted and rehearsed, a newer tag will name that state. Same tickers and snapshot tables as `v0.6-demoable` | Compose **and** the GitOps cluster |
+| `v0.6-demoable` | Phase 6: the platform from `make platform` (Terraform), Argo CD deploying both environments from Git, Sealed Secrets, CI images on GHCR (prepulled for the offline hotspot), the first prod release through `make promote` (PR #12, 9 of 9 smoke tests); plus everything in `v0.5.3-demoable`. CI green. Same data as `v0.5.3-demoable` | Compose **and** the GitOps cluster |
 | `v0.5.3-demoable` | Cassandra sized for its container, the bounded snapshot tables (`book_snapshots_by_hour`, a 24-hour time-travel horizon), the traffic spike calibrated to 110 requests/s, plus everything in `v0.5.2-demoable`; CI green. **Before GitOps:** on Kubernetes it runs only on a cluster made by `make k8s-up` (a person resets the GitOps cluster first) | Compose **and** Kubernetes (`make k8s-up`) |
 | `v0.5.2-demoable` | The professional ticker names (CALVERA, KORVIN, ASTRYX, HELIOR, TAVIRA), plus everything in `v0.5.1-demoable`; CI green. **Cannot read the new snapshot tables:** `v0.5.3` moved the engine's snapshots to `book_snapshots_by_hour` and dropped `book_snapshots`, so this version's engine finds no snapshot and rebuilds every book from all its events (correct, but slow on a long history). A person resets first | Compose **and** Kubernetes |
 | `v0.5.1-demoable` | Phones ordering over the hotspot address (`make test-phone` on a LAN IP), the tab bar, the QR address kept on Kubernetes, CI green. **Old ticker names:** it cannot read data made with the new ones, so a person resets first | Compose **and** Kubernetes |
@@ -137,7 +138,7 @@ section 4), so a tag still names exactly the code that was verified.
 
 ```bash
 make down                                         # stops the containers; volumes (data) are kept
-git switch -c demo-fallback v0.6-demoable         # a branch at the tag (the working tree must be clean)
+git switch -c demo-fallback v0.7-demoable         # a branch at the tag (the working tree must be clean)
 PUBLIC_BASE_URL=http://<LAN IP>:5173 make up      # builds that version's images
 make bots
 ```
@@ -146,7 +147,7 @@ make bots
 Nothing is built: the tag's image tags are the GHCR images already on the node (`make k8s-prepull`).
 
 ```bash
-make platform revision=v0.6-demoable              # Terraform: 1 change (the Applications' target revision); answer yes
+make platform revision=v0.7-demoable              # Terraform: 1 change (the Applications' target revision); answer yes
 make sync env=prod                                # don't wait for the 30-second poll; then make sync (staging)
 make k8s-status                                   # every Application Synced and Healthy at the tag
 ```
