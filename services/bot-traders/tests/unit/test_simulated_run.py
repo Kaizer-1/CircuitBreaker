@@ -140,6 +140,14 @@ def test_prices_drift_but_stay_near_their_reference(hour: Run) -> None:
         assert all(0.90 * reference <= p <= 1.10 * reference for p in prices), ticker
 
 
+def test_the_one_sided_flow_guard_stays_out_of_a_normal_hour(hour: Run) -> None:
+    """CI, 2026-11-28: with the guard tripping after 2 quick fills it stepped back about 100 times
+    in a normal simulated hour, and a busy ticker's makers quoted 3.3 bids of 4 on the runner. In
+    ordinary trading it should (almost) never trip: it is for a panic."""
+    trips = sum(flow.trips for bot in hour.fleet.bots for flow in bot._flow.values())
+    assert trips <= 10, f"the guard tripped {trips} times in a normal hour"
+
+
 def test_every_strategy_trades(hour: Run) -> None:
     placed = {strategy for strategy, result in hour.results if result == "placed"}
     assert placed == {"market_maker", "momentum", "mean_reversion", "noise"}

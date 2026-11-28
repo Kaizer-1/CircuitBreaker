@@ -68,9 +68,13 @@ class OneSidedFlow:
 
     quick_seconds: float = 3.0
     window_seconds: float = 10.0
-    trips_after: int = 2  # bids eaten quickly within the window
+    # Bids eaten quickly within the window. 4, not 2 (CI, 2026-11-28): in a busy normal market a
+    # maker's bid is eaten quickly 3 times in 10 s at most (simulated hours, four seeds), so 2
+    # tripped about 100 times an hour and thinned the bids; a panic reaches 5 to 14.
+    trips_after: int = 4
     cool_off_seconds: float = 15.0
     probe_seconds: float = 15.0  # after the cool-off, 1-share bids for this long
+    trips: int = 0  # how often the guard has stepped back (the simulation counts them)
     _emptied: deque[float] = field(default_factory=deque)
     _pulled_until: float = float("-inf")
     _probe_until: float = float("-inf")
@@ -86,6 +90,7 @@ class OneSidedFlow:
             self._pulled_until = at + self.cool_off_seconds
             self._probe_until = self._pulled_until + self.probe_seconds
             self._emptied.clear()
+            self.trips += 1
 
     def bid_pulled(self, at: float) -> bool:
         return at < self._pulled_until

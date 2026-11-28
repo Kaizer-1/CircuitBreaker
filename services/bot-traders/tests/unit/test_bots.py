@@ -623,14 +623,15 @@ async def test_other_strategies_keep_their_candle_rhythm_after_a_fill() -> None:
 # ------------------------------------------------------------------ the one-sided flow guard
 
 
-def test_two_bids_eaten_quickly_pull_the_bid_for_the_cool_off_then_it_comes_back() -> None:
+def test_four_bids_eaten_quickly_pull_the_bid_for_the_cool_off_then_it_comes_back() -> None:
     from bot_traders.domain.strategies import OneSidedFlow
 
     flow = OneSidedFlow()
-    flow.bid_filled_away(100.0, lived=1.0)
-    assert not flow.bid_pulled(100.0)  # one is chance
-    flow.bid_filled_away(104.0, lived=0.5)  # a second within 10 s: one-sided selling
-    assert flow.bid_pulled(104.0) and flow.bid_pulled(118.9)
+    for at in (100.0, 102.0, 103.0):
+        flow.bid_filled_away(at, lived=1.0)
+    assert not flow.bid_pulled(103.0)  # three is a busy market (CI, 2026-11-28)
+    flow.bid_filled_away(104.0, lived=0.5)  # a fourth within 10 s: one-sided selling
+    assert flow.bid_pulled(104.0) and flow.bid_pulled(118.9) and flow.trips == 1
     assert not flow.bid_pulled(119.0)  # 15 s later it bids again
 
 
@@ -642,8 +643,8 @@ def test_ordinary_fills_and_spread_out_ones_never_pull_the_bid() -> None:
         slow.bid_filled_away(at, lived=20.0)  # a bid that rested before its fill
     assert not slow.bid_pulled(102.0)
     apart = OneSidedFlow()
-    apart.bid_filled_away(100.0, lived=1.0)
-    apart.bid_filled_away(111.0, lived=1.0)  # more than 10 s later
+    for at in (100.0, 102.0, 104.0, 111.0):  # the fourth more than 10 s after the first
+        apart.bid_filled_away(at, lived=1.0)
     assert not apart.bid_pulled(111.0)
 
 
@@ -685,7 +686,7 @@ async def test_a_bid_eaten_before_its_answer_arrives_still_counts_for_the_guard(
         return placed
 
     exchange.place = eaten_before_the_answer  # type: ignore[method-assign,assignment]
-    for _ in range(2):
+    for _ in range(4):
         await bot.execute(Place("CALVERA", "BUY", 5, 24500), market)
     intents = [intent for _, intent in bot.decide("CALVERA", market)]
     assert not any(isinstance(i, Requote) and i.place.side == "BUY" for i in intents)
@@ -697,8 +698,8 @@ def test_after_the_cool_off_a_maker_probes_with_one_share_and_backs_off_if_it_is
     from bot_traders.domain.strategies import OneSidedFlow
 
     flow = OneSidedFlow()
-    flow.bid_filled_away(100.0, lived=1.0)
-    flow.bid_filled_away(102.0, lived=1.0)  # tripped: no bid until 117
+    for at in (100.0, 100.5, 101.0, 102.0):
+        flow.bid_filled_away(at, lived=1.0)  # tripped at 102: no bid until 117
     assert flow.bid_pulled(110.0) and not flow.bid_probing(110.0)
     assert flow.bid_probing(117.0) and flow.bid_probing(131.9)  # 1-share probes for 15 s
     assert not flow.bid_probing(132.0) and not flow.bid_pulled(132.0)  # then full bids again

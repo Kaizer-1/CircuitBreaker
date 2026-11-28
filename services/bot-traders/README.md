@@ -88,13 +88,19 @@ other strategies keep their candle rhythm.
 for minutes after the panic sell: every ticker's bid was gone. The panic sells about 99 single shares a second into the
 makers' bids, and a maker re-quotes a filled bid at once, so the four makers kept buying until their ₹20,00,000 was spent
 (their own ledger then skipped the bids it could no longer fund); with no cash they could post no bid, so no phone could
-sell. Now if two of a maker's bids on a ticker are filled away within 3 s of being placed, within 10 s, it posts no bid
+sell. Now if four of a maker's bids on a ticker are filled away within 3 s of being placed, within 10 s, it posts no bid
 there for 15 s (it keeps its ask), then bids 1 share at a time for 15 s, a probe (a probe eaten at once means the
 selling goes on: it backs off again), then full bids (`OneSidedFlow`, `domain/strategies.py`): the way a dealer steps
 back from a market that only moves against it. In the simulation (`tests/unit/test_panic_market.py`: the 20 bots and the
-real panic at 110 requests/s for 150 s, as long as the agent's fix took on staging) the makers keep about 105% of their
-cash instead of 1% (they also sold in it, as bot accounts), and every ticker has a bid and an ask again within 15–20 s
-of the panic's end; in a normal hour they average 3.88 bids per ticker instead of 3.99. **Why probes:** with full bids
+real panic at 110 requests/s for 150 s, as long as the agent's fix took on staging) the makers keep 81–94% of their
+cash instead of 1% (four seeds; they also sell in it, as bot accounts), and every ticker has a bid and an ask again
+within 5–25 s of the panic's end; in a normal hour the guard trips 0–4 times and the makers average 3.98–3.99 bids per
+ticker, as with no guard. **Why four** (CI, 2026-11-28): the first version stepped back after two quick fills, but in a
+busy normal market a maker's bid is eaten quickly up to 3 times in 10 s, so it tripped about 100 times in a normal
+simulated hour, and on CI's busiest ticker the makers quoted 3.3 bids of 4 (the check wants 3.5; quote gaps' p95 rose
+from 3 s to 30 s, the guard's pull plus probe). A panic eats a maker's bid quickly 5 to 14 times in 10 s. Two had kept
+the makers' cash at about 105%; four costs a little in each panic, and the demo's panic starts from full cash (the prod
+data reset after the rehearsals). **Why probes:** with full bids
 after each cool-off a panic still cost the makers 60–65% of their cash, and nothing gives it back (the presenter's reset
 does not touch balances): after about ten panics on staging the four makers had ₹12,682 to ₹1,28,087 left of ₹5,00,000
 each, and could post no bids at all. A 1-share probe costs one share. (A 30 s cool-off kept 74%
