@@ -356,7 +356,7 @@ flowchart TB
 |---|---|---|
 | Sealed Secrets | Every service secret is encrypted in Git; the sealing key is backed up off the laptop, and a restore drill passed | [ADR-0019](docs/adr/0019-sealed-secrets-for-gitops.md) |
 | The bootstrap-secret problem | The few secrets needed before Argo CD can decrypt anything (its repo key, its token for the agent) come from Terraform and git-ignored files, never Git | same |
-| NetworkPolicies | Default deny per namespace; each service may reach only what it needs. Proven by 11 connection checks: forbidden ones (a service reaching another's data store) fail, allowed ones open | [deployment §3](docs/03-architecture/07-deployment-and-environments.md#who-may-talk-to-whom-network-policies) |
+| NetworkPolicies | Incoming connections denied by default in each namespace; each service and data store accepts only the callers it needs. Proven by 11 connection checks: forbidden ones (a service reaching another's data store) fail, allowed ones open. Outgoing traffic is not restricted yet | [deployment §3](docs/03-architecture/07-deployment-and-environments.md#who-may-talk-to-whom-network-policies) |
 | Least-privilege RBAC | The agent may patch only Deployments in its own namespace; chaos-service's Role names one Deployment | [SRE agent design §5](docs/03-architecture/05-sre-agent-design.md#defence-in-depth-kubernetes-rbac) |
 | GitHub rulesets | `main` changes only through pull requests; `v*` tags can be neither moved nor deleted; tested with `make github-rules-check` (26 of 26) | [deployment §4](docs/03-architecture/07-deployment-and-environments.md#4-cicd-pipeline-github-actions--argo-cd-gitops) |
 | Images pinned by digest | Base images, data stores and platform charts; a tag can move, a digest cannot | [deployment §4](docs/03-architecture/07-deployment-and-environments.md#every-image-pinned-by-digest) |
@@ -412,6 +412,8 @@ pushes images to your GHCR ([developer setup §11](docs/08-developer-setup.md#11
   refuse to run above load 8.
 - **A one-node cluster.** Namespaces separate staging from prod for names and permissions, not for CPU: heavy load
   in staging slows prod.
+- **Outgoing traffic is open.** NetworkPolicies deny incoming connections by default, but a pod may still connect
+  out (to the internet, for instance); only the agent's pod was ever restricted, for one test.
 - **The agent was evaluated on 25 situations we designed, with one model.** It has never met a failure outside them
   except on our own staging. The chaos scenarios are ours too.
 - **The live demo shows three scenarios, not four.** The bad deploy and its Git revert are on a recorded video:
