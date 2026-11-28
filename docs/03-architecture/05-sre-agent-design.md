@@ -18,7 +18,7 @@ everything it asks for is checked by ordinary code before it happens.
 
 ```mermaid
 flowchart TD
-    A["Every 15 s: poll Prometheus<br/>for firing alerts labelled remediable=true"] --> B{"New alert with<br/>no open incident?"}
+    A["Every 5 s: poll Prometheus<br/>for firing alerts in its namespace"] --> B{"New alert with<br/>no open incident?"}
     B -- no --> A
     B -- yes --> C["Open incident<br/>emit IncidentOpened"]
     C --> D["Collect evidence<br/>(plain code, read-only)"]
