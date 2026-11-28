@@ -84,7 +84,7 @@ still open.
 | Control room | Terminal: on-screen **F6 CONTROL**; paper: **Control room**. Scenarios left (**Start** / **Stop**, **Reset everything**), the agent's live feed right (**Approve** / **Decline** only in approval mode, which stays **off** for the demo), the market strip on top |
 
 **The chaos part of the demo (the short choreography of `make demo-chaos`): about 4 minutes, measured 235–250 s
-from the first click to the last outcome on staging (six runs, 2026-11-27/28; the final one 241 s):**
+from the first click to the last outcome on staging (seven runs, 2026-11-27/28; the last two 241 s and 235 s):**
 
 1. **Start Memory leak** (100 MB a minute, the button's default). It grows quietly; its alert comes about 3½ minutes
    later (measured 215–228 s).

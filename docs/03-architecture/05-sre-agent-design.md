@@ -481,6 +481,7 @@ incident as an after-effect and drained in 30 s, with no incident of its own.
 | Short, 100 MB/min, ×3 (2026-11-27, review fixes) | 239–244 s | 0–5 s | 4–8 s | 86.5% (one run measured) | two runs over 30 s, then a market with no bids: fixed (below) | model, fixed decline |
 | Short, right after a data reset (2026-11-28) | 250 s | 2–5 s | 6–11 s | 87.1% | 8 s (tail 14.4 s) | the leak by the rules (the lost tool call, below) |
 | **Short, the final run after the owner's review** (2026-11-28) | **241 s** | 1–2 s | 4–5 s | 84.1% | **12 s** (tail 15.5 s) | **2 by the model, 1 fixed decline, 0 by the rules** |
+| Short, the makers' guard at 4 quick fills (2026-11-28, below) | 235 s | 0–1 s | 3–4 s | 82.5% | 18 s (tail 0.2 s) | 2 by the model, 1 fixed decline, 0 by the rules |
 
 Every run fixed the leak with a restart and the panic sell with a scale to 5, and declined the database (escalated,
 naming Postgres); the presenter's reset brought everything back to normal in 36–57 s. The first two runs' 11–14 s
@@ -504,6 +505,10 @@ alert became visible late; restarting Prometheus fixed it (runbook §3).
   elsewhere, and labels a still-unusable answer "malformed model answer"
   ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md) note). The final run checks that no
   decision came from the rules.
+- **The makers' guard stepped back in ordinary trading.** CI's bots check found CALVERA's makers quoting 3.3 bids
+  of 4: after 2 quick fills the guard tripped about 100 times in a normal simulated hour. It now waits for 4, which a
+  normal hour never reaches and a panic does at once; the run above, with it, had every ticker two-sided 18 s after
+  the panic.
 - **"normal 0.0/s" on every evidence line** after the cluster was rebuilt: the previous hour had no traffic. The
   evidence now says "no baseline yet" until it has one ([§2](#2-inputs-what-the-agent-sees)); the final run shows real
   baselines ("Requests 74.6/s (normal 12.8/s)").
