@@ -112,13 +112,23 @@ answer can do is one bounded, reversible action.
 
 ```mermaid
 flowchart TB
-    L["LLM answer"] --> S1["1 · The API offers only four tools,<br/>each with a strict JSON Schema"]
-    S1 --> S2["2 · Arguments validated again in our code<br/>(not every model enforces schemas)"]
-    S2 --> S3["3 · Guardrails G1–G11 in code:<br/>own service only, replicas ≤ 5, 5-min cooldown,<br/>3 actions per incident, 6 per hour,<br/>never roll back a known-good release"]
-    S3 --> S4["4 · Optional human approval<br/>(Approve / Decline on the feed)"]
-    S4 --> S5["5 · Kubernetes RBAC: Deployments in its own<br/>namespace only; no Secrets, no exec,<br/>no StatefulSets, no delete"]
-    S5 --> S6["6 · GitHub ruleset: the agent's App can open<br/>a revert PR, never merge or push to main"]
+    L["The model's answer"] --> S1["1 · Only four tools, strict schemas"]
+    S1 --> S2["2 · Arguments checked again in code"]
+    S2 --> S3["3 · Guardrails G1–G11 in code"]
+    S3 --> S4["4 · Optional human approval"]
+    S4 --> S5["5 · Kubernetes RBAC"]
+    S5 --> S6["6 · GitHub ruleset"]
+    S6 --> OK["One bounded, reversible action"]
 ```
+
+1. The API offers the model only the four tools, each with a strict JSON Schema.
+2. Our code validates the arguments again (not every model enforces schemas).
+3. Guardrails in code: the incident's own service only, at most 5 replicas, a 5-minute cooldown per service, at
+   most 3 actions per incident and 6 an hour, and never a rollback of a known-good release.
+4. Optionally, a person approves or declines each proposal on the feed.
+5. Kubernetes RBAC: the agent's account may patch Deployments in its own namespace and nothing else (no Secrets,
+   no exec, no StatefulSets, no delete).
+6. GitHub's ruleset: the agent's App can open a revert pull request but never merge one or push to `main`.
 
 - **Guardrails live outside the model** ([SRE agent design §5](docs/03-architecture/05-sre-agent-design.md#5-guardrails-checked-by-code-after-the-llm-answers)).
   A refused proposal is recorded with its reason and escalated. The budgets cannot be changed at run time, by anyone.
@@ -188,26 +198,29 @@ lists the bugs staging found in the agent and how each was fixed.
 ## Architecture
 
 ```mermaid
-flowchart LR
-    P["Phones and<br/>presenter"] --> WEB["web<br/>React + Vite"] --> GW["api-gateway<br/>JWT, rate limits,<br/>WebSocket proxy"]
-    BT["bot-traders<br/>20 bots"] --> GW
+flowchart TB
+    P["Phones and presenter"] --> WEB["web (React)"] --> GW["api-gateway"]
+    BT["bot-traders"] --> GW
     GW --> OS["order-service"]
-    GW --> MD["market-data-service"]
-    GW --> PS["portfolio-service"]
+    GW --> MD["market-data"]
+    GW --> PS["portfolio"]
     GW --> SA["sre-agent"]
     GW --> CH["chaos-service"]
-    OS -- "reserve (sync,<br/>circuit breaker)" --> PS
+    OS -- "reserve (sync)" --> PS
     OS -- "orders.v1" --> RP[("Redpanda")]
-    RP -- "orders.v1" --> ME["matching-engine<br/>(1 replica)"]
-    ME -- "matching.v1" --> RP
+    RP <-- "orders.v1 / matching.v1" --> ME["matching-engine"]
     RP -- "matching.v1" --> MD
     RP -- "matching.v1" --> PS
-    ME --- ES[("Cassandra:<br/>event store")]
-    PS --- PG[("Postgres:<br/>portfolios")]
-    SA -- "reads" --> OBS["Prometheus, Loki,<br/>Kubernetes API"]
-    SA -- "asks" --> LLM["OpenRouter<br/>(the model)"]
-    CH -- "faults through each target's<br/>own hook (also market-data,<br/>portfolio, bots)" --> OS
+    ME --- ES[("Cassandra event store")]
+    PS --- PG[("Postgres")]
+    SA --> OBS["Prometheus, Loki, Kubernetes API"]
+    SA --> LLM["OpenRouter (the model)"]
 ```
+
+The gateway checks sessions (JWT), applies rate limits and proxies WebSockets. order-service reserves money
+synchronously (behind a circuit breaker) and publishes through an outbox. The matching engine runs as one replica
+(one writer per order book). chaos-service injects each fault through its target's own internal hook (order-service,
+market-data, portfolio, the bots), so the agent can see only the symptoms.
 
 | Service | Job | Data it owns |
 |---|---|---|
@@ -235,26 +248,29 @@ diagrams, the [actions and queries](docs/01-seeds/04-actions-and-queries.md) tab
 sequenceDiagram
     autonumber
     participant Ph as Phone
-    participant GW as api-gateway
-    participant OS as order-service
-    participant PS as portfolio-service
-    participant RP as Redpanda
-    participant ME as matching-engine
-    participant MD as market-data
-    Ph->>GW: POST /v1/orders (Idempotency-Key)
-    GW->>OS: JWT checked, trader id added
-    OS->>PS: reserve cash or shares (sync, 500 ms, circuit breaker)
+    participant GW as Gateway
+    participant OS as Orders
+    participant PS as Portfolio
+    participant K as Redpanda
+    participant ME as Engine
+    Ph->>GW: place order
+    GW->>OS: checked, trader id added
+    OS->>PS: reserve money (sync)
     PS-->>OS: reserved
-    OS->>OS: store order + outbox row (Cassandra)
+    OS->>OS: order + outbox row
     OS-->>Ph: 202 Accepted
-    OS->>RP: relay publishes OrderPlaced (orders.v1, key = ticker)
-    RP->>ME: OrderPlaced
-    ME->>ME: match, append events (per-ticker sequence)
-    ME->>RP: OrderAccepted, TradeExecuted (matching.v1)
-    RP->>PS: settle (idempotent, same transaction)
-    RP->>MD: candles, depth, trades
-    PS-->>Ph: fill pushed over WebSocket
+    OS->>K: OrderPlaced
+    K->>ME: OrderPlaced
+    ME->>ME: match, append events
+    ME->>K: TradeExecuted
+    K->>PS: settle (idempotent)
+    PS-->>Ph: fill pushed live
 ```
+
+Steps in detail: the phone sends an `Idempotency-Key`, so a retry never places a second order; the reservation has
+a 500 ms timeout and a circuit breaker; the outbox relay publishes to `orders.v1` keyed by ticker, so one ticker's
+orders stay in order; the engine gives every event a per-ticker sequence number; market-data-service builds candles
+and depth from the same `matching.v1` events; the fill reaches the phone over a WebSocket.
 
 The reservation is synchronous on purpose, so an order never exists without its money set aside. A saga was
 considered and rejected ([ADR-0011](docs/adr/0011-synchronous-reservation-over-saga.md)). Money is released only
@@ -264,16 +280,15 @@ proven with Redpanda stopped in the end-to-end test.
 ## Event sourcing, CQRS and time travel
 
 ```mermaid
-flowchart LR
-    C["Command:<br/>OrderPlaced"] --> E["matching-engine<br/>decides"]
-    E --> S[("Event store<br/>(ticker, day) → sequence<br/>never deleted")]
-    S --> N[("Snapshots<br/>per ticker per hour")]
-    S --> R["Read models:<br/>portfolio, candles, depth"]
-    T["Time travel to T"] --> Q["snapshot ≤ T<br/>+ events ≤ T"]
+flowchart TB
+    C["OrderPlaced"] --> E["matching-engine decides"]
+    E --> S[("Event store: never deleted")]
+    S --> N[("Snapshots, per ticker per hour")]
+    S --> R["Read models: portfolios, candles, depth"]
+    T["Time travel to moment T"] --> Q["Newest snapshot ≤ T, then the events ≤ T"]
     N --> Q
-    S --> Q
-    Q --> B["Book at T<br/>+ state hash"]
-    B --> V{"hash = live<br/>engine's hash?"}
+    Q --> B["The book at T, and its state hash"]
+    B --> V{"Same hash as the live engine?"}
 ```
 
 The matching engine stores **events, not state**: every acceptance, trade and cancellation has a per-ticker sequence
