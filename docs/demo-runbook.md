@@ -83,15 +83,15 @@ still open.
 | Time travel | Terminal: on-screen **F5 TIME TRAVEL**; paper: **Time travel** under the masthead. Drag the timeline or click a ▲ ▼ marker; **Space** plays and pauses; speed 1× to 60×; **Verify against live** for the proof; **L** or **Back to live** |
 | Control room | Terminal: on-screen **F6 CONTROL**; paper: **Control room**. Scenarios left (**Start** / **Stop**, **Reset everything**), the agent's live feed right (**Approve** / **Decline** only in approval mode, which stays **off** for the demo), the market strip on top |
 
-**The chaos part of the demo (the short choreography of `make demo-chaos`; estimated at about 4 minutes, to be
-replaced by the measured time):**
+**The chaos part of the demo (the short choreography of `make demo-chaos`): about 4 minutes, measured 235–250 s
+from the first click to the last outcome on staging (six runs, 2026-11-27/28; the final one 241 s):**
 
 1. **Start Memory leak** (100 MB a minute, the button's default). It grows quietly; its alert comes about 3½ minutes
-   later.
+   later (measured 215–228 s).
 2. **20 seconds later, start Panic sell.** The market drops, order latency climbs on the strip, the agent scales
-   order-service to 5 (about 40–60 s after the click) and the strip recovers.
+   order-service to 5 (measured 34–49 s after the click) and the strip recovers.
 3. **When Panic sell says "Fixed by the agent" and every ticker has bids again (the dashboard's books; within 30 s of
-   the panic's last order, which comes about 20 s after the panic stopped), start Portfolio database degraded.** While it runs, every new order is
+   the panic's last order, which comes about 15 s after the panic stopped), start Portfolio database degraded.** While it runs, every new order is
    refused (the breaker is open), so it must not start before the market has two sides. The breaker opens; the agent
    does nothing and escalates, naming the database. Meanwhile the leak fires and the agent restarts
    market-data-service.
@@ -99,8 +99,8 @@ replaced by the measured time):**
 
 The bad deploy and the Git revert pull request are shown by the recorded backup video (rehearsed with
 `make demo-chaos mode=full`), not live: every order-service scenario affects order-service, so chaos-service runs them
-one after another, and with the agent's 5-minute cooldown on order-service the full sequence takes about 8.5 minutes
-(estimated).
+one after another, and with the agent's 5-minute cooldown on order-service the full sequence takes about 9 minutes
+(measured 542 s on staging, 2026-11-27).
 
 Projector safety: offensive nicknames are refused at join (a word list, [api-gateway README](../services/api-gateway/README.md#nickname-blocklist-projector-safety));
 anything that slips through is off the screen with **B**.
@@ -115,7 +115,7 @@ anything that slips through is off the screen with **B**.
 | A rude name on the leaderboard | — | **B** hides it; add the word to the blocklist file after the demo |
 | Phones cannot open the QR address, or the QR shows an old address | The laptop rejoined the hotspot: `ipconfig getifaddr en0`; Kubernetes: `make k8s-status` | Compose: `PUBLIC_BASE_URL=http://<LAN IP>:5173 docker compose up -d --no-deps web`; Kubernetes: `make k8s-set-url url=http://<LAN IP>` |
 | An order fails on a phone | The toast says why (no connection, the exchange's reason, an exchange error with its HTTP status, or an app error); the laptop's browser console on the same address shows the full error | No connection: the phone left the hotspot. Exchange error: `make status` / `make k8s-status` |
-| The agent opens incidents about 10 s late, after the laptop slept | Prometheus' rule evaluation lags its own timestamps: `curl -s localhost:9090/api/v1/query --data-urlencode 'query=min_over_time((timestamp(prometheus_rule_group_last_evaluation_timestamp_seconds) - prometheus_rule_group_last_evaluation_timestamp_seconds)[10m:10s])'` shows a group above about 5 s | Restart Prometheus: `kubectl -n observability delete pod prometheus-kube-prometheus-stack-prometheus-0` (its data is on a volume and survives). Found on 2026-11-27: after a night's sleep the Docker VM's clock was corrected while Prometheus kept its schedule, so every alert became visible about 10 s after its own firing time. Step 0's morning restart avoids it |
+| The agent opens incidents about 10 s late, after the laptop slept (a rehearsal's `make demo-chaos` prints "detect" above about 5 s; normal is 0–5 s) | Prometheus' rule evaluation runs behind its own schedule: on `http://localhost:9090` (Alerts, or Status → Rule health) a group's last evaluation is more than 10 s ago. Not a sign: the gap between Prometheus' scrape of itself and its rules' evaluation stamps, which can read anything up to 10 s on a healthy Prometheus (found 2026-11-28, after a restart that left it at 6.9 s and detect at 1–2 s) | Restart Prometheus: `kubectl -n observability delete pod prometheus-kube-prometheus-stack-prometheus-0` (its data is on a volume and survives, the agent's traffic baseline and release history too). Found on 2026-11-27: after a night's sleep every alert became visible about 10 s after its own firing time (detect 11–14 s); after the restart, 0–5 s. Step 0's morning restart avoids it |
 | Something is broken and there is no time to fix it | — | Fall back to the last known-good version (§4) |
 
 ## 4. Fallback: the last known-good version
@@ -197,8 +197,8 @@ on that day's laptop, that the scenario will resolve, so the live run is not the
 A: Every scenario but the leak affects order-service, and two experiments may run at once only on different
 services, so they go one after another; after the agent acts on order-service it may not act there again for 5
 minutes (a guardrail nobody can lift at run time). The full sequence, with the bad deploy, therefore takes about
-8.5 minutes. The live demo has 7 minutes in all, so it shows the leak, the panic sell and the database decline
-overlapping (about 4 minutes) and the bad deploy with its Git revert on a recorded video.
+9 minutes (542 s measured). The live demo has 7 minutes in all, so it shows the leak, the panic sell and the database
+decline overlapping (about 4 minutes: 235–250 s measured) and the bad deploy with its Git revert on a recorded video.
 
 **Q: Why run the warm-up spike in approval mode?**
 A: The agent would scale order-service itself, using one of its six actions an hour and starting the 5-minute

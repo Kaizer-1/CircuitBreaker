@@ -35,6 +35,7 @@ import argparse
 import calendar
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -2754,6 +2755,40 @@ def first_incident(
     )
 
 
+def check_decided_by_the_model(
+    env: str, incidents: list[dict[str, Any]], result: dict[str, Any]
+) -> bool:
+    """Owner, 2026-11-28: on stage the model makes the decisions. Every proposal of the run must be
+    the model's (an information-only alert's fixed decline is never sent to a model, by design);
+    none by the fallback rules. And every evidence line shows a real traffic baseline or says
+    "no baseline yet", never "normal 0.0/s"."""
+    ok, decisions = True, []
+    for summary in incidents:
+        full = dict(chaos_call(env, "GET", f"/v1/incidents/{summary['incident_id']}"))
+        for r in full["remediations"]:
+            decisions.append(
+                {"incident": full["incident_id"], "action": r["action"], "by": r["model"]}
+            )
+        for e in full["timeline"]:
+            if e["kind"] != "EVIDENCE_COLLECTED":
+                continue
+            traffic = re.search(r"Requests [^)]*\)", e["message"])
+            line = traffic.group(0) if traffic else "no traffic line"
+            ok &= verdict(
+                "normal 0.0/s" not in e["message"], f"{full['incident_id']} evidence: {line}"
+            )
+    fallback = [d for d in decisions if d["by"].startswith("rule-based")]
+    fixed = [d for d in decisions if d["by"].startswith("fixed rule")]
+    ok &= verdict(
+        not fallback,
+        f"decided by the model: {len(decisions) - len(fallback) - len(fixed)}; fixed declines of"
+        f" information-only alerts: {len(fixed)}; by the fallback rules: {len(fallback)}"
+        + (f" ({', '.join(d['incident'] + ' ' + d['by'] for d in fallback)})" if fallback else ""),
+    )
+    result["decisions"] = decisions
+    return ok
+
+
 def check_demo(args: argparse.Namespace) -> bool:
     """`make demo-chaos mode=short|full`: the demo's scenarios started as the presenter would, in
     the choreography's order and timing, the SRE agent fixing (or declining) each by itself. Prints
@@ -2896,6 +2931,7 @@ def check_demo(args: argparse.Namespace) -> bool:
             {"incident": i["incident_id"], "alert": i["alert_name"], "service": i["service"]}
             for i in side
         ]
+        ok &= check_decided_by_the_model(env, everything, result)
         total = round(max(ends) - t0) if ends else None
         result["total_s"] = total
         ok &= verdict(

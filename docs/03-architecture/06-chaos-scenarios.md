@@ -149,7 +149,7 @@ limit (50/s), just like a real crowd of many sellers.
 **The market must come back** (owner, 2026-11-27). Within 30 s after the panic ends every ticker has a bid and an ask
 again, so a phone can sell (`make demo-chaos` and the agent check test it). The panic ends when its **last order is
 answered**: the burst stops with the experiment, but the orders it already sent are answered for a while after (the
-tail, about 20 s on staging, reported separately). The first runs on staging left every
+tail, 14–16 s on staging, reported separately). The first runs on staging left every
 ticker without a bid for minutes: the market makers had spent all their cash buying the panic's shares. They now pull
 a bid that one-sided selling keeps eating and come back when it stops
 ([bot-traders README](../../services/bot-traders/README.md)).
@@ -355,6 +355,13 @@ order-service replicas and every Argo CD Application `Synced`. Mains power; the 
 **With the agent** (Phase 7b, 2026-11-26/27): each scenario 3–4 times, the agent deciding and acting itself. From the
 alert firing: detect 1–5 s, mitigate 2–9 s, recovered 23–45 s; the database decline escalated within 3 s. Full table,
 the special tests and what they found: [SRE agent design §11](05-sre-agent-design.md#11-measured-on-staging).
+
+**As the demo runs them** (Phase 7c, 2026-11-27/28, `make demo-chaos env=staging`): the short choreography (the leak,
+the panic sell 20 s later, the database decline once the market has two sides again) took **235–250 s** from the
+first click to the last outcome in six runs, **241 s** in the final one; the full one (with the bad deploy and the
+agent's cooldown) **542 s**. At 100 MB a minute the leak peaked at 84–87% of market-data's limit before the agent's
+restart. The panic's tail (its last order answered after the burst stopped) was 14–16 s, and every ticker had a bid
+and an ask 8–12 s after it in the last two runs.
 
 - **`OrderServiceCircuitOpen` is information, not a call to act.** An open breaker means portfolio-service is failing
   and order-service is doing the right thing (failing fast with 503). Restarting, scaling or rolling back
