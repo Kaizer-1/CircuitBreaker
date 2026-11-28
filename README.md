@@ -77,19 +77,18 @@ from a short menu**. Ordinary code collects the evidence, and ordinary code chec
 ### The loop
 
 ```mermaid
-flowchart LR
-    A["Prometheus alert<br/>fires"] --> B["Open an incident<br/>(one per service)"]
-    B --> C["Collect evidence<br/>in code: metrics, logs,<br/>releases, pods, history"]
-    C --> D["LLM picks ONE<br/>of four tools<br/>+ explanation"]
-    D --> E{"Guardrails<br/>in code"}
-    E -- refused --> X["Escalate to<br/>a person"]
-    E -- allowed --> F{"Approval<br/>mode?"}
-    F -- "on: presenter<br/>approves" --> G["Act through the<br/>Kubernetes API"]
-    F -- off --> G
-    F -- "on: declined" --> X
-    G --> H{"Alert clear<br/>for 60 s?"}
-    H -- yes --> R["Resolved:<br/>RECOVERED"]
-    H -- "no (max 3 actions)" --> C
+flowchart TB
+    A["Prometheus alert fires"] --> B["Open an incident (one per service)"]
+    B --> C["Collect evidence in code:<br/>metrics, logs, releases, pods, history"]
+    C --> D["The LLM picks ONE of four tools<br/>and writes an explanation"]
+    D --> E{"Guardrails in code"}
+    E -- refused --> X["Escalate to a person"]
+    E -- allowed --> F{"Approval mode?"}
+    F -- "off, or on and approved" --> G["Act through the Kubernetes API"]
+    F -- "on and declined" --> X
+    G --> H{"Alert clear for 60 s?"}
+    H -- yes --> R["Resolved: RECOVERED"]
+    H -- "no (at most 3 actions)" --> C
 ```
 
 Every 5 s the agent polls Prometheus for firing alerts in its own namespace (`staging` or `prod`, one agent each).
@@ -311,16 +310,16 @@ limits how far fast seeks reach
 ## GitOps, CI/CD and releases
 
 ```mermaid
-flowchart LR
-    PR["Pull request"] --> CI["CI: lint, types, tests,<br/>contracts, integration,<br/>end to end, gitleaks"]
-    CI --> IMG["Build each changed image once<br/>amd64 + arm64, Trivy scan,<br/>push to GHCR (commit SHA tag)"]
-    IMG --> M["Merge to main<br/>(pull requests only)"]
-    M --> ST["CI commits the tag to<br/>deploy/envs/staging/"]
-    ST --> A1["Argo CD syncs staging<br/>+ PostSync smoke test"]
-    A1 --> PRM["make promote:<br/>a PR copying staging's<br/>tags to prod"]
-    PRM --> H["A person merges it:<br/>that is the release"]
-    H --> A2["Argo CD syncs prod<br/>+ smoke test"]
-    A2 -. "bad release" .-> RV["git revert<br/>(the agent opens it)"]
+flowchart TB
+    PR["Pull request"] --> CI["CI: lint, types, tests, contracts,<br/>integration, end to end, gitleaks"]
+    CI --> IMG["Build each changed image once (amd64 + arm64),<br/>Trivy scan, push to GHCR tagged by commit SHA"]
+    IMG --> M["Merge to main (pull requests only)"]
+    M --> ST["CI commits the new tag to deploy/envs/staging/"]
+    ST --> A1["Argo CD syncs staging + PostSync smoke test"]
+    A1 --> PRM["make promote: a pull request copying<br/>staging's tags to deploy/envs/prod/"]
+    PRM --> H["A person merges it: that is the release"]
+    H --> A2["Argo CD syncs prod + smoke test"]
+    A2 -. "a bad release" .-> RV["git revert (the agent opens it)"]
 ```
 
 - **Terraform** builds the whole platform from nothing with `make platform`: the cluster, both environments
