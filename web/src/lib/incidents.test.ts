@@ -182,3 +182,30 @@ test('the dashboard says how many incidents are open instead of "all systems hea
   const one = apply(emptyFeed, { type: 'incident_opened', data: OPENED })
   expect(openLabel(one)).toBe('1 incident open')
 })
+
+test('an incident handed to a person still counts while its alert fires (owner, 2026-11-28)', () => {
+  const declined = {
+    ...OPENED,
+    incident_id: 'INC-0051',
+    alert_name: 'OrderServiceCircuitOpen',
+    status: 'RESOLVED' as const,
+    resolution: 'ESCALATED' as const,
+  }
+  const held = apply(
+    emptyFeed,
+    { type: 'snapshot', data: [declined] },
+    { type: 'with_a_person', data: { incident_ids: ['INC-0051'] } },
+  )
+  expect(openLabel(held)).toBe('1 incident with a person')
+  expect(statusLine(held)).toBe(
+    'INC-0051 order-service: with a person, OrderServiceCircuitOpen still fires',
+  )
+  const both = apply(held, { type: 'incident_opened', data: OPENED })
+  expect(openLabel(both)).toBe('1 incident open · 1 with a person')
+  expect(statusLine(both)?.startsWith('INC-0052')).toBe(true) // the open one comes first
+  const cleared = apply(both, { type: 'with_a_person', data: { incident_ids: [] } })
+  expect(openLabel(cleared)).toBe('1 incident open')
+  const none = apply(held, { type: 'with_a_person', data: { incident_ids: [] } })
+  expect(openLabel(none)).toBeNull()
+  expect(statusLine(none)).toBeNull()
+})

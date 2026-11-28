@@ -1786,8 +1786,16 @@ td:first-child {
 .feed .decide span {
   margin-right: auto;
 }
+/* The status bar is one line in both skins: every item keeps its words together (the Paper skin
+ * wrapped "1 INCIDENT / OPEN"), and only the incident line gives way, with an ellipsis. */
+.statusbar > * {
+  white-space: nowrap;
+  flex: none;
+}
 /* The dashboard's status-bar line for the open incident. */
 .statusbar .incident {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--down);
   max-width: 50em;
   overflow: hidden;

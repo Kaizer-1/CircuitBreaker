@@ -84,9 +84,13 @@ The screen where the audience watches a fault, its impact and the agent's fix (o
   (from chaos-service) are merged into the same list: the agent itself never reads chaos-service, only this screen
   shows the two side by side.
 
-The dashboard's status bar says how many incidents are open ("1 incident open", in place of "all systems healthy")
-and shows the newest in one line ("INC-0007 order-service: action: Rolled order-service back…"); symptoms are not
-incidents, so only root causes appear.
+The dashboard's status bar says how many incidents are open ("1 incident open", in place of "all systems healthy"),
+and how many the agent handed to a person while their alert still fires ("1 incident open · 1 with a person": resolved
+for the agent, not for the system; Q-19 `with_a_person`). It shows the newest in one line ("INC-0007 order-service:
+action: Rolled order-service back…", or "INC-0009 order-service: with a person, OrderServiceCircuitOpen still fires");
+symptoms are not incidents, so only root causes appear. The bar stays on one line in both skins: only the incident
+line gives way, with an ellipsis. Under a root incident, a symptom is one plain line ("GatewayHighErrorRate on
+api-gateway: symptom of INC-0005, no action").
 
 The four chaos scenarios ([chaos scenarios](../docs/03-architecture/06-chaos-scenarios.md), ADR-0020) as one table, not
 a grid of cards: what each breaks, the fix that is right for it (rollback, restart, scale, or do nothing and escalate),

@@ -102,9 +102,15 @@ function Incident({
       </header>
       {asides(incident.entries).map((a) => (
         <p key={`${a.kind}-${a.subject}`} className={`aside ${a.kind.toLowerCase()}`}>
-          <span className="kind">{a.kind === 'SYMPTOM' ? 'Symptom' : 'After-effect'}</span>
-          {a.kind === 'SYMPTOM' ? `${a.subject}: symptom of ${s.incident_id}` : a.subject} ·{' '}
-          {a.state}
+          {a.kind === 'SYMPTOM' ? (
+            // "GatewayHighErrorRate on api-gateway: symptom of INC-0005, no action"
+            `${a.subject}: symptom of ${s.incident_id}, ${a.state}`
+          ) : (
+            <>
+              <span className="kind">After-effect</span>
+              {a.subject}, {a.state}
+            </>
+          )}
         </p>
       ))}
       <ol className="steps">

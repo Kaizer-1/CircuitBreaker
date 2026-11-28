@@ -98,9 +98,16 @@ export interface FeedState {
   incidents: Record<string, FeedIncident>
   vitals: Vitals | null
   vitalsReceivedAt: number | null // the browser's clock, when the last vitals arrived
+  // Escalated incidents whose alert still fires: resolved for the agent, not for the system.
+  withAPerson: string[]
 }
 
-export const emptyFeed: FeedState = { incidents: {}, vitals: null, vitalsReceivedAt: null }
+export const emptyFeed: FeedState = {
+  incidents: {},
+  vitals: null,
+  vitalsReceivedAt: null,
+  withAPerson: [],
+}
 
 export type FeedMessage =
   | { type: 'snapshot'; data: IncidentSummary[] }
@@ -109,6 +116,7 @@ export type FeedMessage =
   | { type: 'approval_required'; data: { incident_id: string; remediation: Remediation } }
   | { type: 'incident_resolved'; data: IncidentSummary }
   | { type: 'vitals'; data: Vitals }
+  | { type: 'with_a_person'; data: { incident_ids: string[] } }
 
 function upsert(state: FeedState, summary: IncidentSummary): FeedState {
   const known = state.incidents[summary.incident_id]
@@ -181,6 +189,8 @@ export function applyFeed(state: FeedState, message: FeedMessage, receivedAt: nu
     }
     case 'vitals':
       return { ...state, vitals: message.data, vitalsReceivedAt: receivedAt }
+    case 'with_a_person':
+      return { ...state, withAPerson: message.data.incident_ids }
   }
 }
 
@@ -288,11 +298,17 @@ export function outcomeOf(summary: IncidentSummary): string {
   }
 }
 
-/** The one line for the dashboard's status bar: the newest open incident, or null. */
+/** The one line for the dashboard's status bar: the newest open incident, else the newest one
+ * handed to a person while its alert still fires, or null. */
 export function statusLine(state: FeedState): string | null {
   const open = openIncidents(state)
   const top = open[0]
-  if (!top) return null
+  if (!top) {
+    const held = withAPerson(state)[0]
+    if (!held) return null
+    const s = held.summary
+    return `${s.incident_id} ${s.service}: with a person, ${s.alert_name} still fires`
+  }
   const last = top.entries.filter((e) => e.kind !== 'EVIDENCE_COLLECTED').at(-1)
   const what = top.pending
     ? 'waiting for the presenter'
@@ -316,10 +332,22 @@ export function splitSentence(text: string): [string, string] {
   return [text.slice(0, cut + 1), text.slice(cut + 1).trim()]
 }
 
-/** "1 incident open", "2 incidents open" — the dashboard's status, or null when none is. */
+/** Incidents the agent handed to a person whose alert still fires, newest first. */
+export function withAPerson(state: FeedState): FeedIncident[] {
+  return incidentsNewestFirst(state).filter((i) =>
+    state.withAPerson.includes(i.summary.incident_id),
+  )
+}
+
+/** "1 incident open", "1 incident open · 1 with a person", "1 incident with a person": the
+ * dashboard's status, or null when nothing is open and no person holds a still-firing one. */
 export function openLabel(state: FeedState): string | null {
   const n = openIncidents(state).length
-  return n ? `${n} incident${n > 1 ? 's' : ''} open` : null
+  const m = state.withAPerson.length
+  const incidents = (k: number) => `${k} incident${k > 1 ? 's' : ''}`
+  if (n && m) return `${incidents(n)} open · ${m} with a person`
+  if (n) return `${incidents(n)} open`
+  return m ? `${incidents(m)} with a person` : null
 }
 
 export interface Aside {
