@@ -54,6 +54,13 @@ built to be defended in a viva, so every decision has a written reason (21 ADRs)
 
 ![The presenter dashboard in the terminal skin: five tickers, the big CALVERA chart, the QR code to join, the order book and the trades tape](docs/images/dashboard-terminal.webp)
 
+<details>
+<summary>The same dashboard in the paper skin</summary>
+
+![The presenter dashboard in the paper skin](docs/images/dashboard-paper.webp)
+
+</details>
+
 <p align="center">
   <img src="docs/images/phone-both-skins.webp" width="560" alt="The phone trading page in the terminal and paper skins, signed in as a load-test account">
 </p>
@@ -135,6 +142,13 @@ flowchart TB
   order-service's incident, not as a second incident.
 
 ![The control room during the panic sell: the agent's diagnosis says traffic jumped about 5 times, order-service is turning work away, and it scales order-service from 2 to 5 replicas](docs/images/control-room-panic.webp)
+
+<details>
+<summary>The panic sell from start to fix, about 75 seconds (animated, one frame every 6 s)</summary>
+
+![The control room during the panic sell, animated: the market strip turns red, the agent opens an incident, scales order-service to 5, and the strip recovers](docs/images/control-room-panic-sell.webp)
+
+</details>
 
 ### Evaluation: what was counted
 
