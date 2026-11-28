@@ -112,6 +112,10 @@ class World:
 
 
 def key_of(query: str) -> str:
+    if "kube_deployment_spec_replicas" in query:
+        return "replicas_desired"
+    if "kube_deployment_status_replicas_ready" in query:
+        return "replicas_ready"
     if "kube_replicaset_status_ready_replicas" in query:
         return "replicaset_ready"
     if "quantile_over_time" in query:
@@ -144,7 +148,7 @@ def key_of(query: str) -> str:
 
 
 def service_of(query: str) -> str:
-    match = re.search(r'(?:service|container)="([^"]+)"', query)
+    match = re.search(r'(?:service|container|deployment)="([^"]+)"', query)
     return match.group(1) if match else "order-service"
 
 

@@ -66,7 +66,7 @@ SCENARIOS: dict[ScenarioId, Scenario] = {
             "market-data-service",
             "restart_deployment",
             600,
-            {"rate_mb_per_minute": 80},
+            {"rate_mb_per_minute": 100},  # the live demo's rate (headroom, 2026-11-27)
         ),
         Scenario(
             ScenarioId.TRAFFIC_SPIKE,

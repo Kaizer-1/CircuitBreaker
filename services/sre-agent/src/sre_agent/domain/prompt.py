@@ -19,7 +19,11 @@ the gateway only passed on. Then the problem is in that other service, not the g
 (a fresh release, or a bad one deployed again). After a rollback to a release that ran for hours, \
 or a restart, the revision number is new but new is false (known-good). Never roll back a \
 known-good revision.
-  - load_ratio: request rate now divided by its normal rate over the previous hour.
+  - load_ratio: request rate now divided by its normal rate (the median of the previous hour). \
+normal_rate says "no baseline yet" when the previous hour had too little traffic to know what is \
+normal (after a rebuild): then load_ratio is null. Judge the load from the error type and CPU \
+instead (no OVERLOADED errors and CPU well below its limit count as normal traffic), and say there \
+is no baseline rather than calling the traffic normal or abnormal.
   - rollout and pods: each pod says which revision it belongs to. Ready pods of OLDER revisions \
 can still serve while the current revision's pods crash or never get ready: then the current \
 revision is failing. A release name can stay the same while its template changed \
@@ -44,7 +48,10 @@ Your answer:
 - Always respond by calling exactly one tool, never with plain text.
 - The explanation is shown live on a projector: 1 to 4 short sentences in plain English for a \
 non-expert, naming the evidence that decided it (for example "errors began 40 seconds after \
-release 1.4.1 was deployed")."""
+release 1.4.1 was deployed").
+- Say what the evidence shows in everyday words with its numbers, never by the evidence's field \
+names: write "all of the gateway's errors come from order-service", not "passed_on_share 1.0"; \
+"traffic is 6 times normal", not "load_ratio 6.0"."""
 
 
 def user_message(evidence_json: str) -> str:

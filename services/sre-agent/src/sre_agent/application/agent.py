@@ -19,12 +19,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from sre_agent.application.collector import Collected, EvidenceCollector
+from sre_agent.application.collector import GATEWAY, Collected, EvidenceCollector
 from sre_agent.application.decider import Decider, Decision
 from sre_agent.application.feed import FeedHub
 from sre_agent.business_metrics import BusinessMetrics
 from sre_agent.domain import guardrails
 from sre_agent.domain.actions import APPLICATION_SERVICES, Tool
+from sre_agent.domain.fallback import PASSED_ON
 from sre_agent.domain.guardrails import Situation
 from sre_agent.domain.incident import (
     Event,
@@ -66,9 +67,16 @@ def lead_alert(alerts: list[Alert]) -> Alert:
     return min(alerts, key=rank)
 
 
+# Only an alert that measures a backlog can be an after-effect: a backlog drains by itself once the
+# fix works. An open circuit breaker or a dead-lettered message is a new problem whenever it comes
+# (the live demo's database decline starts minutes after the panic sell's scale-up: found while
+# planning it, 2026-11-27).
+AFTER_EFFECT_ALERTS = frozenset({"ConsumerLagHigh"})
+
+
 @dataclass
 class AfterEffect:
-    """An information-only alert expected after a fix, watched on the incident it follows."""
+    """A backlog alert expected after a fix, watched on the incident it follows."""
 
     incident: Incident
     since: datetime
@@ -92,11 +100,17 @@ class AgentConfig:
     approval_timeout_seconds: float = 300.0
     hold_seconds: float = 60.0  # the alert must stay clear this long to count as recovered
     max_rounds: int = 3
-    # After a successful fix, an information-only alert on the same service (ConsumerLagHigh while
-    # the backlog of a panic drains) is an expected after-effect of THAT incident for this long,
-    # not a new incident; it is handed to a person if it stops improving (owner, 2026-11-27).
+    # After a successful fix, a backlog alert on the same service (ConsumerLagHigh while the backlog
+    # of a panic drains: AFTER_EFFECT_ALERTS) is an expected after-effect of THAT incident for this
+    # long, not a new incident; it is handed to a person if it stops improving (owner, 2026-11-27).
     after_effect_seconds: float = 600.0
     drain_check_seconds: float = 60.0  # it must have gone down over this long
+    # The gateway's error alert, when its errors are an upstream's answers passed on, is a SYMPTOM
+    # of that upstream's incident (owner, 2026-11-27): a line on the root incident, not an incident
+    # of its own. Fired before the root's incident opened: it waits this long for it.
+    symptom_wait_seconds: float = 60.0
+    # Still firing this long after its root incident was resolved: handed to a person.
+    symptom_grace_seconds: float = 60.0
     # How long to wait for the alert to clear after each kind of action. Scaling is measured: new
     # pods take 20-60 s to be ready, traffic moves over within ~60 s more, and the latency alert
     # clears 22-28 s after the real recovery (chaos scenarios 3.3), so it gets 4 minutes.
@@ -141,7 +155,9 @@ class Agent:
         self._metrics = metrics
         self._open: dict[str, Incident] = {}  # by service
         self._tasks: dict[str, asyncio.Task[None]] = {}
-        self._escalated: set[tuple[str, str]] = set()  # (alert, service) a person already has
+        # (alert, service) a person already has, while the alert still fires -> its incident ID
+        self._escalated: dict[tuple[str, str], str] = {}
+        self._with_a_person_sent: list[str] | None = None
         self._decisions: dict[str, asyncio.Future[bool]] = {}
         self._actions: list[ActionRecord] = []
         self._acting: set[str] = set()  # services whose action is being verified
@@ -152,6 +168,11 @@ class Agent:
         self._recovery: dict[str, tuple[Incident, datetime, str]] = {}  # service -> its window
         self._after_effects: dict[tuple[str, str], AfterEffect] = {}
         self._handed_over: set[tuple[str, str]] = set()
+        # (alert, service) -> its root incident and the upstream it passes on
+        self._symptoms: dict[tuple[str, str], tuple[Incident, str]] = {}
+        self._waiting: dict[tuple[str, str], datetime] = {}  # a symptom waiting for its root
+        self._idle_root: dict[tuple[str, str], datetime] = {}  # a symptom's root no longer active
+        self._escalated_root: dict[str, Incident] = {}  # by service: its last escalated incident
         self.settings = AgentSettings(
             environment=config.environment,
             approval_required=config.approval_by_default,
@@ -205,6 +226,17 @@ class Agent:
     def open_incidents(self) -> list[Incident]:
         return list(self._open.values())
 
+    def with_a_person(self) -> list[str]:
+        """Incidents handed to a person whose alert still fires: resolved for the agent, not
+        for the system (the status bar counts them, owner 2026-11-28)."""
+        return sorted(set(self._escalated.values()))
+
+    def _publish_with_a_person(self) -> None:
+        now = self.with_a_person()
+        if now != self._with_a_person_sent:
+            self._with_a_person_sent = now
+            self.feed.publish("with_a_person", {"incident_ids": now})
+
     def incident(self, incident_id: str) -> Incident | None:
         return next((i for i in self._open.values() if i.incident_id == incident_id), None)
 
@@ -224,25 +256,43 @@ class Agent:
 
     # ------------------------------------------------------------------ the loop
 
+    def _publish_budget(self) -> None:
+        if self._metrics is None:
+            return
+        budget = self.budget()
+        self._metrics.sre_agent_actions_left_this_hour.set(budget["actions_left_this_hour"])
+        cooldowns = budget["cooldown_seconds_by_service"]
+        for service in sorted(APPLICATION_SERVICES):
+            self._metrics.sre_agent_cooldown_seconds.labels(service).set(cooldowns.get(service, 0))
+
     async def tick(self) -> None:
+        self._publish_budget()
         alerts = await self._alerts.firing_alerts()
         self._firing = alerts
         now = self._now()
         keys = {(a.name, a.service) for a in alerts}
-        self._escalated &= keys  # a cleared alert may open an incident again
+        # A cleared alert may open an incident again.
+        self._escalated = {k: v for k, v in self._escalated.items() if k in keys}
+        self._publish_with_a_person()
         self._handed_over &= keys
         await self._watch_after_effects(alerts, now)
+        await self._watch_symptoms(alerts, now)
+        self._waiting = {k: t for k, t in self._waiting.items() if k in keys}
         by_service: dict[str, list[Alert]] = {}
         for alert in alerts:
             if alert.service in APPLICATION_SERVICES:  # never a data store
                 by_service.setdefault(alert.service, []).append(alert)
-        for service, group in sorted(by_service.items()):
+        # The gateway last: an upstream's incident it may be a symptom of opens first.
+        for service, group in sorted(by_service.items(), key=lambda kv: (kv[0] == GATEWAY, kv[0])):
             if service in self._open:
                 continue
             group = [a for a in group if (a.name, service) not in self._after_effects]
+            group = [a for a in group if (a.name, service) not in self._symptoms]
+            if service == GATEWAY:
+                group = [a for a in group if not await self._symptom_of_upstream(a, now)]
             window = self._recovery.get(service)
             if window is not None and now < window[1]:
-                for alert in [a for a in group if not a.remediable]:
+                for alert in [a for a in group if a.name in AFTER_EFFECT_ALERTS]:
                     if (alert.name, service) not in self._handed_over:
                         await self._attach(window, alert, now)
                 group = [a for a in group if (a.name, service) not in self._after_effects]
@@ -252,6 +302,103 @@ class Agent:
             if (lead.name, service) in self._escalated:
                 continue
             await self._open_incident(lead)
+
+    # ------------------------------------------------------------------ symptoms
+
+    async def _symptom_of_upstream(self, alert: Alert, now: datetime) -> bool:
+        """True if this gateway alert is (or may soon be) a symptom of an upstream's incident:
+        attached to it, or waiting for it to open. False: an incident of its own."""
+        if (alert.name, alert.service) in self._handed_over:
+            return False
+        try:
+            share, upstream = await self._collector.passed_on(alert.service)
+        except Exception:  # Prometheus not answering: decide as before, with its own incident
+            return False
+        if share is None or share < PASSED_ON or upstream is None:
+            return False  # the gateway's own errors
+        root = self._active_root(upstream)
+        window = self._recovery.get(upstream)
+        if root is None and window is not None and now < window[1]:
+            root = window[0]  # just recovered: an after-effect of it, most likely
+        if root is not None:
+            self._waiting.pop((alert.name, alert.service), None)
+            await self._attach_symptom(alert.name, alert.service, root, upstream, share, now)
+            return True
+        first = self._waiting.setdefault((alert.name, alert.service), now)
+        return (now - first).total_seconds() < self._cfg.symptom_wait_seconds
+
+    def _active_root(self, upstream: str) -> Incident | None:
+        """The incident whose cause is there now: an open one, or one the agent declined whose
+        alert still fires (staging, 2026-11-27: an active root comes before a just-recovered
+        one, or the gateway's errors during the database decline went to the panic's incident)."""
+        root = self._open.get(upstream)
+        escalated = self._escalated_root.get(upstream)
+        if root is None and escalated is not None and self._root_alert_firing(escalated):
+            root = escalated
+        return root
+
+    async def _attach_symptom(
+        self,
+        name: str,
+        service: str,
+        root: Incident,
+        upstream: str,
+        share: float | None,
+        now: datetime,
+    ) -> None:
+        self._symptoms[(name, service)] = (root, upstream)
+        passed = f" {round(100 * share)}% of the gateway's errors are" if share is not None else ""
+        root.note(
+            Kind.SYMPTOM,
+            f"{name} on {service}: a symptom of {root.incident_id}.{passed}"
+            f" {upstream}'s answers, passed on; no action."
+            if share is not None
+            else f"{name} on {service}: a symptom of {root.incident_id}; no action.",
+            now,
+        )
+        await self._emit(root, [])
+
+    def _root_alert_firing(self, incident: Incident) -> bool:
+        return any(
+            (a.name, a.service) == (incident.alert_name, incident.service) for a in self._firing
+        )
+
+    async def _watch_symptoms(self, alerts: list[Alert], now: datetime) -> None:
+        firing = {(a.name, a.service): a for a in alerts}
+        for key, (root, upstream) in list(self._symptoms.items()):
+            if key not in firing:
+                del self._symptoms[key]
+                self._idle_root.pop(key, None)
+                root.note(Kind.SYMPTOM, f"{key[0]} on {key[1]} cleared with its cause.", now)
+                await self._emit(root, [])
+                continue
+            if root.resolved_at is None or (
+                root.resolution is Resolution.ESCALATED and self._root_alert_firing(root)
+            ):
+                self._idle_root.pop(key, None)
+                continue  # its root is still active
+            newer = self._active_root(upstream)
+            if newer is not None and newer is not root:  # a new cause took over: move it there
+                self._idle_root.pop(key, None)
+                root.note(Kind.SYMPTOM, f"{key[0]} on {key[1]} moved to {newer.incident_id}.", now)
+                await self._emit(root, [])
+                await self._attach_symptom(key[0], key[1], newer, upstream, None, now)
+                continue
+            idle = self._idle_root.setdefault(key, now)
+            if (now - idle).total_seconds() < self._cfg.symptom_grace_seconds:
+                continue
+            del self._symptoms[key]
+            del self._idle_root[key]
+            self._handed_over.add(key)
+            root.note(
+                Kind.SYMPTOM,
+                f"{key[0]} on {key[1]} still fires after {root.incident_id} was resolved:"
+                " handed to a person as an incident of its own.",
+                now,
+            )
+            await self._emit(root, [])
+            if key[1] not in self._open:
+                await self._open_incident(firing[key])
 
     # ------------------------------------------------------------------ after-effects
 
@@ -264,7 +411,7 @@ class Agent:
         level = f" ({alert.value:.0f} now)" if alert.value is not None else ""
         minutes = (ends - now).total_seconds() / 60
         incident.note(
-            Kind.VERIFIED,
+            Kind.AFTER_EFFECT,
             f"{alert.name}{level} after the {action.replace('_deployment', '')}: an expected"
             f" after-effect, draining; no action. Watched for up to {minutes:.0f} min.",
             now,
@@ -278,7 +425,7 @@ class Agent:
             if alert is None:
                 seconds = round((now - effect.since).total_seconds())
                 incident.note(
-                    Kind.VERIFIED,
+                    Kind.AFTER_EFFECT,
                     f"{key[0]} cleared after {seconds} s: the after-effect drained.",
                     now,
                 )
@@ -297,7 +444,7 @@ class Agent:
                 continue
             del self._after_effects[key]
             self._handed_over.add(key)
-            incident.note(Kind.VERIFIED, f"{key[0]} {why}: handed to a person.", now)
+            incident.note(Kind.AFTER_EFFECT, f"{key[0]} {why}: handed to a person.", now)
             await self._emit(incident, [])
             if alert.service not in self._open:
                 await self._open_incident(alert)
@@ -335,7 +482,8 @@ class Agent:
             self._tasks.pop(incident.incident_id, None)
             self._acting.discard(incident.service)
             if incident.resolution is Resolution.ESCALATED and self._is_firing(lead):
-                self._escalated.add((lead.name, lead.service))
+                self._escalated[(lead.name, lead.service)] = incident.incident_id
+                self._publish_with_a_person()
 
     async def _rounds(self, incident: Incident, lead: Alert) -> None:
         for _ in range(self._cfg.max_rounds):
@@ -367,7 +515,7 @@ class Agent:
     async def _diagnosed(self, incident: Incident, decision: Decision) -> None:
         p = decision.proposal
         prefix = (
-            f"Rule-based (LLM unavailable: {decision.fallback_reason}). "
+            f"Rule-based ({decision.fallback_label}: {decision.fallback_reason}). "
             if decision.by_rules
             else ""
         )
@@ -464,9 +612,20 @@ class Agent:
                 self._actions.append(record)
                 with contextlib.suppress(Exception):
                     await self._store.record_action(record)
+        outcome = "SUCCEEDED" if succeeded else "FAILED"
         if self._metrics is not None:
-            outcome = "SUCCEEDED" if succeeded else "FAILED"
             self._metrics.sre_agent_actions_total.labels(r.action, incident.service, outcome).inc()
+        # One line per action: Grafana's Incident view marks each on its panels (an annotation).
+        logger.info(
+            "action executed",
+            extra={
+                "incident_id": incident.incident_id,
+                "action": r.action,
+                "target_service": incident.service,
+                "outcome": outcome,
+                "details": details,
+            },
+        )
         events = incident.executed(r.remediation_id, succeeded, details, executed_at, git)
         await self._emit(incident, events)
         if not succeeded:
@@ -474,8 +633,6 @@ class Agent:
                 incident, Resolution.ESCALATED, "The action failed: a person takes over."
             )
             return True
-        if git is not None and git.get("status") == "FAILED":
-            incident.note(Kind.VERIFIED, f"Manual git revert needed: {git['reason']}", self._now())
         recovered = await self._wait_clear(lead, self._cfg.verify_seconds[r.action])
         self._acting.discard(incident.service)
         if recovered is not None:
@@ -615,6 +772,8 @@ class Agent:
 
     async def _resolve(self, incident: Incident, resolution: Resolution, message: str) -> None:
         events = incident.resolve(resolution, message, self._now())
+        if resolution is Resolution.ESCALATED:
+            self._escalated_root[incident.service] = incident
         if events and self._metrics is not None:
             self._metrics.sre_agent_incidents_total.labels(
                 incident.alert_name, resolution.value

@@ -4,4 +4,4 @@
 sre-agent:
   image:
     registry: ghcr.io/kaizer-1
-    tag: "1b9e0fe5843a"
+    tag: "64e45d6810c5"

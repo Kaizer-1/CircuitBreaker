@@ -608,6 +608,53 @@ CASES: list[Case] = [
         OS,
         right=frozenset({(ROLLBACK, OS)}),
     ),
+    # A fresh Prometheus (after a rebuild, staging 2026-11-28): the previous hour had no traffic, so
+    # there is no normal rate to compare with. The error type and CPU still tell load from a bug.
+    Case(
+        "panic-no-baseline",
+        "OVERLOADED at 110 requests a second on a fresh cluster: no traffic baseline yet.",
+        lambda w: (
+            long_running(w, OS),
+            metrics(
+                w,
+                OS,
+                rate=110.0,
+                normal_rate=0.0,
+                error_ratio=0.25,
+                errors_by_type={"OVERLOADED": 27.0},
+                p95=2.1,
+                cpu_of_limit=0.98,
+                memory_of_limit=0.45,
+            ),
+        ),
+        "OrderServiceHighErrorRate",
+        OS,
+        right=frozenset({(SCALE, OS)}),
+        never=frozenset({(ROLLBACK, OS), (RESTART, OS)}),
+        replicas=(3, 5),
+    ),
+    Case(
+        "leak-no-baseline",
+        "Memory 74% of its limit and climbing on a fresh cluster: no traffic baseline yet.",
+        lambda w: (
+            long_running(w, MD, 1),
+            metrics(
+                w,
+                MD,
+                rate=1.2,
+                normal_rate=0.0,
+                memory_of_limit=0.74,
+                memory_rising=1.3e6,
+                cpu_of_limit=0.2,
+                p95=0.01,
+                memory_of_limit_series=climbing(12, 0.16, 0.74),
+            ),
+        ),
+        "MarketDataMemoryGrowth",
+        MD,
+        right=frozenset({(RESTART, MD)}),
+        never=frozenset({(SCALE, MD), (ROLLBACK, MD)}),
+    ),
 ]
 
 

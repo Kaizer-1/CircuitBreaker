@@ -99,6 +99,11 @@ class PanicSell:
             await self._task
         return True
 
+    @property
+    def in_flight(self) -> int:
+        """Requests sent and not yet answered (they go on after `stop`: the tail)."""
+        return sum(1 for task in self._requests if not task.done())
+
     async def wait(self) -> None:
         """For tests: until the burst has ended and every request was answered."""
         if self._task is not None:

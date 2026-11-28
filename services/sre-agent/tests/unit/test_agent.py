@@ -6,16 +6,18 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from prometheus_client import CollectorRegistry
 
 from sre_agent.application.agent import Agent, AgentConfig, lead_alert
 from sre_agent.application.collector import EvidenceCollector
 from sre_agent.application.decider import Decider
 from sre_agent.application.feed import FeedHub
+from sre_agent.business_metrics import BusinessMetrics, register_business_metrics
 from sre_agent.domain.actions import Proposal, Tool
 from sre_agent.domain.fallback import SOURCE
 from sre_agent.domain.incident import Incident, NotPendingError
 from sre_agent.ports.gitops import NoGitOps
-from sre_agent.ports.llm import LLMUnavailableError
+from sre_agent.ports.llm import LLMUnavailableError, MalformedAnswerError
 from sre_agent.ports.observability import Alert
 from tests.fakes import (
     Clock,
@@ -38,6 +40,7 @@ class Rig:
         approval: bool = False,
         logs: FakeLogs | None = None,
         approval_timeout: float = 300.0,
+        business: BusinessMetrics | None = None,
         **config: Any,
     ) -> None:
         self.world, self.clock = world, world.clock
@@ -61,6 +64,7 @@ class Rig:
             feed=FeedHub(),
             now=self.clock.now,
             sleep=self.clock.sleep,
+            metrics=business,
         )
 
     async def run(self) -> list[Incident]:
@@ -193,6 +197,24 @@ async def test_the_model_sees_the_three_facts(world: World) -> None:
     assert rig.platform.calls == ["scale order-service 5"]
 
 
+@pytest.mark.parametrize("median", [None, 0.0, 0.3])
+async def test_without_a_baseline_the_evidence_says_so_and_has_no_load_ratio(
+    world: World, median: float | None
+) -> None:
+    """A fresh Prometheus (after a rebuild): the last hour's median is missing, 0 or a trickle."""
+    overload_after_rollback(world)
+    world.metrics["order-service"]["normal_rate"] = median
+    scale = Proposal(Tool.SCALE.value, "order-service", 5, "Overloaded.", "llm:test")
+    llm = FakeLLM(scale)
+    rig = Rig(world, llm)
+    (incident,) = await rig.run()
+    facts = llm.seen[0].facts
+    assert facts["normal_rate"] == "no baseline yet" and facts["load_ratio"] is None
+    assert "(no baseline yet)" in incident.evidence_summary and "normal 0.0" not in (
+        incident.evidence_summary
+    )
+
+
 async def test_the_leak_is_restarted(world: World) -> None:
     world.deploy("market-data-service", (5, 900, "md:1", "release 0.5.0"), desired=1)
     world.metrics["market-data-service"] = {
@@ -237,9 +259,14 @@ async def test_the_degraded_database_is_declined_with_a_fixed_reason_and_not_reo
     )
     llm = FakeLLM()
     rig = Rig(world, llm)
+    queue = rig.agent.feed.subscribe()
     (incident,) = await rig.run()
     assert llm.seen == [] and rig.platform.calls == []  # the model is never asked
     assert incident.resolution and incident.resolution.value == "ESCALATED"
+    # Resolved for the agent, not for the system: the status bar counts it while it fires.
+    assert rig.agent.with_a_person() == [incident.incident_id]
+    told = [m["data"] for m in drain(queue) if m["type"] == "with_a_person"]
+    assert told[-1] == {"incident_ids": [incident.incident_id]}
     r = incident.remediations[0]
     assert r.action == "do_nothing" and "may never touch" in r.explanation
     assert rig.sink.types() == [
@@ -253,10 +280,21 @@ async def test_the_degraded_database_is_declined_with_a_fixed_reason_and_not_reo
     assert len(rig.store.incidents) == 1
     still["on"] = False
     await rig.agent.tick()  # cleared: the next time it fires is a new incident
+    assert rig.agent.with_a_person() == []
+    assert [m["data"] for m in drain(queue) if m["type"] == "with_a_person"] == [
+        {"incident_ids": []}
+    ]
     still["on"] = True
     await rig.agent.tick()
     await rig.agent.wait_idle()
     assert len(rig.store.incidents) == 2
+
+
+def drain(queue: asyncio.Queue[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    while not queue.empty():
+        out.append(queue.get_nowait())
+    return out
 
 
 async def approval(rig: Rig) -> dict[str, Any]:
@@ -321,6 +359,24 @@ async def test_when_the_model_is_unavailable_the_rules_decide_and_say_why(world:
     assert incident.remediations[0].model == SOURCE
 
 
+async def test_a_malformed_answer_is_labelled_as_such_not_as_llm_unavailable(world: World) -> None:
+    """The owner's rule (2026-11-28): "LLM unavailable" only when the model really didn't answer."""
+    bad_deploy(world)
+    lost = MalformedAnswerError(
+        "Amazon Bedrock said the model called a tool but sent no call (asked twice)",
+        "Amazon Bedrock",
+    )
+    rig = Rig(world, FakeLLM(lost))
+    (incident,) = await rig.run()
+    assert rig.platform.calls == ["rollback order-service 8"]
+    diagnosis = next(e for e in incident.timeline if e.kind.value == "DIAGNOSIS")
+    assert diagnosis.message.startswith(
+        "Rule-based (malformed model answer: Amazon Bedrock said the model called a tool"
+    )
+    assert "unavailable" not in diagnosis.message
+    assert incident.remediations[0].model == "rule-based (malformed model answer)"
+
+
 async def test_an_injected_instruction_cannot_move_the_agent_to_another_service(
     world: World,
 ) -> None:
@@ -370,28 +426,92 @@ async def test_incidents_left_open_by_a_restart_are_handed_to_a_person(world: Wo
     assert rig.sink.types("INC-0003") == ["IncidentResolved"]
 
 
-async def test_one_incident_per_service_and_the_gateway_is_left_alone(world: World) -> None:
-    bad_deploy(world)
+def gateway_passing_on(world: World, own: float = 0.0, firing: Any = None) -> None:
+    """The gateway's 5xx: 6/s in all, `own` of them its own problems, the rest order-service's
+    answers passed on."""
     world.deploy("api-gateway", (4, 300, "gw:1", "r0"))
     world.metrics["api-gateway"] = {
         "rate": 20.0,
         "normal_rate": 18.0,
         "errors": 6.0,
-        "own_problems_5xx": 0.0,
-        "upstream_errors": {"order-service": 3.1, "portfolio-service": 0.0},
+        "own_problems_5xx": own,
+        "upstream_errors": {"order-service": 6.0 - own, "portfolio-service": 0.0},
     }
-    world.rules.append(Rule("GatewayHighErrorRate", "api-gateway"))
+    extra = {"firing": firing} if firing is not None else {}
+    world.rules.append(Rule("GatewayHighErrorRate", "api-gateway", **extra))
+
+
+async def test_the_gateways_passed_on_errors_are_a_symptom_line_on_the_root_incident(
+    world: World,
+) -> None:
+    """Owner, 2026-11-27: not an incident of its own, but "symptom of INC-x, no action" under the
+    incident that causes it; it clears with its cause."""
+    bad_deploy(world)
+    gateway_passing_on(world, firing=lambda w: (w.since_action("order-service") or -1) < 30)
     world.rules.append(
         Rule("ConsumerLagHigh", "order-service", severity="warning", remediable=False)
     )
     rig = Rig(world)
     incidents = await rig.run()
-    by_service = {i.service: i for i in incidents}
-    assert set(by_service) == {"api-gateway", "order-service"}
-    assert by_service["order-service"].alert_name == "OrderServiceHighErrorRate"
+    await keep_ticking(rig, 60)
+    assert [i.service for i in incidents] == ["order-service"]  # no gateway incident
     assert rig.platform.calls == ["rollback order-service 8"]
-    gateway = by_service["api-gateway"].remediations[0]
-    assert gateway.action == "do_nothing" and "passed on" in gateway.explanation
+    symptoms = [e.message for e in incidents[0].timeline if e.kind.value == "SYMPTOM"]
+    assert symptoms[0].startswith("GatewayHighErrorRate on api-gateway: a symptom of INC-0001.")
+    assert "100% of the gateway's errors are order-service's answers" in symptoms[0]
+    assert symptoms[-1] == "GatewayHighErrorRate on api-gateway cleared with its cause."
+
+
+async def test_a_gateway_alert_that_fires_first_waits_for_its_roots_incident(
+    world: World,
+) -> None:
+    bad_deploy(world)
+    gateway_passing_on(world)
+    order_rule = world.rules[0]
+    first = world.clock.now()
+    world.rules[0] = Rule(
+        order_rule.name,
+        order_rule.service,
+        summary=order_rule.summary,
+        firing=lambda w: (w.clock.now() - first).total_seconds() >= 20 and order_rule.firing(w),
+    )
+    rig = Rig(world)
+    await rig.agent.start()
+    await keep_ticking(rig, 40)  # the gateway fired 20 s before order-service did
+    assert [i.service for i in rig.store.incidents.values()] == ["order-service"]
+    (root,) = rig.store.incidents.values()
+    assert any(e.kind.value == "SYMPTOM" for e in root.timeline)
+
+
+async def test_the_gateways_own_errors_open_its_own_incident_at_once(world: World) -> None:
+    gateway_passing_on(world, own=6.0)  # INTERNAL_ERROR in the gateway itself
+    rig = Rig(world)
+    incidents = await rig.run()
+    assert [i.service for i in incidents] == ["api-gateway"]
+
+
+async def test_passed_on_errors_with_no_root_incident_get_their_own_after_a_minute(
+    world: World,
+) -> None:
+    gateway_passing_on(world)  # order-service answers errors, but its own alert never fires
+    rig = Rig(world)
+    await rig.agent.start()
+    await keep_ticking(rig, 30)
+    assert not rig.store.incidents  # waiting for a root
+    await keep_ticking(rig, 40)
+    assert [i.service for i in rig.store.incidents.values()] == ["api-gateway"]
+
+
+async def test_a_symptom_that_outlives_its_root_is_handed_to_a_person(world: World) -> None:
+    bad_deploy(world)
+    gateway_passing_on(world)  # keeps firing after order-service recovered
+    rig = Rig(world)
+    (root,) = await rig.run()
+    assert root.resolution and root.resolution.value == "RECOVERED"
+    await keep_ticking(rig, 90)
+    gateway = [i for i in rig.store.incidents.values() if i.service == "api-gateway"]
+    assert len(gateway) == 1
+    assert any("still fires after INC-0001 was resolved" in e.message for e in root.timeline)
 
 
 async def test_a_model_do_nothing_watches_and_auto_clears(world: World) -> None:
@@ -466,7 +586,7 @@ async def test_lag_draining_after_a_scale_up_is_an_after_effect_of_that_incident
     (incident,) = await rig.run()
     await keep_ticking(rig, 300)
     assert len(rig.store.incidents) == 1  # no second incident
-    notes = [e.message for e in incident.timeline if e.kind.value == "VERIFIED"]
+    notes = [e.message for e in incident.timeline if e.kind.value == "AFTER_EFFECT"]
     assert any("ConsumerLagHigh" in n and "expected after-effect" in n for n in notes)
     assert any("drained" in n for n in notes)
     assert incident.resolution and incident.resolution.value == "RECOVERED"
@@ -509,3 +629,114 @@ async def test_a_remediable_alert_after_recovery_is_a_new_problem_not_an_after_e
     await rig.run()
     await keep_ticking(rig, 60)
     assert len(rig.store.incidents) == 2
+
+
+async def test_an_open_breaker_after_a_scale_up_is_its_own_incident_at_once(world: World) -> None:
+    """The live demo's short choreography: the database decline starts about 3 minutes after the
+    panic sell's scale-up recovered. An open breaker is no backlog draining away: it must open its
+    own incident, declined at once, not wait as an 'after-effect' of the scale."""
+    overload_after_rollback(world)
+    world.rules.append(
+        Rule(
+            "OrderServiceCircuitOpen",
+            "order-service",
+            remediable=False,
+            firing=lambda w: 180 <= (w.since_action("order-service") or -1) < 400,
+            value=lambda w: 1.0,
+        )
+    )
+    rig = Rig(world)
+    (first,) = await rig.run()
+    await keep_ticking(rig, 150)
+    assert len(rig.store.incidents) == 2
+    second = sorted(rig.store.incidents.values(), key=lambda i: i.incident_id)[-1]
+    assert second.alert_name == "OrderServiceCircuitOpen"
+    assert second.resolution and second.resolution.value == "ESCALATED"
+    assert second.opened_at - first.timeline[0].at < timedelta(seconds=200)  # no minute's wait
+    assert not any(e.kind.value == "AFTER_EFFECT" for e in first.timeline)
+
+
+async def test_the_budget_and_each_cooldown_are_published_for_the_incident_view(
+    world: World,
+) -> None:
+    """Grafana's Incident view shows what the guardrails still allow (owner, 2026-11-24)."""
+    bad_deploy(world)
+    registry = CollectorRegistry()
+    rig = Rig(world, business=register_business_metrics(registry))
+    await rig.run()
+    await keep_ticking(rig, 60)
+
+    def value(name: str, **labels: str) -> float | None:
+        return registry.get_sample_value(name, labels)
+
+    assert value("sre_agent_actions_left_this_hour") == 5
+    cooldown = value("sre_agent_cooldown_seconds", service="order-service")
+    assert cooldown is not None and 0 < cooldown < 300  # the rollback was minutes ago
+    assert value("sre_agent_cooldown_seconds", service="market-data-service") == 0
+
+
+async def test_a_declined_incident_keeps_its_symptoms_while_its_cause_lasts(world: World) -> None:
+    """Staging, 2026-11-27: the database decline is escalated at once (nothing the agent may do),
+    but its cause is still there, so the gateway's passed-on errors 25 s later are its symptom,
+    not a second incident; a minute after the breaker's alert clears they are handed over."""
+    world.deploy("order-service", (8, 120, "order-service:good", "release 0.5.0 (a1)"))
+    world.metrics["order-service"] = {"rate": 60.0, "normal_rate": 13.0, "error_ratio": 0.3}
+    start = world.clock.now()
+
+    def since(w: World) -> float:
+        return (w.clock.now() - start).total_seconds()
+
+    world.rules.append(
+        Rule(
+            "OrderServiceCircuitOpen",
+            "order-service",
+            remediable=False,
+            firing=lambda w: since(w) < 120,
+            value=lambda w: 1.0,
+        )
+    )
+    gateway_passing_on(world, firing=lambda w: 25 <= since(w) < 300)
+    rig = Rig(world)
+    (decline,) = await rig.run()
+    assert decline.resolution and decline.resolution.value == "ESCALATED"
+    await keep_ticking(rig, 60)
+    assert len(rig.store.incidents) == 1  # the gateway is a symptom, not an incident
+    assert any(e.kind.value == "SYMPTOM" for e in decline.timeline)
+    await keep_ticking(rig, 150)  # the breaker's alert cleared at 120 s; the gateway goes on
+    gateway = [i for i in rig.store.incidents.values() if i.service == "api-gateway"]
+    assert len(gateway) == 1
+
+
+async def test_a_symptom_belongs_to_the_active_root_not_a_just_recovered_one(world: World) -> None:
+    """Staging, 2026-11-27: the panic sell's incident had recovered (its 10-minute window still
+    open) when the database decline was escalated; the gateway's errors that followed were
+    attached to the recovered panic incident and handed over a minute later, as a second
+    incident. The active root (the declined one whose alert still fires) comes first."""
+    bad_deploy(world)
+    start = world.clock.now()
+
+    def since(w: World) -> float:
+        return (w.clock.now() - start).total_seconds()
+
+    rig = Rig(world)
+    (first,) = await rig.run()  # the rollback, recovered: a recovery window on order-service
+    assert first.resolution and first.resolution.value == "RECOVERED"
+    later = since(world)
+    world.rules.append(
+        Rule(
+            "OrderServiceCircuitOpen",
+            "order-service",
+            remediable=False,
+            firing=lambda w: later + 10 <= since(w) < later + 400,
+            value=lambda w: 1.0,
+        )
+    )
+    # The gateway fires after the decline was escalated (on staging it was escalated at once).
+    gateway_passing_on(world, firing=lambda w: later + 60 <= since(w) < later + 400)
+    await keep_ticking(rig, 250)
+    incidents = sorted(rig.store.incidents.values(), key=lambda i: i.incident_id)
+    assert [i.service for i in incidents] == ["order-service", "order-service"]  # no gateway one
+    decline = incidents[1]
+    assert decline.resolution and decline.resolution.value == "ESCALATED"
+    assert any(e.kind.value == "SYMPTOM" for e in decline.timeline)
+    assert not any(e.kind.value == "SYMPTOM" for e in first.timeline)

@@ -14,6 +14,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from sre_agent.domain.signals import NO_BASELINE
+
 MAX_LINE = 300
 MAX_LINES = 50
 
@@ -52,27 +54,30 @@ class Evidence:
         f = self.facts
         parts = []
         if f.get("error_ratio") is not None:
-            parts.append(f"Errors {100 * f['error_ratio']:.1f}%")
-        errors = f.get("errors_per_second_by_type") or {}
-        if errors:
+            errors = f.get("errors_per_second_by_type") or {}
             ranked = sorted(errors.items(), key=lambda kv: -kv[1])
-            kinds = ", ".join(f"{k} {v:.1f}/s" for k, v in ranked)
-            parts.append(f"by type: {kinds}")
+            kinds = f" ({', '.join(f'{k} {v:.1f}/s' for k, v in ranked)})" if ranked else ""
+            parts.append(f"Errors {100 * f['error_ratio']:.1f}%{kinds}")
         revision = f.get("revision") or {}
         if revision:
             state = "new" if revision.get("new") else "known-good"
             release = revision.get("release") or "no release name"
             parts.append(f"Revision {revision.get('number')} ({release}, {state})")
         if f.get("request_rate") is not None:
-            parts.append(
-                f"Requests {f['request_rate']:.1f}/s (normal {f.get('normal_rate') or 0:.1f}/s)"
-            )
+            normal = f.get("normal_rate")
+            usual = f"normal {normal:.1f}/s" if isinstance(normal, int | float) else NO_BASELINE
+            parts.append(f"Requests {f['request_rate']:.1f}/s ({usual})")
         if f.get("memory_of_limit"):
             trend = "rising" if f.get("memory_rising") else "flat"
             parts.append(f"Memory {100 * f['memory_of_limit']:.0f}% of limit, {trend}")
         top = (self.logs.get("top_errors") or [None])[0]
         if top:
-            parts.append(f"Top log error: {top['message'][:80]} ({top['count']} times)")
+            parts.append(f"Top log error: {top['message'][:80]} ({times(int(top['count']))})")
         if self.missing:
             parts.append(f"Not available: {', '.join(self.missing)}")
         return ". ".join(parts) + "." if parts else "No evidence collected."
+
+
+def times(n: int) -> str:
+    """1 -> "once", 2 -> "twice", 5 -> "5 times" (the feed is read aloud on a projector)."""
+    return {1: "once", 2: "twice"}.get(n, f"{n} times")

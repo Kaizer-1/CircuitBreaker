@@ -91,8 +91,9 @@ in logs. → rollback."
 out of memory, and trading continues unaffected throughout.
 
 **Injection:** `chaos-service` calls `POST /internal/v1/faults` on market-data-service with
-`{"fault": "MEMORY_LEAK", "rate_mb_per_minute": 80}` (a parameter; 80 is the default since Phase 7: at the first
-design's 40 MB a minute the pod, idling at about 60 MiB, needed about 8 minutes to reach the alert's 70% line). The
+`{"fault": "MEMORY_LEAK", "rate_mb_per_minute": 100}` (a parameter; 100 is the default since 2026-11-27, the live
+demo's rate, below; it was 80 from Phase 7, and at the first design's 40 MB a minute the pod, idling at about 60 MiB,
+needed about 8 minutes to reach the alert's 70% line). The
 service keeps another `rate / 60` MiB every second in a list nobody reads (a realistic "cache that never evicts"
 bug), in anonymous memory with every page written, so the container's working set climbs in a straight line. It
 grows on a timer, not per WebSocket broadcast as first designed, so the rate does not depend on how many charts are
@@ -106,10 +107,12 @@ it for good, because the leak lives only in the process (tested: memory stays fl
 | 120 MB/min | 175–191 s (32 s) | about 45 s | 2 of 2 |
 | 160 MB/min | 147–155 s (30–32 s) | about 26 s | 2 of 2 |
 
-After the restart the alert cleared within 8–18 s and memory stayed flat for 2 minutes in every run. The agent needs
-about 55 s once the alert fires (detect within 10 s, act within 30 s, then about 15 s of rollout), so **80 MB a minute
-stays the default**: a faster leak makes the demo shorter but could be killed by Kubernetes before the agent's restart.
-The wait is used: the demo runs the bad deploy and the panic sell while the leak grows. The internal fault endpoint exists **only** when the service is started with
+After the restart the alert cleared within 8–18 s and memory stayed flat for 2 minutes in every run. A faster leak
+makes the demo shorter but leaves less room before Kubernetes would kill the pod for its memory, and then Kubernetes,
+not the agent, would fix it. **With the agent acting** (Phase 7c, staging): at 120 MB a minute market-data reached
+**90.9%** of its limit before the agent's restart replaced it (9% left), at 80 MB a minute 84.3%. The owner's line is
+about 10%, so the default (the Chaos Panel's button, the live demo) is **100 MB a minute**, and `make demo-chaos
+mode=full` keeps 80. The internal fault endpoint exists **only** when the service is started with
 `CHAOS_HOOKS_ENABLED=true` (staging and the demo prod; disabled in any real deployment) and is reachable only from
 chaos-service (network policy).
 
@@ -142,6 +145,14 @@ dashboard while order-service is flooded and the agent scales it. A sell that fi
 protection price (last price −10%), which releases its shares, so the burst never runs out of shares; MARKET orders
 never rest, so there is nothing to clean up afterwards. Using 20 accounts keeps each under the gateway's per-bot rate
 limit (50/s), just like a real crowd of many sellers.
+
+**The market must come back** (owner, 2026-11-27). Within 30 s after the panic ends every ticker has a bid and an ask
+again, so a phone can sell (`make demo-chaos` and the agent check test it). The panic ends when its **last order is
+answered**: the burst stops with the experiment, but the orders it already sent are answered for a while after (the
+tail, 0–16 s on staging, reported separately). The first runs on staging left every
+ticker without a bid for minutes: the market makers had spent all their cash buying the panic's shares. They now pull
+a bid that one-sided selling keeps eating and come back when it stops
+([bot-traders README](../../services/bot-traders/README.md)).
 
 Why this mix and not Phase 5's (70% `GET /v1/orders`, 30% resting 1-share buys): a crowd that panics *sells*, and
 the scenario must be one that more order-service pods actually fix. Phase 5 found `GET /v1/orders` limited by a
@@ -344,6 +355,13 @@ order-service replicas and every Argo CD Application `Synced`. Mains power; the 
 **With the agent** (Phase 7b, 2026-11-26/27): each scenario 3–4 times, the agent deciding and acting itself. From the
 alert firing: detect 1–5 s, mitigate 2–9 s, recovered 23–45 s; the database decline escalated within 3 s. Full table,
 the special tests and what they found: [SRE agent design §11](05-sre-agent-design.md#11-measured-on-staging).
+
+**As the demo runs them** (Phase 7c, 2026-11-27/28, `make demo-chaos env=staging`): the short choreography (the leak,
+the panic sell 20 s later, the database decline once the market has two sides again) took **235–250 s** from the
+first click to the last outcome in seven runs (241 s and 235 s in the last two); the full one (with the bad deploy and the
+agent's cooldown) **542 s**. At 100 MB a minute the leak peaked at 84–87% of market-data's limit before the agent's
+restart. The panic's tail (its last order answered after the burst stopped) was 0–16 s, and every ticker had a bid
+and an ask 8–18 s after it in the last three runs.
 
 - **`OrderServiceCircuitOpen` is information, not a call to act.** An open breaker means portfolio-service is failing
   and order-service is doing the right thing (failing fast with 503). Restarting, scaling or rolling back

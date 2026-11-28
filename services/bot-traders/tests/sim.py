@@ -214,6 +214,20 @@ class SimExchange:
         self._match(order)
         return {"order_id": order_id, "status": "PENDING"}
 
+    # ------------------------------------------------------------------ the panic sell's calls
+
+    async def market_sell(self, session: Session, ticker: str) -> int:
+        """A-05 as the panic sends it: a MARKET sell of 1 share, its HTTP status."""
+        try:
+            await self.place(session, Place(ticker, "SELL", 1, None))
+        except OrderRefusedError:
+            return 422
+        return 202
+
+    async def list_orders(self, session: Session) -> int:
+        self.requests += 1
+        return 200
+
     # ------------------------------------------------------------------ the engine
 
     def best(self, ticker: str) -> tuple[int | None, int | None]:

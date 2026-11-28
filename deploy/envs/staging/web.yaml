@@ -4,4 +4,4 @@
 web:
   image:
     registry: ghcr.io/kaizer-1
-    tag: "da7333f99990"
+    tag: "64e45d6810c5"

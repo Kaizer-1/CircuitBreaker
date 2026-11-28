@@ -19,7 +19,7 @@ from sre_agent.domain.actions import MAX_REPLICAS, SCALABLE
 from sre_agent.domain.evidence import MAX_LINES, Evidence, scrub
 from sre_agent.domain.incident import Incident
 from sre_agent.domain.revisions import RevisionFacts
-from sre_agent.domain.signals import Signals
+from sre_agent.domain.signals import NO_BASELINE, Signals, baseline
 from sre_agent.ports.observability import Alert, Logs, Metrics
 from sre_agent.ports.platform import DeploymentState, Platform
 from sre_agent.ports.store import ActionRecord
@@ -143,6 +143,9 @@ class Queries:
         )
 
 
+GATEWAY = "api-gateway"
+
+
 class EvidenceCollector:
     def __init__(
         self,
@@ -157,6 +160,20 @@ class EvidenceCollector:
         self._logs = logs
         self._platform = platform
         self._now = now
+
+    async def passed_on(self, service: str) -> tuple[float | None, str | None]:
+        """For the gateway: the share of its 5xx that are its upstreams' own answers, passed on,
+        and the upstream with the most errors. (None, None) for any other service, or when
+        Prometheus has no 5xx to count. Raises if Prometheus does not answer."""
+        if service != GATEWAY:
+            return None, None
+        q, m = Queries(self._ns, service), self._metrics
+        own = await m.value(q.own_problems_5xx)
+        all_5xx = await m.value(q.errors)
+        share = max(0.0, min(1.0, (all_5xx - (own or 0)) / all_5xx)) if all_5xx else None
+        ups = await m.by_label(q.upstream_errors, "service")
+        upstream = max(ups, key=ups.__getitem__) if ups and max(ups.values()) > 0 else None
+        return share, upstream
 
     async def collect(
         self,
@@ -208,15 +225,10 @@ class EvidenceCollector:
             if slow is not None:
                 slow_per_minute = 60 * slow
                 database = slow > max(DATABASE_SLOW_PER_SECOND, 5 * (base or 0))
-        if alert.service == "api-gateway":
-            own = await get("prometheus", m.value(q.own_problems_5xx), None)
-            all_5xx = await get("prometheus", m.value(q.errors), None)
-            if all_5xx:
-                passed_on = max(0.0, min(1.0, (all_5xx - (own or 0)) / all_5xx))
-            no_ups: dict[str, float] = {}
-            ups = await get("prometheus", m.by_label(q.upstream_errors, "service"), no_ups)
-            if ups:
-                upstream = max(ups, key=ups.__getitem__) if max(ups.values()) > 0 else None
+        if alert.service == GATEWAY:
+            passed_on, upstream = await get(
+                "prometheus", self.passed_on(alert.service), (None, None)
+            )
 
         series_specs = {
             "requests_per_second": q.rate(),
@@ -251,12 +263,13 @@ class EvidenceCollector:
         activity = {name: revisions.spans_from_series(pts, now, 60) for name, pts in ready.items()}
         rev = revisions.facts(deployment.replicasets, now, activity) if deployment else None
         errors = {code: v for code, v in by_type.items() if v > 0}
+        usual = baseline(normal)  # None until the previous hour had enough traffic
         signals = Signals(
             alert=alert.name,
             service=alert.service,
             errors_by_code=errors,
             request_rate=rate or 0.0,
-            normal_rate=normal or 0.0,
+            normal_rate=usual,
             cpu_of_limit=cpu or 0.0,
             memory_of_limit=memory or 0.0,
             memory_rising=(rising or 0) > RISING_BYTES_PER_SECOND,
@@ -273,8 +286,8 @@ class EvidenceCollector:
             "errors_per_second_by_type": {k: round(v, 2) for k, v in errors.items()},
             "main_error_type": signals.main_error,
             "request_rate": _round(rate),
-            "normal_rate": _round(normal),
-            "load_ratio": round(rate / normal, 1) if rate and normal else None,
+            "normal_rate": _round(usual) if usual is not None else NO_BASELINE,
+            "load_ratio": round(rate / usual, 1) if rate and usual else None,
             "p95_latency_seconds": _round(p95),
             "cpu_of_limit": _round(cpu),
             "memory_of_limit": _round(memory),

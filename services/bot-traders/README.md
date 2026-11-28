@@ -84,6 +84,33 @@ on 2 CPUs with a load average of 3 to 6 the bots sent their orders 0.02 to 0.05 
 its orders spread over 1 second instead of 5; a fill during a step on that ticker re-quotes when the step ends. The
 other strategies keep their candle rhythm.
 
+**A market maker pulls a bid that one-sided selling keeps eating** (2026-11-27). On staging the market stayed one-sided
+for minutes after the panic sell: every ticker's bid was gone. The panic sells about 99 single shares a second into the
+makers' bids, and a maker re-quotes a filled bid at once, so the four makers kept buying until their ₹20,00,000 was spent
+(their own ledger then skipped the bids it could no longer fund); with no cash they could post no bid, so no phone could
+sell. Now if four of a maker's bids on a ticker are filled away within 3 s of being placed, within 10 s, it posts no bid
+there for 15 s (it keeps its ask), then bids 1 share at a time for 15 s, a probe (a probe eaten at once means the
+selling goes on: it backs off again), then full bids (`OneSidedFlow`, `domain/strategies.py`): the way a dealer steps
+back from a market that only moves against it. In the simulation (`tests/unit/test_panic_market.py`: the 20 bots and the
+real panic at 110 requests/s for 150 s, as long as the agent's fix took on staging) the makers keep 81–94% of their
+cash instead of 1% (four seeds; they also sell in it, as bot accounts), and every ticker has a bid and an ask again
+within 5–25 s of the panic's end; in a normal hour the guard trips 0–4 times and the makers average 3.98–3.99 bids per
+ticker, as with no guard. **Why four** (CI, 2026-11-28): the first version stepped back after two quick fills, but in a
+busy normal market a maker's bid is eaten quickly up to 3 times in 10 s, so it tripped about 100 times in a normal
+simulated hour, and on CI's busiest ticker the makers quoted 3.3 bids of 4 (the check wants 3.5; quote gaps' p95 rose
+from 3 s to 30 s, the guard's pull plus probe). A panic eats a maker's bid quickly 5 to 14 times in 10 s. Two had kept
+the makers' cash at about 105%; four costs a little in each panic, and the demo's panic starts from full cash (the prod
+data reset after the rehearsals). **Why probes:** with full bids
+after each cool-off a panic still cost the makers 60–65% of their cash, and nothing gives it back (the presenter's reset
+does not touch balances): after about ten panics on staging the four makers had ₹12,682 to ₹1,28,087 left of ₹5,00,000
+each, and could post no bids at all. A 1-share probe costs one share. (A 30 s cool-off kept 74%
+of the cash, but bids then came back after 32 s: over the owner's 30 s.) **Under load the fill overtakes the answer**
+(staging, 2026-11-27): order-service answered a placement in about 2 s while a panic sell ate the new bid within
+milliseconds, so the bid's close reached the bot first; the bot had not listed the bid yet, never saw it eaten, and the
+guard never tripped (the makers' ledger kept skipping bids for lack of cash). A maker's bid that closed before its answer
+came back now counts as eaten at once. `make demo-chaos` and the agent check test it live: within 30 s after a
+panic ends, every ticker has a bid and an ask.
+
 **The strategy interface is the extension point.** A strategy is any object with a `name` and
 `decide(view, rng) -> list[Intent]`.
 
@@ -149,7 +176,9 @@ No business API: the bots use public A-03, A-05, A-07, Q-02, Q-04, Q-07, Q-09 an
 Every service also exposes `/healthz`, `/readyz`, `/metrics` ([coding standards §7](../../docs/05-coding-standards.md#7-standard-operational-endpoints)).
 
 **Business metrics:** `bot_orders_total{strategy,result}` (`placed`, `cancelled`, `skipped`, `refused`), `bots_active`,
-`bot_panic_requests_total{kind,result}` (the panic sell: HTTP status, `no_answer` or `dropped`).
+`bot_panic_requests_total{kind,result}` (the panic sell: HTTP status, `no_answer` or `dropped`),
+`bot_panic_requests_in_flight` and `bot_panic_last_answer_timestamp_seconds` (the panic's tail: stopping ends the
+burst at once, but requests already sent are answered for a while after; the market check counts from the last answer).
 **The bots' own timing** (`scripts/bots_check.py` prints both): `bot_quote_gap_seconds{strategy}`, how long a side
 had no resting order of a bot after the exchange filled its last one, until it placed a new one (for a market
 maker: time without a quote); `bot_order_lateness_seconds{strategy}`, how much later than planned an order went out

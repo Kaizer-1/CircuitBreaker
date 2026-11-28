@@ -1,8 +1,8 @@
 # web
 
-> **Status:** Phase 4. Five screens: **System Status**, the **presenter dashboard** and **time travel**
-> for the projector, and the phone's **Join** and **Trade** pages. Each has two skins, Pink Paper (light) and Terminal
-> (dark), on one layout. The chaos panel, agent controls and incident feed arrive in Phase 7.
+> **Status:** Phase 7. Six screens: **System Status**, the **presenter dashboard**, **time travel** and the
+> **control room** (chaos scenarios and the SRE agent's live incident feed) for the projector, and the phone's
+> **Join** and **Trade** pages. Each has two skins, Pink Paper (light) and Terminal (dark), on one layout.
 
 |                 |                                                  |
 | --------------- | ------------------------------------------------ |
@@ -14,15 +14,14 @@
 
 React + Vite + TypeScript single-page app with TradingView Lightweight Charts. Every call goes through api-gateway.
 
-| Page                    | URL                       | Who                   | Sign-in               | Uses                                     |
-| ----------------------- | ------------------------- | --------------------- | --------------------- | ---------------------------------------- |
-| **System Status**       | `/` (also `/status`)      | Presenter, developers | Admin passcode (A-04) | `GET /v1/system/status`                  |
-| **Presenter dashboard** | `/dashboard`              | Presenter (projector) | Admin passcode (A-04) | Q-02, Q-06 (all five tickers), Q-11, QR  |
-| **Time travel**         | `/time-travel`            | Presenter (projector) | Admin passcode (A-04) | Q-03, Q-06, Q-12, Q-13                   |
-| **Join**                | `/join` (the QR's target) | Trader (phone)        | None: a nickname      | A-01                                     |
-| **Trade**               | `/trade`                  | Trader (phone)        | The session from Join | Q-02, Q-06, Q-07, Q-09, Q-10, A-05, A-07 |
-| **Chaos Panel**         | `/chaos`                  | Presenter (projector) | Admin passcode (A-04) | Q-21, Q-22, A-10, A-11, A-20             |
-| Incident feed, agent    | (Phase 7, PR 7c)          | Admin                 |                       | Q-17–Q-20, A-14, A-15                    |
+| Page                    | URL                       | Who                   | Sign-in               | Uses                                                             |
+| ----------------------- | ------------------------- | --------------------- | --------------------- | ---------------------------------------------------------------- |
+| **System Status**       | `/` (also `/status`)      | Presenter, developers | Admin passcode (A-04) | `GET /v1/system/status`                                          |
+| **Presenter dashboard** | `/dashboard`              | Presenter (projector) | Admin passcode (A-04) | Q-02, Q-06 (all five tickers), Q-11, Q-19, QR                    |
+| **Time travel**         | `/time-travel`            | Presenter (projector) | Admin passcode (A-04) | Q-03, Q-06, Q-12, Q-13                                           |
+| **Join**                | `/join` (the QR's target) | Trader (phone)        | None: a nickname      | A-01                                                             |
+| **Trade**               | `/trade`                  | Trader (phone)        | The session from Join | Q-02, Q-06, Q-07, Q-09, Q-10, A-05, A-07                         |
+| **Control room**        | `/chaos`                  | Presenter (projector) | Admin passcode (A-04) | Q-21, Q-22, A-10, A-11, A-20; Q-02; Q-18, Q-19, Q-20, A-14, A-15 |
 
 - **Presenter dashboard:** the five tickers in a watchlist, the selected one big (keys 1–5 choose it), 5-second candles,
   the order book (best 6 levels), the trades tape, the join QR code, and a status bar (health, live streams, volume).
@@ -64,16 +63,46 @@ the gateway never log it. On every connect the server sends a snapshot, then upd
 (`src/market/stream.ts`, waiting 1 s, then 2 s, doubling up to 30 s) and starts again from a fresh snapshot
 ([read side §4](../docs/03-architecture/08-read-side.md#4-snapshot-then-updates-resyncing-a-client)).
 
-### Chaos Panel (presenter)
+### Control room (presenter)
+
+The screen where the audience watches a fault, its impact and the agent's fix (owner, 2026-11-27). Three parts:
+
+- **Market strip** (`components/MarketStrip.tsx`): the five tickers' prices and change (Q-02), then what the SRE agent
+  sees, from the feed's `vitals` (Q-19, every 5 s): order-service's p95 latency, error rate, orders per second and
+  replicas, and market-data-service's memory. A number past its alert's threshold is in the "down" colour. With no
+  vitals for 15 s the agent's numbers grey out and the strip says **stale since** the last one, instead of showing old
+  numbers as current.
+- **Scenarios** (left): the Chaos Panel below.
+- **The SRE agent** (right, `components/IncidentFeed.tsx`): approval on or off (A-14, a button), the actions the hourly
+  budget still allows and each service's cooldown (Q-20, polled every 2 s); then every incident, newest first, with
+  its steps in order, each step's kind a word and a colour (Opened, Evidence, Diagnosis, Proposed, Approved, Action,
+  Check, Resolved, Escalated) with its first sentence in bold and the reasoning below it, smaller; another service's
+  alert it caused (a **symptom**, such as the gateway passing order-service's errors on) and a backlog draining after
+  the fix (an **after-effect**) fold into one short line each under the incident; outcomes name their starting
+  point ("Recovered 49 s after detection"); and **Approve** / **Decline** while approval mode holds a proposal
+  (A-15). A screen that connects after an incident opened reads its earlier steps from Q-18. The presenter's resets
+  (from chaos-service) are merged into the same list: the agent itself never reads chaos-service, only this screen
+  shows the two side by side.
+
+The dashboard's status bar says how many incidents are open ("1 incident open", in place of "all systems healthy"),
+and how many the agent handed to a person while their alert still fires ("1 incident open · 1 with a person": resolved
+for the agent, not for the system; Q-19 `with_a_person`). It shows the newest in one line ("INC-0007 order-service:
+action: Rolled order-service back…", or "INC-0009 order-service: with a person, OrderServiceCircuitOpen still fires");
+symptoms are not incidents, so only root causes appear. The bar stays on one line in both skins: only the incident
+line gives way, with an ellipsis. Under a root incident, a symptom is one plain line ("GatewayHighErrorRate on
+api-gateway: symptom of INC-0005, no action").
 
 The four chaos scenarios ([chaos scenarios](../docs/03-architecture/06-chaos-scenarios.md), ADR-0020) as one table, not
 a grid of cards: what each breaks, the fix that is right for it (rollback, restart, scale, or do nothing and escalate),
 its state (ready; running with the time left and, once the SRE agent opened an incident, how fast it was detected; or
-how it ended) and a **Start** / **Stop** button. **Reset everything** (A-20) ends every experiment and undoes every
+how it ended; while the agent's cooldown on the service it would fix runs, or its hourly budget is used up,
+**Waiting: agent cooldown 1:20** with the time left, because the agent would refuse to act until then; its button then
+says **Not yet** and cannot be pressed) and a **Start** / **Stop** button. Times name their starting point: "resolved
+156 s after start · recovered 49 s after detection". **Reset everything** (A-20) ends every experiment and undoes every
 fault, including replicas the agent added. A start chaos-service refuses (another experiment already affects that
 service: `409`) shows its reason in the status strip. Below, chaos-service's own timeline (and the presenter's
-resets), newest first. Polled every 2 s (Q-21, Q-22). Reached by the terminal skin's on-screen **F6 CHAOS** key or
-the paper skin's **Chaos** section link. The SRE agent never reads any of it: it works from symptoms.
+resets), newest first. Polled every 2 s (Q-21, Q-22). Reached by the terminal skin's on-screen **F6 CONTROL** key or
+the paper skin's **Control room** section link. The SRE agent never reads any of it: it works from symptoms.
 
 ### Time travel (presenter)
 

@@ -1,5 +1,5 @@
-"""The OpenRouter client: what it sends, and that anything but one usable tool call is
-"unavailable" with a reason (ADR-0021)."""
+"""The OpenRouter client: what it sends, and that anything but one usable tool call fails with a
+reason (ADR-0021): "unavailable" when no answer came, "malformed" when the answer was unusable."""
 
 import json
 from typing import Any
@@ -9,7 +9,7 @@ import pytest
 
 from sre_agent.adapters.openrouter import OpenRouterClient
 from sre_agent.domain.evidence import Evidence
-from sre_agent.ports.llm import LLMUnavailableError
+from sre_agent.ports.llm import LLMUnavailableError, MalformedAnswerError
 
 EVIDENCE = Evidence(alert={"name": "OrderServiceHighErrorRate"}, facts={"main_error_type": "X"})
 MODEL = "anthropic/claude-sonnet-5.5"
@@ -63,7 +63,7 @@ async def test_one_tool_call_becomes_the_proposal_and_the_request_is_as_designed
     )
     assert choice.proposal.source == MODEL and choice.cost_dollars == 0.0089
     body = server.bodies[0]
-    assert body["tool_choice"] == "auto" and "parallel_tool_calls" not in body
+    assert body["tool_choice"] == "auto" and "parallel_tool_calls" not in body  # see the module
     assert body["provider"] == {"require_parameters": True, "data_collection": "deny"}
     assert body["usage"] == {"include": True}  # so OpenRouter says what each call cost
     assert len(body["tools"]) == 4 and "temperature" not in body
@@ -84,20 +84,97 @@ async def test_optional_parameters_are_sent_only_when_the_model_list_offers_them
     assert server.bodies[0]["parallel_tool_calls"] is False
 
 
+# The answer staging got on 2026-11-27 (generation gen-1795810254-3ARvLr7TXnJkx4xtCigv, the leak
+# incident INC-0006): the model wrote a sentence, then called a tool (Bedrock's stop reason
+# tool_use; OpenRouter counted 322 completion tokens), but the answer held only the sentence.
+LOST_CALL = {
+    "id": "gen-1795810254-3ARvLr7TXnJkx4xtCigv",
+    "provider": "Amazon Bedrock",
+    "model": "anthropic/claude-sonnet-5.5-20260928",
+    "object": "chat.completion",
+    "choices": [
+        {
+            "logprobs": None,
+            "finish_reason": "tool_calls",
+            "native_finish_reason": "tool_use",
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "Memory in market-data-service is climbing steadily, and traffic is"
+                " normal at about 1 request per second. The revision is known-good: release"
+                " 0.5.0 has run for 237 minutes, and the current revision is ",
+                "refusal": None,
+                "reasoning": None,
+            },
+        }
+    ],
+    "usage": {"prompt_tokens": 2258, "completion_tokens": 232, "total_tokens": 2490},
+}
+
+
+async def test_the_lost_tool_call_is_asked_again_elsewhere_and_the_model_decides() -> None:
+    server = Server(httpx.Response(200, json=LOST_CALL), httpx.Response(200, json=answer(SCALE)))
+    choice = await client(server).choose_action(EVIDENCE, 25)
+    assert (choice.proposal.tool, choice.proposal.source, choice.attempts) == (
+        "scale_deployment",
+        MODEL,
+        2,
+    )
+    first, second = server.bodies
+    assert "ignore" not in first["provider"]
+    assert second["provider"]["ignore"] == ["Amazon Bedrock"]  # never the same provider twice
+    assert second["messages"] == first["messages"] and second["tools"] == first["tools"]
+
+
+async def test_the_lost_tool_call_twice_is_a_malformed_answer_not_an_unavailable_model() -> None:
+    server = Server(httpx.Response(200, json=LOST_CALL), httpx.Response(200, json=LOST_CALL))
+    with pytest.raises(MalformedAnswerError) as caught:
+        await client(server).choose_action(EVIDENCE, 25)
+    assert str(caught.value) == (
+        "Amazon Bedrock said the model called a tool but sent no call (asked twice)"
+    )
+    assert caught.value.label == "malformed model answer"
+    assert len(server.bodies) == 2
+
+
+async def test_no_second_try_when_too_little_of_the_deadline_is_left() -> None:
+    server = Server(httpx.Response(200, json=LOST_CALL))
+    with pytest.raises(MalformedAnswerError, match="sent no call$"):
+        await client(server).choose_action(EVIDENCE, 7)  # a retry needs 8 s
+    assert len(server.bodies) == 1
+
+
 @pytest.mark.parametrize(
     ("response", "reason"),
     [
-        (answer(finish="stop"), "no tool call"),
+        (answer(finish="stop"), "text and no tool call"),
         (answer(SCALE, SCALE), "2 tool calls"),
         (answer({"name": "restart_deployment", "arguments": "{oops"}), "not JSON"),
         (answer(SCALE, finish="length"), "cut off"),
     ],
 )
-async def test_anything_but_one_usable_tool_call_is_unavailable(
+async def test_anything_but_one_usable_tool_call_is_malformed(
     response: dict[str, Any], reason: str
 ) -> None:
-    with pytest.raises(LLMUnavailableError, match=reason):
-        await client(Server(httpx.Response(200, json=response))).choose_action(EVIDENCE, 25)
+    server = Server(httpx.Response(200, json=response), httpx.Response(200, json=response))
+    with pytest.raises(MalformedAnswerError, match=reason):
+        await client(server).choose_action(EVIDENCE, 25)
+    assert len(server.bodies) == 2
+
+
+async def test_no_answer_at_all_is_unavailable_not_malformed() -> None:
+    for failure in (httpx.Response(402), httpx.ReadTimeout("slow")):
+        with pytest.raises(LLMUnavailableError) as caught:
+            await client(Server(failure)).choose_action(EVIDENCE, 25)
+        assert not isinstance(caught.value, MalformedAnswerError)
+        assert caught.value.label == "LLM unavailable"
+
+
+async def test_a_provider_error_is_retried_without_that_provider() -> None:
+    broken = {"provider": "Some Cloud", "choices": [{"error": {"code": 502}, "message": {}}]}
+    server = Server(httpx.Response(200, json=broken), httpx.Response(200, json=answer(SCALE)))
+    assert (await client(server).choose_action(EVIDENCE, 25)).attempts == 2
+    assert server.bodies[1]["provider"]["ignore"] == ["Some Cloud"]
 
 
 async def test_a_fast_failure_is_retried_once_and_a_used_up_credit_is_not() -> None:

@@ -278,11 +278,12 @@ class ChaosLab:
         service, opened_at = d["service"], parse_timestamp(d["opened_at"])
         for e in self.running():
             if service in e.scenario.affects and opened_at >= e.started_at:
-                text = f"Agent opened {d['incident_id']} ({d['alert_name']} on {service})."
+                what = (d.get("summary") or f"{d['alert_name']} on {service}").rstrip(".")
+                text = f"The agent opened {d['incident_id']}: {what}."
                 if e.incident_id is None and service == e.scenario.primary:
                     e.incident_id = d["incident_id"]
                     e.time_to_detect_seconds = round((opened_at - e.started_at).total_seconds())
-                    text += f" Detected after {e.time_to_detect_seconds} s."
+                    text += f" Detected {e.time_to_detect_seconds} s after the start."
                 e.log(at, text)
                 return
 
@@ -291,21 +292,52 @@ class ChaosLab:
         if experiment is None:
             return
         if kind == "RemediationProposed":
-            experiment.log(at, f"Agent proposed {d['action']} on {d['target_service']}.")
+            experiment.log(at, f"The agent proposed to {action_words(d)}.")
         elif kind == "RemediationDeclined":
             experiment.log(at, f"Declined by {d['declined_by']}: {d['reason']}")
         else:
             experiment.agent_actions.append(d["action"])
-            experiment.log(at, f"Agent ran {d['action']} ({d['outcome']}).")
+            done = str(d.get("details") or "").strip() or f"{action_words(d)}."
+            if d.get("outcome") == "FAILED":
+                experiment.log(at, f"The agent's action failed: {done}")
+            else:
+                experiment.log(at, f"The agent acted: {done[:1].lower()}{done[1:]}")
 
     async def _resolved(self, d: dict[str, Any], at: datetime) -> None:
         experiment = self._experiment_for(d["incident_id"])
         if experiment is None:
             return
         resolved_at = parse_timestamp(d["resolved_at"])
-        experiment.log(at, f"Incident {d['incident_id']} resolved: {d['resolution']}.")
+        experiment.log(
+            at, f"{d['incident_id']} {RESOLUTIONS.get(d['resolution'], 'was resolved')}."
+        )
         if d["resolution"] == "RECOVERED" and experiment.running:
             seconds = (resolved_at - experiment.started_at).total_seconds()
             experiment.time_to_recover_seconds = round(seconds)
             undone = await self._undo(experiment)
             self._end(experiment, Status.REMEDIATED, f"Remediated by the agent. {undone}")
+
+
+# The agent's events in the words the control room shows (owner, 2026-11-27): never a tool name,
+# a status code or None.
+RESOLUTIONS = {
+    "RECOVERED": "is resolved: the service recovered",
+    "AUTO_CLEARED": "is resolved: the alert cleared by itself",
+    "ESCALATED": "was handed to a person",
+}
+
+
+def action_words(d: dict[str, Any]) -> str:
+    """'scale order-service to 5 replicas', 'roll back order-service', 'do nothing'."""
+    target = d.get("target_service") or "the service"
+    parameters = d.get("parameters") or {}
+    match d.get("action"):
+        case "rollback_deployment":
+            revision = parameters.get("to_revision")
+            return f"roll back {target}" + (f" to revision {revision}" if revision else "")
+        case "scale_deployment":
+            return f"scale {target} to {parameters.get('replicas', 'more')} replicas"
+        case "restart_deployment":
+            return f"restart {target}"
+        case _:
+            return "do nothing"

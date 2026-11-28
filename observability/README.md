@@ -6,7 +6,7 @@ to these folders); `make k8s-up` installs that chart.
 
 | Folder | What | Installed as |
 |---|---|---|
-| `dashboards/` | Grafana dashboards (JSON): **business** (the circuit breaker first, then orders, trades, latency, consumer lag, bots, time travel), **system** (pods, CPU and memory, restarts, replicas, golden signals per service), **follow-an-order** (Loki: every log line of one correlation ID) | ConfigMaps labelled `grafana_dashboard=1`, loaded by Grafana's sidecar into the folder *CircuitBreaker* |
+| `dashboards/` | Grafana dashboards (JSON): **business** (the circuit breaker first, then orders, trades, latency, consumer lag, bots, time travel), **system** (pods, CPU and memory, restarts, replicas, golden signals per service), **follow-an-order** (Loki: every log line of one correlation ID), **incident-view** (the projector's: one large panel per chaos scenario, the agent's budget and cooldowns, every alert firing; annotations for every deploy (a new Deployment spec), every chaos experiment (chaos-service's log) and every agent action (the agent's `action executed` log line)) | ConfigMaps labelled `grafana_dashboard=1`, loaded by Grafana's sidecar into the folder *CircuitBreaker* |
 | `alerts/` | Prometheus alert rules for the Phase 7 SRE agent: `services.yaml` (error rates, latency, over-provisioning, circuit breaker, memory growth), `platform.yaml` (crash loops, consumer lag, dead letters) | PrometheusRule objects |
 | `tests/` | promtool unit tests of the rules: each alert quiet before its condition, firing 20–40 s after it; normal trading, an idle service and the data stores fire nothing | Run by `make test-alerts` and CI |
 

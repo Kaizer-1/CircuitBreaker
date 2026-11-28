@@ -22,6 +22,19 @@ its reference within an hour in 3 of 5 simulated runs. A market maker that had s
 above its fair price to buy them back, the last price followed, and momentum chased a two-tick
 wiggle as a trend. Now the worst of 12 simulated hours is 5.3% (most stay within 2.6%), and
 `scripts/bots_check.py` holds every ticker within ±10% of its reference.
+- **Market makers pull a bid that one-sided selling keeps eating** (2026-11-27): if two of a maker's
+  bids on a ticker are filled away within 3 s of being placed, within 10 s, it posts no bid there
+  for 15 s (it keeps its ask), then bids 1 share at a time for 15 s (a probe); a probe eaten at
+  once means the selling goes on, so it backs off again; then full bids. In a
+  panic sell every new bid is hit as soon as it appears: in the simulation the four makers spent
+  ₹19,82,000 of their ₹20,00,000 buying the panic's shares (staging showed the same: bids skipped
+  for lack of cash), and with no cash they could post no bid at all, so no phone could sell after
+  the panic. Over many panics staging's makers were left with 3–26% of their cash. Now a panic
+  costs them almost nothing (simulated: about 105% left, as they also sold in it) and every
+  ticker has a bid and an ask again within 15–20 s of the panic's end (owner's limit: 30 s). A
+  bid eaten before the answer to its placement came back counts too: under load the fill
+  overtakes the answer, and on staging the guard first never tripped. In a normal simulated hour
+  the makers average 3.88 bids per ticker instead of 3.99 (asks unchanged).
 - **Mean reversion** sells above and buys below its moving average (LIMIT orders): pulls back.
 - **Noise** places small random orders: keeps trades flowing when nothing else does.
 """
@@ -47,6 +60,47 @@ STARTING_SHARES = 1_000  # what portfolio-service seeds every bot with, per tick
 
 
 @dataclass
+class OneSidedFlow:
+    """One maker's guard on one ticker: is selling eating its bids as fast as it posts them?
+    Only a bid eaten within `quick_seconds` of being placed counts: in a panic every new bid is
+    gone within about a second, while a normal bid rests for tens of seconds before a fill.
+    `at` and `lived` are the bot's clock in seconds (pure: the caller says what time it is)."""
+
+    quick_seconds: float = 3.0
+    window_seconds: float = 10.0
+    # Bids eaten quickly within the window. 4, not 2 (CI, 2026-11-28): in a busy normal market a
+    # maker's bid is eaten quickly 3 times in 10 s at most (simulated hours, four seeds), so 2
+    # tripped about 100 times an hour and thinned the bids; a panic reaches 5 to 14.
+    trips_after: int = 4
+    cool_off_seconds: float = 15.0
+    probe_seconds: float = 15.0  # after the cool-off, 1-share bids for this long
+    trips: int = 0  # how often the guard has stepped back (the simulation counts them)
+    _emptied: deque[float] = field(default_factory=deque)
+    _pulled_until: float = float("-inf")
+    _probe_until: float = float("-inf")
+
+    def bid_filled_away(self, at: float, lived: float) -> None:
+        if lived > self.quick_seconds:
+            return  # an ordinary fill
+        self._emptied.append(at)
+        while self._emptied and at - self._emptied[0] > self.window_seconds:
+            self._emptied.popleft()
+        if len(self._emptied) >= self.trips_after or at < self._probe_until:
+            # (a probe eaten at once: the selling goes on, so back off again)
+            self._pulled_until = at + self.cool_off_seconds
+            self._probe_until = self._pulled_until + self.probe_seconds
+            self._emptied.clear()
+            self.trips += 1
+
+    def bid_pulled(self, at: float) -> bool:
+        return at < self._pulled_until
+
+    def bid_probing(self, at: float) -> bool:
+        """After the cool-off: bid 1 share only, until a while passes with no bid eaten at once."""
+        return self._pulled_until <= at < self._probe_until
+
+
+@dataclass
 class TickerView:
     """What one bot knows about one ticker when it decides."""
 
@@ -58,6 +112,8 @@ class TickerView:
     open_orders: list[OpenOrder] = field(default_factory=list)  # its own, on this ticker
     shares_held: int = 0
     activity: float = 1.0  # BOT_ACTIVITY: scales how often and how much
+    bid_pulled: bool = False  # a market maker's OneSidedFlow guard says: no bid for now
+    bid_probing: bool = False  # ... or: a 1-share bid only, to see whether the selling is over
 
     @property
     def last(self) -> int:
@@ -107,20 +163,28 @@ class MarketMaker:
         ask = ceil_tick(fair * (1 + (self.half_spread_bps - skew) / 10_000))
         if ask - bid < 2 * TICK_SIZE_PAISE:
             ask = bid + 2 * TICK_SIZE_PAISE
-        wanted = {"BUY": bid, "SELL": ask}
-        intents: list[Intent] = []
+        wanted = {"SELL": ask} if view.bid_pulled else {"BUY": bid, "SELL": ask}
+        intents: list[Intent] = [
+            Cancel(o.order_id, o.ticker)
+            for o in view.open_orders
+            if o.side == "BUY" and view.bid_pulled
+        ]
         for side, price in wanted.items():
             mine = [o for o in view.open_orders if o.side == side]
             keep = [
                 o
                 for o in mine
-                if o.limit_price_paise == price and view.candle - o.placed_candle < 6
+                if o.limit_price_paise == price
+                and view.candle - o.placed_candle < 6
+                and (side == "SELL" or (o.remaining <= 1) == view.bid_probing)
             ]
             replaced = tuple(Cancel(o.order_id, o.ticker) for o in mine if o not in keep)
             if keep:
                 intents += replaced  # a good quote stays; anything else on this side goes
             else:
                 size = size_for(self.notional_rupees, price, rng, view.activity)
+                if side == "BUY" and view.bid_probing:
+                    size = 1
                 intents.append(Requote(Place(view.ticker, side, size, price), replaced))
         return intents
 

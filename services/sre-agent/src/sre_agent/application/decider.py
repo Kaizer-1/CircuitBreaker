@@ -1,9 +1,12 @@
 """Who chooses the tool: the model, or the rules when the model gives no usable answer (ADR-0021).
+The feed says which failure it was: "LLM unavailable" (no answer at all) or "malformed model
+answer" (an answer without exactly one valid tool call).
 
 An alert labelled remediable=false never reaches either: it gets a fixed explanation and an
 escalation (declines.py), so the most important "no" never depends on a model's wording.
 """
 
+import dataclasses
 import logging
 from collections import deque
 from collections.abc import Callable
@@ -30,6 +33,7 @@ class Decision:
     proposal: Proposal
     fallback_reason: str | None  # why the rules chose; None when the model did
     escalate: bool  # a do_nothing that hands over to a person at once
+    fallback_label: str = LLMUnavailableError.label  # or MalformedAnswerError.label
 
     @property
     def by_rules(self) -> bool:
@@ -66,6 +70,7 @@ class Decider:
             text = decline_reason(signals)
             return Decision(Proposal(Tool.NOTHING.value, None, None, text, FIXED), None, True)
         reason: str
+        label = LLMUnavailableError.label
         if self._llm is None:
             reason = "no model is configured"
         elif not self._budget_left():
@@ -75,8 +80,10 @@ class Decider:
             try:
                 choice = await self._llm.choose_action(evidence, self._deadline)
                 return Decision(choice.proposal, None, False)
-            except LLMUnavailableError as exc:
-                reason = str(exc)
-                logger.warning("model unavailable, rules decide", extra={"reason": reason})
-        proposal = fallback.decide(signals)
-        return Decision(proposal, reason, proposal.tool == Tool.NOTHING)
+            except LLMUnavailableError as exc:  # MalformedAnswerError too
+                reason, label = str(exc), exc.label
+                logger.warning(
+                    "no usable model answer, rules decide", extra={"label": label, "reason": reason}
+                )
+        proposal = dataclasses.replace(fallback.decide(signals), source=f"rule-based ({label})")
+        return Decision(proposal, reason, proposal.tool == Tool.NOTHING, label)

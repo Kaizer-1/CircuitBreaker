@@ -39,7 +39,7 @@ carries the same three, so both paths reason from the same distinctions:
 |---|---|---|
 | **Error type** | `http_problems_total{code}` (every 5xx counted by its Problem Details code, 7a) | `INTERNAL_ERROR` (a bug), `OVERLOADED` (the 50-request limit), `DEPENDENCY_UNAVAILABLE` (an open breaker, or the gateway's upstream not answering); for the gateway also the share of its 5xx it only **passed on** from an upstream |
 | **Revision** | The Deployment's ReplicaSets, and each one's ready pods over the last 12 hours (Prometheus, kube-state-metrics) | **Known-good**: this pod template once **ran 15 minutes or more in a row** (a restart's ReplicaSets count together: only the restart annotation differs, which is ignored), as after the agent's rollback to a release that ran for hours. **New**: it never did: a fresh release, or a bad one deployed again. *Not* the ReplicaSet's age (found on staging, 2026-11-26): Kubernetes reuses a template's old ReplicaSet whenever that template is deployed again, so the day's second chaos bad deploy looked hours old and "known-good", and was left alone. A release last run more than 12 hours ago (Prometheus's retention) counts as new |
-| **Load** | `http_requests_total` | The request rate now against its median over the previous hour (≥ 2× is "far above normal") |
+| **Load** | `http_requests_total` | The request rate now against its median over the hour that ended 15 minutes ago (≥ 2× is "far above normal"). No baseline while that median is under 0.5 requests a second (after a rebuild): then only a CPU at 80% or more of its limit is "far above normal", and the explanation says "no traffic baseline yet" (2026-11-28) |
 
 **The rules, in order** (`services/sre-agent/src/sre_agent/domain/fallback.py`, each one a unit test):
 
@@ -80,6 +80,25 @@ how often the model gets it right by itself.
 - ❌ Two decision paths to keep consistent. Mitigated by one source of facts (the collector) and evaluation pairs.
 - ❌ Rule explanations are templates: clear, but less specific than the model's.
 
+**Note (2026-11-28, from the 7c staging review): two labels, and one more try.** The staging feed said "Rule-based
+(LLM unavailable: the model answered with no tool call (finish: tool_calls))" on the leak incident. The model *had*
+answered: OpenRouter's record of that generation shows Bedrock's own stop reason `tool_use` and 322 completion
+tokens, but the answer the provider "Amazon Bedrock" sent back held only the model's opening sentence, no tool
+call. So the agent now tells the two failures apart (owner: "LLM unavailable" only when the model really didn't
+answer):
+
+| What came back | Label on the feed | Before the rules decide |
+|---|---|---|
+| Nothing usable from OpenRouter: timeout, refused key, no credit, moderation, unreachable | `Rule-based (LLM unavailable: <reason>)` | One retry after a fast failure (as before) |
+| An answer without exactly one valid tool call: text only, a call reported but not sent, several calls, arguments that are not JSON, a cut-off reply | `Rule-based (malformed model answer: <reason>)` | **Asked once more, never from the same provider** (`provider.ignore`), if 8 s of the 25 s deadline are left |
+
+Forcing the tool call instead (`tool_choice: "required"`) is impossible: Claude Sonnet 5.5 refuses forced tool use
+("tool_choice: type tool and any are not supported for this model"), and with strict routing the request finds no
+provider at all (HTTP 404). The evaluation run with "required" failed every case before anything reached staging,
+which is why it stays "auto". The retried answer is the model's decision, recorded as the model's; the evaluation
+counts answers that needed a second try (`model_runs_on_second_try`) and fails if any run ends without a usable
+answer.
+
 ## Viva Notes
 
 **Q: Isn't a rule-based fallback exactly the "if-else ops script" the LLM was meant to replace?**
@@ -95,8 +114,9 @@ again, so the revision is known-good. Overload on a known-good revision means sc
 hold exactly this pair.
 
 **Q: How does the incident feed show which path decided?**
-A: Every proposal records its source: the model's name, or "rule-based (LLM unavailable)" with the reason, such as
-"OpenRouter did not answer in 25 s".
+A: Every proposal records its source: the model's name, "rule-based (LLM unavailable)" with the reason, such as
+"OpenRouter did not answer in 25 s", or "rule-based (malformed model answer)" when the model answered without one
+usable tool call.
 
 **Q: Why not retry the model until it answers?**
 A: Time matters more than the model's wording. Mitigation should start within 30 s of detection, so all attempts

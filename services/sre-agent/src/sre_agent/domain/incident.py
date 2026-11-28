@@ -50,12 +50,24 @@ class Kind(StrEnum):
     VERIFIED = "VERIFIED"
     RESOLVED = "RESOLVED"
     ESCALATED = "ESCALATED"
+    AFTER_EFFECT = "AFTER_EFFECT"  # a backlog alert after a fix: draining, drained, handed over
+    SYMPTOM = "SYMPTOM"  # another service's alert caused by this incident: attached, cleared
 
 
 def iso(at: datetime | None) -> str | None:
     if at is None:
         return None
     return at.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def git_line(git: dict[str, Any]) -> str:
+    """The rollback's Git step (ADR-0016) as one feed line: the screen shows only the timeline."""
+    reason = str(git.get("reason") or "").strip()
+    if git.get("status") == "PR_OPENED":
+        return f"Git: {reason} {git.get('pull_request_url')} (a person merges it)."
+    if git.get("status") == "NOT_NEEDED":
+        return f"Git: no revert needed. {reason}"
+    return f"Git: {reason}"
 
 
 def parse_time(value: str | None) -> datetime | None:
@@ -73,7 +85,8 @@ class Remediation:
     target_service: str | None
     parameters: dict[str, Any]
     explanation: str
-    model: str  # the model's slug, or "rule-based (LLM unavailable)", or "fixed rule"
+    model: str  # the model's slug, or "rule-based (LLM unavailable)", "rule-based
+    # (malformed model answer)" or "fixed rule"
     status: RemediationStatus
     requires_approval: bool
     proposed_at: datetime
@@ -377,6 +390,8 @@ class Incident:
         if succeeded and r.action != Tool.NOTHING and self.mitigated_at is None:
             self.mitigated_at = at
         self.note(Kind.EXECUTED, details, at)
+        if git_reconciliation and r.action == Tool.ROLLBACK:
+            self.note(Kind.EXECUTED, git_line(git_reconciliation), at)
         data = {
             "incident_id": self.incident_id,
             "remediation_id": remediation_id,

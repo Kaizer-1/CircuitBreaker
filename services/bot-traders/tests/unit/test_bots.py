@@ -618,3 +618,116 @@ async def test_other_strategies_keep_their_candle_rhythm_after_a_fill() -> None:
     [order_id] = list(bot.open_orders)
     bot.on_stream({"type": "fill", "data": {"order_id": order_id, "order_remaining_quantity": 0}})
     assert asked == []
+
+
+# ------------------------------------------------------------------ the one-sided flow guard
+
+
+def test_four_bids_eaten_quickly_pull_the_bid_for_the_cool_off_then_it_comes_back() -> None:
+    from bot_traders.domain.strategies import OneSidedFlow
+
+    flow = OneSidedFlow()
+    for at in (100.0, 102.0, 103.0):
+        flow.bid_filled_away(at, lived=1.0)
+    assert not flow.bid_pulled(103.0)  # three is a busy market (CI, 2026-11-28)
+    flow.bid_filled_away(104.0, lived=0.5)  # a fourth within 10 s: one-sided selling
+    assert flow.bid_pulled(104.0) and flow.bid_pulled(118.9) and flow.trips == 1
+    assert not flow.bid_pulled(119.0)  # 15 s later it bids again
+
+
+def test_ordinary_fills_and_spread_out_ones_never_pull_the_bid() -> None:
+    from bot_traders.domain.strategies import OneSidedFlow
+
+    slow = OneSidedFlow()
+    for at in (100.0, 101.0, 102.0):
+        slow.bid_filled_away(at, lived=20.0)  # a bid that rested before its fill
+    assert not slow.bid_pulled(102.0)
+    apart = OneSidedFlow()
+    for at in (100.0, 102.0, 104.0, 111.0):  # the fourth more than 10 s after the first
+        apart.bid_filled_away(at, lived=1.0)
+    assert not apart.bid_pulled(111.0)
+
+
+def test_a_maker_whose_bid_is_pulled_cancels_it_and_keeps_its_ask() -> None:
+    from collections import deque
+    from random import Random
+
+    from bot_traders.domain.market import Cancel, OpenOrder, Requote
+    from bot_traders.domain.strategies import MarketMaker, TickerView
+
+    bid = OpenOrder("b1", "CALVERA", "BUY", 24_500, 20, 0)
+    view = TickerView(
+        "CALVERA", deque([24_550]), 24_500, 24_600, 1, open_orders=[bid], shares_held=1_000,
+        bid_pulled=True,
+    )  # fmt: skip
+    intents = MarketMaker(8).decide(view, Random(1))  # noqa: S311 (a seeded test, not secrets)
+    assert Cancel("b1", "CALVERA") in intents  # the bid is cancelled
+    assert {i.place.side for i in intents if isinstance(i, Requote)} == {"SELL"}
+
+
+async def test_a_bid_eaten_before_its_answer_arrives_still_counts_for_the_guard() -> None:
+    """Staging, 2026-11-27: under the panic, order-service answered in about 2 s while a panic sell
+    ate a fresh bid within milliseconds, so the bid's close reached the bot BEFORE the answer to its
+    placement. The bot never listed the bid, never saw it eaten, and the guard never tripped: the
+    makers spent their cash anyway. A bid that closed before its answer counts as eaten at once."""
+    from bot_traders.application.bot import Bot, MarketState
+
+    exchange = SimExchange(VirtualTime())
+    bot = Bot(roster()[0], exchange, seeded(), clock=exchange.time.clock, sleep=exchange.time.sleep)
+    await bot.login()
+    await bot.refresh()
+    market = MarketState([24550], best_bid=24500, best_ask=24600)
+    real_place = exchange.place
+
+    async def eaten_before_the_answer(session: Session, order: Place) -> dict[str, Any]:
+        placed = await real_place(session, order)
+        if order.side == "BUY":
+            bot.on_stream({"type": "order_closed", "data": {"order_id": placed["order_id"]}})
+        return placed
+
+    exchange.place = eaten_before_the_answer  # type: ignore[method-assign,assignment]
+    for _ in range(4):
+        await bot.execute(Place("CALVERA", "BUY", 5, 24500), market)
+    intents = [intent for _, intent in bot.decide("CALVERA", market)]
+    assert not any(isinstance(i, Requote) and i.place.side == "BUY" for i in intents)
+
+
+def test_after_the_cool_off_a_maker_probes_with_one_share_and_backs_off_if_it_is_eaten() -> None:
+    """Probe bids (owner, 2026-11-27): staging's makers lost their cash over many panics, a full
+    bid at a time; a 1-share probe costs a share and tells whether the selling is over."""
+    from bot_traders.domain.strategies import OneSidedFlow
+
+    flow = OneSidedFlow()
+    for at in (100.0, 100.5, 101.0, 102.0):
+        flow.bid_filled_away(at, lived=1.0)  # tripped at 102: no bid until 117
+    assert flow.bid_pulled(110.0) and not flow.bid_probing(110.0)
+    assert flow.bid_probing(117.0) and flow.bid_probing(131.9)  # 1-share probes for 15 s
+    assert not flow.bid_probing(132.0) and not flow.bid_pulled(132.0)  # then full bids again
+    flow.bid_filled_away(120.0, lived=0.5)  # a probe eaten at once: the selling goes on
+    assert flow.bid_pulled(120.0) and flow.bid_pulled(134.9) and flow.bid_probing(135.0)
+
+
+def test_a_probing_maker_bids_one_share_and_a_full_bid_replaces_the_probe_after() -> None:
+    from collections import deque
+    from random import Random
+
+    from bot_traders.domain.market import OpenOrder, Requote
+    from bot_traders.domain.strategies import MarketMaker, TickerView
+
+    def bids(view: TickerView) -> list[Requote]:
+        intents = MarketMaker(8).decide(view, Random(1))  # noqa: S311 (a seeded test)
+        return [i for i in intents if isinstance(i, Requote) and i.place.side == "BUY"]
+
+    view = TickerView("CALVERA", deque([24_550]), 24_500, 24_600, 1, shares_held=1_000)
+    view.bid_probing = True
+    (first,) = bids(view)
+    assert first.place.quantity == 1
+    price = first.place.limit_price_paise
+    assert price is not None
+    probe = OpenOrder("p1", "CALVERA", "BUY", price, 1, 1)  # resting at exactly that price
+    still = TickerView("CALVERA", deque([24_550]), 24_500, 24_600, 2, [probe], shares_held=1_000)
+    still.bid_probing = True
+    assert bids(still) == []  # while probing, the probe stays
+    calm = TickerView("CALVERA", deque([24_550]), 24_500, 24_600, 2, [probe], shares_held=1_000)
+    (full,) = bids(calm)
+    assert full.place.quantity > 1 and full.cancels[0].order_id == "p1"  # it makes way

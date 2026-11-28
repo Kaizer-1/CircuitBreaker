@@ -35,6 +35,7 @@ import argparse
 import calendar
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -2594,6 +2595,23 @@ def agent_run(args: argparse.Namespace, name: str, run: int, host: HostWatch) ->
         }
         for o in others
     ]
+    if name == "panic" and incident is not None:
+        ok &= wait_until(
+            "the panic sell to end",
+            lambda: (
+                not any(
+                    e["scenario"] == "TRAFFIC_SPIKE" and e["status"] == "RUNNING"
+                    for e in chaos_call(env, "GET", "/v1/chaos/experiments")["items"]
+                )
+            ),
+            timeout=180,
+        )
+        panic_id = next(
+            e["experiment_id"]
+            for e in chaos_call(env, "GET", "/v1/chaos/experiments")["items"]
+            if e["scenario"] == "TRAFFIC_SPIKE"
+        )
+        ok &= check_market_after_panic(env, panic_id, result)
     if name == "leak" and result.get("chosen") == "restart_deployment":
         ok &= restart_cures_the_leak(env)
     time.sleep(15)  # one scrape after the last model call
@@ -2616,6 +2634,323 @@ def agent_run(args: argparse.Namespace, name: str, run: int, host: HostWatch) ->
         sys.exit(f"{RED}STOPPED{RESET}: the laptop went on battery during {scenario} run {run}.")
     result["_ok"] = ok
     return result
+
+
+# --------------------------------------------------------------------------- the demo (Phase 7c)
+
+# The demo's choreography (owner, 2026-11-27): which scenario, and when the presenter starts it.
+# Every order-service scenario (bad deploy, panic sell, database decline) affects order-service, so
+# chaos-service runs them one after another; only the leak (market-data-service) overlaps them.
+# "short" is the live demo (target 5 minutes); "full" adds the bad deploy, for rehearsals and the
+# recorded backup video. A step starts at a second offset from the first click, or once an earlier
+# scenario's experiment has ended; "+cooldown" also waits until the agent's cooldown on
+# order-service is nearly over, so the next alert fires after it (the agent would refuse before).
+DEMO_STEPS: dict[str, list[tuple[str, str]]] = {
+    "short": [("leak", "at 0"), ("panic", "at 20"), ("db", "after panic")],
+    "full": [
+        ("leak", "at 0"),
+        ("bad-deploy", "at 15"),
+        ("panic", "after bad-deploy +cooldown"),
+        ("db", "after panic"),
+    ],
+}
+# MB/min. Short: 100, not 120: at 120 market-data reached 90.9% of its memory limit on staging
+# before the agent's restart replaced it (9% headroom; owner's line: ~10%, or Kubernetes' OOM kill
+# would fix it instead of the agent). Full: the 7a calibration's 80 (peak 84%).
+DEMO_LEAK_RATE = {"short": 100, "full": 80}
+TICKERS = ("CALVERA", "KORVIN", "ASTRYX", "HELIOR", "TAVIRA")
+TWO_SIDED_WITHIN = 30  # s after a panic ends: every ticker has a bid and an ask (owner, 2026-11-27)
+
+
+def panic_end(env: str, ended_at: float | None) -> tuple[float, float | None]:
+    """When the panic has really ended (owner, 2026-11-27): its last request answered. The burst
+    stops with the experiment, but what it already sent is answered for a while after (the tail).
+    Returns (last answer as Unix time, tail in seconds from the experiment's end)."""
+    sel = f'namespace="{env}"'
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        left = scalar(f"sum(bot_panic_requests_in_flight{{{sel}}})")
+        if left == 0:
+            break
+        time.sleep(3)
+    last = scalar(f"max(bot_panic_last_answer_timestamp_seconds{{{sel}}})") or time.time()
+    return last, (None if ended_at is None else round(last - ended_at, 1))
+
+
+def market_two_sided(env: str, since: float, timeout: float = TWO_SIDED_WITHIN) -> float | None:
+    """Seconds from `since` (Unix time: the panic's last answer) until every ticker's book has a
+    bid AND an ask (Q-04), or None if not within `timeout`. After a panic sell the market makers
+    must quote both sides again, so a phone can sell."""
+    while True:
+        books = [chaos_call(env, "GET", f"/v1/market/{t}/order-book") for t in TICKERS]
+        took = time.time() - since
+        if all(b.get("best_bid_paise") and b.get("best_ask_paise") for b in books):
+            if took <= timeout:
+                return max(0.0, took)
+            print(f"    {DIM}two-sided again only {took:.0f} s after the last panic order{RESET}")
+            return None
+        if took > timeout:
+            one_sided = [
+                t
+                for t, b in zip(TICKERS, books, strict=True)
+                if not (b.get("best_bid_paise") and b.get("best_ask_paise"))
+            ]
+            print(
+                f"    {DIM}still one-sided {timeout:.0f} s after the last answer:"
+                f" {one_sided}{RESET}"
+            )
+            return None
+        time.sleep(2)
+
+
+def check_market_after_panic(env: str, experiment_id: str, result: dict[str, Any]) -> bool:
+    """The panic's tail, then both sides within 30 s of its last answer (owner, 2026-11-27)."""
+    items = chaos_call(env, "GET", "/v1/chaos/experiments")["items"]
+    ended = next((ts(e["ended_at"]) for e in items if e["experiment_id"] == experiment_id), None)
+    last, tail = panic_end(env, ended)
+    back = market_two_sided(env, last)
+    result |= {
+        "panic_tail_s": tail,
+        "two_sided_after_last_panic_order_s": None if back is None else round(back),
+    }
+    print(f"    {DIM}the panic's tail: its last order answered {tail} s after it ended{RESET}")
+    return verdict(
+        back is not None,
+        f"every ticker has a bid and an ask within {TWO_SIDED_WITHIN} s of the panic's last"
+        f" answered order ({'not' if back is None else f'{back:.0f} s'})",
+    )
+
+
+PANIC_FIRES_AFTER = 30  # s: its alert fired 38-62 s after the click in every measured run
+
+
+def wait_until(what: str, done: Any, timeout: float, every: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if done():
+            return True
+        time.sleep(every)
+    print(f"    {RED}timed out{RESET} after {timeout:.0f} s waiting for {what}")
+    return False
+
+
+def experiment_running(env: str, experiment_id: str) -> bool:
+    items = chaos_call(env, "GET", "/v1/chaos/experiments")["items"]
+    return any(e["experiment_id"] == experiment_id and e["status"] == "RUNNING" for e in items)
+
+
+def first_incident(
+    env: str, service: str, since: float, before: float | None
+) -> dict[str, Any] | None:
+    mine = [
+        i
+        for i in incidents_since(env, since)
+        if i["service"] == service and (before is None or (ts(i["opened_at"]) or 0) < before)
+    ]
+    first = min(mine, key=lambda i: i["opened_at"], default=None)
+    return (
+        None
+        if first is None
+        else dict(chaos_call(env, "GET", f"/v1/incidents/{first['incident_id']}"))
+    )
+
+
+def check_decided_by_the_model(
+    env: str, incidents: list[dict[str, Any]], result: dict[str, Any]
+) -> bool:
+    """Owner, 2026-11-28: on stage the model makes the decisions. Every proposal of the run must be
+    the model's (an information-only alert's fixed decline is never sent to a model, by design);
+    none by the fallback rules. And every evidence line shows a real traffic baseline or says
+    "no baseline yet", never "normal 0.0/s"."""
+    ok, decisions = True, []
+    for summary in incidents:
+        full = dict(chaos_call(env, "GET", f"/v1/incidents/{summary['incident_id']}"))
+        for r in full["remediations"]:
+            decisions.append(
+                {"incident": full["incident_id"], "action": r["action"], "by": r["model"]}
+            )
+        for e in full["timeline"]:
+            if e["kind"] != "EVIDENCE_COLLECTED":
+                continue
+            traffic = re.search(r"Requests [^)]*\)", e["message"])
+            line = traffic.group(0) if traffic else "no traffic line"
+            ok &= verdict(
+                "normal 0.0/s" not in e["message"], f"{full['incident_id']} evidence: {line}"
+            )
+    fallback = [d for d in decisions if d["by"].startswith("rule-based")]
+    fixed = [d for d in decisions if d["by"].startswith("fixed rule")]
+    ok &= verdict(
+        not fallback,
+        f"decided by the model: {len(decisions) - len(fallback) - len(fixed)}; fixed declines of"
+        f" information-only alerts: {len(fixed)}; by the fallback rules: {len(fallback)}"
+        + (f" ({', '.join(d['incident'] + ' ' + d['by'] for d in fallback)})" if fallback else ""),
+    )
+    result["decisions"] = decisions
+    return ok
+
+
+def check_demo(args: argparse.Namespace) -> bool:
+    """`make demo-chaos mode=short|full`: the demo's scenarios started as the presenter would, in
+    the choreography's order and timing, the SRE agent fixing (or declining) each by itself. Prints
+    the cues the runbook gives the presenter, and measures the whole sequence: from the first click
+    to the last scenario's outcome. Then the presenter's reset."""
+    env, mode, ok = args.env, args.mode, True
+    leak_rate = args.leak_rate or DEMO_LEAK_RATE[mode]
+    steps = DEMO_STEPS[mode]
+    heading(f"the demo, {mode} ({env}): {' -> '.join(k for k, _ in steps)}")
+    bots_on(env)
+    if agent_settings(env)["approval_required"]:
+        return verdict(
+            False,
+            "approval mode is on: the demo runs with it off (only the warm-up spike has it on)",
+        )
+    wait_quiet(env, WATCHED, timeout=300)
+    needed = sum(1 for k, _ in steps if AGENT_EXPECT[k][1] != "do_nothing")
+    while True:
+        budget = agent_settings(env)["budget"]
+        cooling = {s: v for s, v in budget["cooldown_seconds_by_service"].items() if v > 0}
+        if budget["actions_left_this_hour"] >= needed and not cooling:
+            break
+        print(
+            f"    {DIM}waiting for the agent's guardrails:"
+            f" {budget['actions_left_this_hour']} actions left this hour (the demo needs"
+            f" {needed}), cooldowns {cooling or 'none'}{RESET}",
+            flush=True,
+        )
+        time.sleep(30)
+    require_mains_power(f"the {mode} demo")
+    require_quiet_host(f"the {mode} demo")
+    out = ROOT / "build" / "demo" / f"{args.label or 'demo-' + mode}.json"
+    clicks: dict[str, float] = {}
+    experiments: dict[str, str] = {}
+    result: dict[str, Any] = {"mode": mode, "env": env, "leak_rate": leak_rate, "scenarios": {}}
+    with HostWatch(out.with_suffix(".hostload.tsv")) as host:
+        t0 = time.time()
+        for key, when in steps:
+            scenario = CHAOS[key][0]
+            if when.startswith("at "):
+                time.sleep(max(0.0, t0 + float(when.split()[1]) - time.time()))
+            else:
+                earlier = when.split()[1]
+                ok &= wait_until(
+                    f"{earlier} to end",
+                    lambda e=earlier: not experiment_running(env, experiments[e]),
+                    timeout=480,
+                )
+                if earlier == "panic":  # phones must be able to sell again before the next one
+                    ok &= check_market_after_panic(env, experiments["panic"], result)
+                if when.endswith("+cooldown"):
+                    ok &= wait_until(
+                        "the agent's cooldown on order-service",
+                        lambda: (
+                            agent_settings(env)["budget"]["cooldown_seconds_by_service"].get(
+                                "order-service", 0
+                            )
+                            <= PANIC_FIRES_AFTER
+                        ),
+                        timeout=360,
+                    )
+            body: dict[str, Any] = {"scenario": scenario}
+            if key == "leak":
+                body["parameters"] = {"rate_mb_per_minute": leak_rate}
+            if key == "panic":
+                body |= {"parameters": {"requests_per_second": 110}, "duration_seconds": 600}
+            started = chaos_call(env, "POST", "/v1/chaos/experiments", body)
+            clicks[key], experiments[key] = time.time(), started["experiment_id"]
+            print(
+                f"  {BOLD}t+{clicks[key] - t0:5.0f} s{RESET}  presenter starts {scenario}",
+                flush=True,
+            )
+
+        def all_done() -> bool:
+            for key in clicks:
+                service = AGENT_EXPECT[key][0]
+                later = [
+                    c
+                    for k, c in clicks.items()
+                    if c > clicks[key] and AGENT_EXPECT[k][0] == service
+                ]
+                incident = first_incident(env, service, clicks[key], min(later, default=None))
+                if incident is None or incident["status"] != "RESOLVED":
+                    return False
+            return True
+
+        ok &= wait_until("every scenario's outcome", all_done, timeout=900, every=5)
+        ends: list[float] = []
+        for key, click in clicks.items():
+            service, action, resolution = AGENT_EXPECT[key]
+            later = [c for k, c in clicks.items() if c > click and AGENT_EXPECT[k][0] == service]
+            incident = first_incident(env, service, click, min(later, default=None))
+            if incident is None:
+                ok &= verdict(False, f"{CHAOS[key][0]}: no incident on {service}")
+                continue
+            r = incident["remediations"][-1] if incident["remediations"] else {}
+            fired, opened = ts(incident.get("fired_at")), ts(incident["opened_at"])
+            mitigated, recovered = (
+                ts(incident.get("mitigated_at")),
+                ts(incident.get("recovered_at")),
+            )
+            outcome = recovered if resolution == "RECOVERED" else ts(incident["resolved_at"])
+            if outcome:
+                ends.append(outcome)
+            ok &= verdict(
+                r.get("action") == action and incident["resolution"] == resolution,
+                f"{CHAOS[key][0]}: {incident['incident_id']} {r.get('action')} ->"
+                f" {incident['resolution']} (expected {action} -> {resolution})",
+            )
+            row = {
+                "incident": incident["incident_id"],
+                "click_t_s": round(click - t0),
+                "fired_t_s": round(fired - t0) if fired else None,
+                "detect_s": round(opened - fired) if fired and opened else None,
+                "mitigate_s": round(mitigated - fired) if mitigated and fired else None,
+                "outcome_t_s": round(outcome - t0) if outcome else None,
+                "chosen": r.get("action"),
+                "chosen_by": r.get("model"),
+                "resolution": incident["resolution"],
+                "after_effects": [
+                    e["message"] for e in incident["timeline"] if e["kind"] == "AFTER_EFFECT"
+                ],
+            }
+            result["scenarios"][key] = row
+            print(
+                f"    {DIM}click t+{row['click_t_s']} s, fired t+{row['fired_t_s']} s, detect"
+                f" {row['detect_s']} s, mitigate {row['mitigate_s']} s after firing, outcome"
+                f" t+{row['outcome_t_s']} s{RESET}"
+            )
+        everything = incidents_since(env, t0)
+        mine = {row["incident"] for row in result["scenarios"].values()}
+        side = [i for i in everything if i["incident_id"] not in mine]
+        for i in side:
+            ok &= verdict(
+                not i["actions_taken"],
+                f"side incident {i['incident_id']} {i['alert_name']} on {i['service']}:"
+                f" {i['resolution']}, no action",
+            )
+        result["side_incidents"] = [
+            {"incident": i["incident_id"], "alert": i["alert_name"], "service": i["service"]}
+            for i in side
+        ]
+        ok &= check_decided_by_the_model(env, everything, result)
+        total = round(max(ends) - t0) if ends else None
+        result["total_s"] = total
+        ok &= verdict(
+            total is not None and (mode != "short" or total <= 300),
+            f"the whole {mode} sequence: {total} s from the first click to the last outcome"
+            + (" (target 5 minutes)" if mode == "short" else ""),
+        )
+        undone = chaos_call(env, "POST", "/v1/chaos/reset")
+        after, detail = back_to_normal(env)
+        ok &= verdict(after is not None, f"reset: back to normal in {after or 0:.0f} s ({detail})")
+        result |= {"reset_to_normal_s": after, "undone": undone["undone"]}
+        result |= host.summary(t0)
+        result["noisy"] = result["host_load_max"] > NOISY_LOAD
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result, indent=2))
+    print(f"  {DIM}saved {out.relative_to(ROOT)}{RESET}")
+    if result["battery_samples"]:
+        sys.exit(f"{RED}STOPPED{RESET}: the laptop went on battery during the demo run.")
+    return ok
 
 
 def main() -> int:
@@ -2673,6 +3008,11 @@ def main() -> int:
     agent.add_argument("--approval", action="store_true", help="approval mode on: a person decides")
     agent.add_argument("--label", default="agent", help="build/agent/<label>.json")
     agent.set_defaults(func=check_agent)
+    demo = sub.add_parser("demo", help="the demo's choreography, the agent fixing each (7c)")
+    demo.add_argument("--mode", choices=["short", "full"], default="short")
+    demo.add_argument("--leak-rate", type=int, default=None, help="MB/min (short 120, full 80)")
+    demo.add_argument("--label", default="")
+    demo.set_defaults(func=check_demo)
     decide = sub.add_parser("decide", help="approve or decline the agent's waiting proposal")
     decide.add_argument("decision", choices=["approve", "decline"])
     decide.add_argument("--comment", default="")

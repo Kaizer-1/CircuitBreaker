@@ -12,7 +12,20 @@ from dataclasses import dataclass, field
 
 NEW_REVISION_MINUTES = 15
 FAR_ABOVE_NORMAL = 2.0  # request rate / its normal rate
+# "Normal" is the previous hour's median request rate (before the incident's 15 minutes). It
+# exists only once more than half of that hour had real traffic, at least the alerts' own traffic
+# guard of 0.5 requests a second: right after a rebuild, or when the bots were off, the median is a
+# quiet laptop's 0 (staging, 2026-11-28: "normal 0.0/s" on every incident), and any traffic would
+# look like a huge multiple of it. No decision may lean on such a baseline.
+MIN_BASELINE_RATE = 0.5
+NO_BASELINE = "no baseline yet"
+
 CPU_SATURATED = 0.8  # of the CPU limit
+
+
+def baseline(median: float | None) -> float | None:
+    """The previous hour's median request rate, or None while there is none to compare with."""
+    return median if median is not None and median >= MIN_BASELINE_RATE else None
 
 
 @dataclass(frozen=True)
@@ -21,7 +34,7 @@ class Signals:
     service: str
     errors_by_code: dict[str, float] = field(default_factory=dict)  # 5xx per second, by code
     request_rate: float = 0.0  # per second, now
-    normal_rate: float = 0.0  # per second, the previous hour's median
+    normal_rate: float | None = None  # per second, the previous hour's median; None: no baseline
     cpu_of_limit: float = 0.0
     memory_of_limit: float = 0.0
     memory_rising: bool = False
@@ -48,6 +61,6 @@ class Signals:
 
     @property
     def load_far_above_normal(self) -> bool:
-        if self.normal_rate <= 0:
+        if self.normal_rate is None:  # no baseline: only a saturated CPU says the load is too high
             return self.request_rate > 0 and self.cpu_of_limit >= CPU_SATURATED
         return self.request_rate / self.normal_rate >= FAR_ABOVE_NORMAL

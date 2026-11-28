@@ -193,3 +193,21 @@ def test_start_then_refuse_a_second_then_stop(hooks: TestClient) -> None:
 def test_a_bad_request_is_refused(hooks: TestClient, changes: dict[str, object]) -> None:
     response = hooks.post("/internal/v1/faults", json=PANIC | changes)
     assert (response.status_code, response.json()["code"]) == (422, "VALIDATION_FAILED")
+
+
+async def test_the_requests_still_unanswered_after_a_stop_are_counted() -> None:
+    """The panic's tail (owner, 2026-11-27): stopping ends the burst at once, but what it already
+    sent is answered after; `in_flight` says how many are left (the gauge behind the check)."""
+    now, sleep = virtual_time()
+    exchange = FakeExchange(now)
+    exchange.gate = asyncio.Event()  # answers wait: requests stay in flight
+    panic = PanicSell(exchange, rng=seeded(), clock=lambda: now[0], sleep=sleep)  # type: ignore[arg-type]
+    await panic.start(100, 60, datetime(2026, 11, 25, 9, 0, tzinfo=UTC))
+    for _ in range(20):
+        await sleep(0.05)  # type: ignore[operator]
+    assert panic.in_flight > 0  # sent, not answered yet
+    await panic.stop()
+    assert panic.in_flight > 0  # the tail goes on after the stop
+    exchange.gate.set()
+    await panic.wait()
+    assert panic.in_flight == 0

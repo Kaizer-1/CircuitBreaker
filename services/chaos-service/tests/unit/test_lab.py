@@ -215,3 +215,63 @@ async def test_an_escalated_incident_leaves_the_experiment_running_for_a_person(
         )
     )
     assert degraded.running and hooks.on == {"database": 1500}
+
+
+async def test_what_happened_reads_as_plain_english() -> None:
+    """The control room shows these lines next to the agent's feed: never a function name, a
+    status code or None (owner, 2026-11-27: "Agent proposed do_nothing on None")."""
+    lab, _, _, clock = make_lab()
+    panic = await lab.start(ScenarioId.TRAFFIC_SPIKE)
+    opened = clock.advance(47)
+    common = {"incident_id": "INC-0056"}
+    for event_type, data in (
+        (
+            "IncidentOpened",
+            {
+                "alert_name": "OrderServiceHighErrorRate",
+                "service": "order-service",
+                "severity": "critical",
+                "summary": "order-service errors at 14.65% (normally under 1%)",
+                "opened_at": format_timestamp(opened),
+            },
+        ),
+        (
+            "RemediationProposed",
+            {
+                "action": "scale_deployment",
+                "target_service": "order-service",
+                "parameters": {"replicas": 5},
+            },
+        ),  # fmt: skip
+        (
+            "RemediationExecuted",
+            {
+                "action": "scale_deployment",
+                "target_service": "order-service",
+                "parameters": {"replicas": 5},
+                "outcome": "SUCCEEDED",
+                "details": "Scaled order-service from 2 to 5 replicas.",
+            },
+        ),  # fmt: skip
+        (
+            "RemediationProposed",
+            {"action": "do_nothing", "target_service": None, "parameters": {}},
+        ),
+        (
+            "IncidentResolved",
+            {"resolution": "ESCALATED", "resolved_at": format_timestamp(opened)},
+        ),
+    ):
+        await lab.on_incident_event(event(event_type, opened, **common, **data))
+    lines = [t.message for t in panic.timeline[1:]]
+    assert lines == [
+        "The agent opened INC-0056: order-service errors at 14.65% (normally under 1%)."
+        " Detected 47 s after the start.",
+        "The agent proposed to scale order-service to 5 replicas.",
+        "The agent acted: scaled order-service from 2 to 5 replicas.",
+        "The agent proposed to do nothing.",
+        "INC-0056 was handed to a person.",
+    ]
+    for line in lines:
+        for raw in ("_deployment", "do_nothing", "None", "SUCCEEDED", "ESCALATED"):
+            assert raw not in line, line

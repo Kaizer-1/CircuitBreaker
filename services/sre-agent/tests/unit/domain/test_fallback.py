@@ -1,11 +1,13 @@
 """The rule-based fallback (ADR-0021): error type, revision and load, never "a deploy" alone."""
 
+import dataclasses
+
 import pytest
 
 from sre_agent.domain.actions import Tool
 from sre_agent.domain.declines import decline_reason
 from sre_agent.domain.fallback import SOURCE, decide
-from sre_agent.domain.signals import Signals
+from sre_agent.domain.signals import MIN_BASELINE_RATE, Signals, baseline
 
 BAD_RELEASE = Signals(
     alert="OrderServiceHighErrorRate",
@@ -129,3 +131,48 @@ def test_the_release_age_reads_naturally() -> None:
     fresh = Signals(**{**BAD_RELEASE.__dict__, "revision_minutes": 0.3})
     assert "less than a minute ago" in decide(fresh).explanation
     assert "2 minutes ago" in decide(BAD_RELEASE).explanation
+
+
+def test_a_quiet_previous_hour_is_no_baseline_and_no_rule_leans_on_it() -> None:
+    """After a rebuild the previous hour's median is 0 (staging, 2026-11-28: "normal 0.0/s")."""
+    assert baseline(None) is None and baseline(0.0) is None and baseline(0.3) is None
+    assert baseline(MIN_BASELINE_RATE) == MIN_BASELINE_RATE and baseline(4.7) == 4.7
+    fresh = dataclasses.replace(OVERLOAD_AFTER_ROLLBACK, normal_rate=None)
+    proposal = decide(fresh)  # OVERLOADED is load by its type: scaled, baseline or not
+    assert (proposal.tool, proposal.replicas) == (Tool.SCALE.value, 5)
+    assert "118 requests a second (no traffic baseline yet)" in proposal.explanation
+    assert "x its normal" not in proposal.explanation
+    slow = Signals(
+        alert="OrderServiceHighLatency",
+        service="order-service",
+        request_rate=40.0,
+        normal_rate=None,
+        cpu_of_limit=0.3,
+        revision_known_good=True,
+        revision_minutes=300,
+        replicas=2,
+    )
+    assert not slow.load_far_above_normal  # without a baseline only CPU can say "too much"
+    assert decide(slow).tool == Tool.NOTHING.value
+    busy = dataclasses.replace(slow, cpu_of_limit=0.95)
+    assert busy.load_far_above_normal and decide(busy).tool == Tool.SCALE.value
+
+
+def test_the_leak_without_a_baseline_never_claims_normal_traffic() -> None:
+    leak = Signals(
+        alert="MarketDataMemoryGrowth",
+        service="market-data-service",
+        request_rate=1.2,
+        normal_rate=None,
+        memory_of_limit=0.74,
+        memory_rising=True,
+        revision_known_good=True,
+        revision_minutes=237,
+        replicas=1,
+    )
+    proposal = decide(leak)
+    assert proposal.tool == Tool.RESTART.value
+    assert "normal traffic" not in proposal.explanation
+    assert "(no traffic baseline yet)" in proposal.explanation
+    with_baseline = decide(dataclasses.replace(leak, normal_rate=1.1))
+    assert "no new release and normal traffic" in with_baseline.explanation

@@ -49,7 +49,7 @@ the prompt uses our vocabulary and is the same shape every time.
 
 | Source | What is collected (for the alerting service, last 15 minutes) |
 |---|---|
-| **Prometheus metrics** | Request rate; 5xx error ratio; p95 latency; memory (resident set size) and % of its limit, with the trend; CPU; container restarts; ready vs desired replicas; consumer lag where relevant (the consumer's own gauge, or the broker's measurement of its group when the consumer has stopped). Each as a short series (one point per 30 s) plus the "normal" baseline from the previous hour. |
+| **Prometheus metrics** | Request rate; 5xx error ratio; p95 latency; memory (resident set size) and % of its limit, with the trend; CPU; container restarts; ready vs desired replicas; consumer lag where relevant (the consumer's own gauge, or the broker's measurement of its group when the consumer has stopped). Each as a short series (one point per 30 s) plus the "normal" baseline: the median request rate of the hour that ended 15 minutes ago. While that hour had too little traffic (median under 0.5 requests a second, the alerts' own traffic guard: after a rebuild, or with the bots off) there is **no baseline yet**: the evidence says so in words and has no load ratio, and no decision leans on it (owner, 2026-11-28: the staging feed showed "normal 0.0/s"). |
 | **Prometheus alert** | Alert name, labels, value, how long it has been firing. |
 | **Loki logs** | The 50 most recent `error`-level log lines for the service (truncated to 300 characters each), plus counts of the top 5 distinct error messages. |
 | **Deploy history** | The last 5 rollout revisions of the Deployment: revision number, time, image tag, `change-cause` annotation (release name), and **what each changed from the one before** ("order-service: resources"). The release name alone is not enough: the chart names a release by version and image tag, so a changed memory limit keeps the same name (found in the Git rehearsal, 2026-11-27). |
@@ -115,12 +115,28 @@ instead of acting ([chaos scenarios §5](06-chaos-scenarios.md#5-alert-rules-pro
 **After-effects of a fix (owner's decision, 2026-11-27).** A panic sell leaves order-service with a backlog of
 events, so `ConsumerLagHigh` fires a minute after the agent's scale-up has already fixed the overload. That is not a
 new problem, and a separate "escalated" incident right after a successful fix would mislead the audience; hiding it
-would be worse. So for **10 minutes after an incident recovers through an action**, an information-only alert on
-the same service is attached to *that* incident as an expected after-effect ("ConsumerLagHigh (3,000 now) after the
-scale: an expected after-effect, draining; no action") and watched through the alert's own value. It is noted as
-drained when it clears; it becomes its own incident and goes to a person if its value stops going down for a
-minute, or if it still fires when the 10 minutes end. An alert the agent can act on, after a recovery, is a new
-problem and opens its own incident as before.
+would be worse. So for **10 minutes after an incident recovers through an action**, a **backlog** alert on the
+same service (`ConsumerLagHigh`) is attached to *that* incident as an expected after-effect (timeline kind
+`AFTER_EFFECT`: "ConsumerLagHigh (3,000 now) after the scale: an expected after-effect, draining; no action") and
+watched through the alert's own value. It is noted as drained when it clears; it becomes its own incident and goes
+to a person if its value stops going down for a minute, or if it still fires when the 10 minutes end. Only a
+backlog drains by itself once the fix works: an open circuit breaker or a dead-lettered message in that window is a
+new problem and opens its own incident at once (the live demo's database decline starts minutes after the panic
+sell's scale-up; the first version held it back as an "after-effect" for a minute). So does an alert the agent can
+act on.
+
+**Symptoms under their cause (owner, 2026-11-27).** A bad deploy or a panic sell in order-service also makes
+`GatewayHighErrorRate` fire, because the gateway passes order-service's errors on. That is not a second problem, so
+it is not a second incident: when most (≥ 50%) of the gateway's 5xx are an upstream's own answers passed on and that
+upstream has an active incident (an open one, or one the agent declined whose alert still fires: its cause is still
+there), or else one that recovered less than 10 minutes ago, the gateway's alert becomes a
+`SYMPTOM` line on it ("GatewayHighErrorRate on api-gateway: a symptom of INC-0056. 100% of the gateway's errors are
+order-service's answers, passed on; no action"), and another when it clears with its cause. If it fires before its
+root's incident has opened (both alerts fire within seconds), it waits up to 60 s for it. It gets an incident of its
+own when its errors are the gateway's own, when no upstream incident opens within the minute, or when it still fires
+a minute after its root stopped (recovered, or its alert cleared; handed to a person). If a newer active incident on
+the same upstream exists by then, the symptom moves to it instead (staging, 2026-11-27: the gateway's errors during the
+database decline first went to the panic sell's just-recovered incident and were handed over as a second incident). The dashboard therefore shows root causes only.
 
 **Phase 7 must demonstrate this:** with portfolio-service broken, `OrderServiceCircuitOpen` fires and the incident
 feed shows the agent choosing **not** to act on order-service and escalating, with its explanation. It is a key viva
@@ -178,11 +194,11 @@ sees OpenRouter's request/response format, so changing gateway or model touches 
 |---|---|---|
 | API | OpenRouter chat-completions endpoint (`https://openrouter.ai/api/v1`), OpenAI-compatible, called over HTTPS | One API and key for many models; standard function-calling format. |
 | Model | `SRE_AGENT_MODEL` env var holding an OpenRouter model slug. Default: **`anthropic/claude-sonnet-5.5`** (the latest Claude Sonnet listed by OpenRouter's public `GET /api/v1/models`, checked 2026-11-03). Optional `SRE_AGENT_FALLBACK_MODELS` list. | Choosing or swapping a model is configuration, not code. The model **must support tool calling**. |
-| Tool choice | `tool_choice: "auto"` and a system-prompt rule: "Always respond by calling exactly one tool." `parallel_tool_calls: false` and `temperature: 0` are sent only when OpenRouter's model list says the model takes them: for `anthropic/claude-sonnet-5.5` no provider offers either (checked 2026-11-26), and sending one anyway leaves strict routing with no provider (HTTP 404) | Forcing a tool call (`"required"`) is not supported by every model and provider behind OpenRouter (recent Claude models reject it), so we don't depend on it. A reply without exactly one tool call is unusable, and the rule-based fallback decides (ADR-0021): at most one action per decision either way. |
+| Tool choice | `tool_choice: "auto"` and a system-prompt rule: "Always respond by calling exactly one tool." `parallel_tool_calls: false` and `temperature: 0` are sent only when OpenRouter's model list says the model takes them: for `anthropic/claude-sonnet-5.5` no provider offers either (checked 2026-11-26), and sending one anyway leaves strict routing with no provider (HTTP 404) | Forcing a tool call is not possible: Claude Sonnet 5.5 itself refuses it ("tool_choice: type tool and any are not supported for this model", checked 2026-11-28; with strict routing `"required"` finds no provider, HTTP 404, and the evaluation caught that before staging). A reply without exactly one tool call is unusable: asked once more, then the rule-based fallback decides (ADR-0021). At most one action per decision either way. |
 | Provider routing | Ask OpenRouter to use only providers that support every parameter in the request (tools included) | Prevents silently landing on a provider that ignores tool definitions. |
 | Argument validation | `strict: true` where the model supports it **and always** our own JSON Schema validation of the returned arguments in code | Not every model enforces strict schemas, so we never trust arguments without checking them ourselves. Invalid arguments → declined by guardrail. |
-| Timeout | A **decision deadline of 25 s** for every attempt together; one retry, only after a fast failure (refused connection, HTTP 5xx or 429); the fallback model (if configured) inside the same deadline; at most 60 model calls per hour | If OpenRouter or the model is slow or down, the **rule-based fallback** chooses ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)), through the same guardrails: the system is never *worse* because the LLM failed. Mitigation should start within 30 s of detection, so the model gets 25 s. |
-| Stop reasons | Anything other than one tool call whose arguments parse as JSON (plain text, refusal, content filter, length cut-off, several calls) → the rule-based fallback (ADR-0021). One tool call with bad arguments → the guardrails decline it | Always check why the response stopped before reading it. |
+| Timeout | A **decision deadline of 25 s** for every attempt together; one retry, after a fast failure (refused connection, HTTP 5xx or 429, a provider's error) or a malformed answer, only with 8 s or more left, and never from the provider whose answer was malformed; the fallback model (if configured) inside the same deadline; at most 60 model calls per hour | If OpenRouter or the model is slow or down, the **rule-based fallback** chooses ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)), through the same guardrails: the system is never *worse* because the LLM failed. Mitigation should start within 30 s of detection, so the model gets 25 s. |
+| Stop reasons | Anything other than one tool call whose arguments parse as JSON (plain text, length cut-off, several calls, a call reported but not sent) is a **malformed answer**: asked again once, elsewhere, then the rule-based fallback labelled "malformed model answer". No answer at all (timeout, refusal, no credit, unreachable) is labelled "LLM unavailable" (ADR-0021). One tool call with bad arguments → the guardrails decline it | Always check why the response stopped before reading it. Found on staging (2026-11-27): Amazon Bedrock answered `finish_reason: tool_calls` (its own stop reason `tool_use`, 322 completion tokens) with only the model's opening sentence: the call was lost on the way, and the feed wrongly said "LLM unavailable". |
 | Key | `OPENROUTER_API_KEY` from the Kubernetes Secret `openrouter-api-key`: a SealedSecret in Git ([ADR-0019](../adr/0019-sealed-secrets-for-gitops.md)), sealed by `make openrouter-key`, which refuses a key without a credit limit | Never in code; in Git only encrypted. |
 | Data minimisation | Evidence only (metrics, truncated logs, deploy history); nicknames and trader IDs are scrubbed from log lines | Prompts leave our system and pass through OpenRouter and the model provider, so we send only what diagnosis needs. |
 | Spend control | OpenRouter key with a credit limit; the agent stores token usage per call (`sre_agent_llm_tokens_total`) | A runaway loop cannot cost more than the key's limit. |
@@ -206,7 +222,7 @@ sees OpenRouter's request/response format, so changing gateway or model touches 
 | G6 | **Budget:** max 3 executed actions per incident, max 6 per hour overall | Escalate |
 | G7 | `rollback_deployment` needs a previous revision to exist, **and the running release must be new** (its pod template first ran less than 15 minutes ago). After the agent's own rollback the running release is known-good, so a second rollback, which would bring the bad release back, is refused whoever proposes it ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)) | Decline + escalate |
 | G8 | Agent **paused** by admin | Record the proposal only; never execute |
-| G9 | LLM error, timeout, refusal or no tool call | The rule-based fallback chooses, labelled "rule-based (LLM unavailable)"; its proposal meets G1–G10 like any other ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md); before it: `do_nothing` + escalate) |
+| G9 | LLM error, timeout, refusal or no usable tool call | The rule-based fallback chooses, labelled "rule-based (LLM unavailable)" (no answer) or "rule-based (malformed model answer)" (an answer without one valid tool call, after one more try); its proposal meets G1–G10 like any other ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md); before it: `do_nothing` + escalate) |
 | G10 | `explanation` must be 1–600 characters | Replace with a generic explanation and flag it |
 | G11 | Rollback's Git step: only `deploy/envs/<env>/<service>.yaml` of the *same* service and environment; only a single-file commit; at most one open revert PR per service; branch prefix `sre-agent/`; never merges | Skip step (b), keep the rollback, escalate (`git_reconciliation: FAILED`) |
 
@@ -254,19 +270,35 @@ keyspace.
 
 ## 7. Outputs: the incident feed
 
-The feed (`WS /v1/ws/incidents`, Q-19) streams every step as a short human-readable message:
+The feed (`WS /v1/ws/incidents`, Q-19) streams every step as a short human-readable message, each with its kind
+(the control room shows the kind as a label and a colour, no icons):
 
 ```text
-11:05:31  🔴 INC-0007 opened — order-service errors at 38% (normally under 1%).
-11:05:44  🧠 Diagnosis — Errors jumped about 40 seconds after release 1.4.1 (revision 8) was deployed.
-             Memory and traffic are normal and the logs show a new exception. Most likely a bad release.
-11:05:44  🛠️ Proposed: roll back order-service to revision 7.  [Approve] [Decline]
-11:05:58  ✅ Approved by presenter.
-11:06:01  ⏪ Rolled back order-service to revision 7. 2/2 pods ready.
-11:06:02  🔀 Git check: revision 8 did not come from Git (Argo CD showed live drift), so Git already matches.
-             No revert PR needed.
-11:07:05  🟢 INC-0007 resolved in 94 s. Errors back to 0.2%.
+11:05:31  OPENED        INC-0007 order-service errors at 38% (normally under 1%).
+11:05:34  DIAGNOSIS     Errors jumped right after release 1.4.1 (revision 8) started; it has never run 15 minutes
+                        in a row. Traffic and memory are normal. Rolling back to release 0.5.0 is the smallest fix.
+11:05:34  PROPOSED      Proposed: roll back order-service to revision 7.   [Approve] [Decline]  (approval mode)
+11:05:41  APPROVED      Approved by presenter.
+11:05:43  EXECUTED      Rolled order-service back from revision 8 to revision 7; the rollout has started.
+11:05:43  EXECUTED      Git: no revert needed. The Application was OutOfSync before the rollback: the bad revision
+                        was a change made outside Git, and the rollback brought the cluster back to what Git says.
+11:07:05  RESOLVED      Recovered: OrderServiceHighErrorRate cleared 34 s after the incident opened and stayed
+                        clear for 60 s.
 ```
+
+A rule-based decision says so at the start of its diagnosis: "Rule-based (LLM unavailable: OpenRouter did not
+answer in 25 s)" when no answer came, "Rule-based (malformed model answer: …)" when one came without a usable tool
+call (owner, 2026-11-28: "LLM unavailable" only when the model really didn't answer). An after-effect
+of a fix is an `AFTER_EFFECT` line on the incident it follows ("ConsumerLagHigh (3,000 now) after the scale: an
+expected after-effect, draining; no action").
+
+**Vitals for the control room** (owner, 2026-11-27). Every 5 s the feed also carries a `vitals` message:
+order-service's request rate, error ratio, p95 latency and replicas, and how full market-data-service's memory is,
+read from Prometheus with the evidence collector's own queries, so the audience's market strip shows what the agent
+sees. They are for screens only: a separate publisher (`application/vitals.py`) writes them to the feed, and nothing
+in the agent reads the feed, so its own vitals can never come back to it as evidence (a test runs the same bad
+deploy with and without them and compares what the model is shown). When Prometheus does not answer, no vitals are
+sent: the control room greys the strip out after 15 s ("stale since …") instead of freezing on old numbers.
 
 ## 8. Metrics the agent exposes
 
@@ -277,6 +309,11 @@ The feed (`WS /v1/ws/incidents`, Q-19) streams every step as a short human-reada
 | `sre_agent_declined_total{by,reason}` | Guardrail/admin declines |
 | `sre_agent_time_to_recover_seconds` (histogram) | MTTR source |
 | `sre_agent_llm_latency_seconds`, `sre_agent_llm_errors_total`, `sre_agent_llm_tokens_total{model}`, `sre_agent_llm_cost_dollars_total{model}` | LLM health and spend (the cost is what OpenRouter reports for each call: `usage.include`) |
+| `sre_agent_actions_left_this_hour`, `sre_agent_cooldown_seconds{service}` (gauges) | What the guardrails still allow (G6's hourly budget, G5's cooldowns), for the projector's Incident view; read-only, never settable |
+
+Each executed action is also one log line, `action executed` (incident, action, service, outcome, details), which the
+Grafana **Incident view** (`observability/dashboards/incident-view.json`) marks on its panels beside every deploy and
+every chaos experiment.
 
 ## 9. Running outside Kubernetes
 
@@ -320,6 +357,8 @@ OpenRouter refuses it, and the rules must decide.
 | `crashloop-config-change` | Only the memory limit changed (same release name, same image); the new pod is OOM-killed again and again while the old pods serve. | rollback_deployment order-service | 3/3 | ✅ |
 | `bad-deploy-again` | The same bad release deployed again: Kubernetes reused its ReplicaSet, 5 hours old, which only ever ran for minutes. | rollback_deployment order-service | 3/3 | ✅ |
 | `bad-deploy-under-load` | A bad release (INTERNAL_ERROR) during heavy but handled traffic. | rollback_deployment order-service | 3/3 | ✅ |
+| `panic-no-baseline` | OVERLOADED at 110 requests a second on a fresh cluster: no traffic baseline yet. | scale_deployment order-service (3–5) | 3/3 | ✅ |
+| `leak-no-baseline` | Memory 74% of its limit and climbing on a fresh cluster: no traffic baseline yet. | restart_deployment market-data-service | 3/3 | ✅ |
 | `llm-unavailable` | The bad deploy with an invalid OpenRouter key. | rollback_deployment order-service | rules | ✅ |
 
 **Result (2026-11-27, the final run):** 23 cases. The model chose right in **63 of 63** runs and never chose a
@@ -336,7 +375,28 @@ fake cluster's series and pods realistic, and closed one gap in the prompt: a ro
 with a new release** (errors, crashes or memory climbing), not only internal errors. The second run was 57 of 57. The
 last two cases came from staging ([§11](#11-measured-on-staging)): each is a situation the agent first got wrong there.
 
-What it does not show: these are 23 situations we designed, with one model. Staging is the end-to-end test.
+**Plain words (owner, 2026-11-27).** The explanation is read from a projector, so the prompt asks for the evidence in
+everyday words with its numbers, never its field names ("all of those errors come from order-service", not
+"passed_on_share 1.0"). The evaluation checks every explanation for the evidence's snake_case field names (error codes
+such as `INTERNAL_ERROR` are the system's vocabulary, not field names) and fails if one is used; `python -m
+eval.compare OLD NEW` compares two runs case by case and fails if any decision changed. Before and after the prompt
+line, same 23 cases: decisions identical in every case (63 of 63 right both times, rules 23 of 23); explanations
+quoting a field name 1 → 0 of 63; numbers cited per explanation 4.9 → 5.4 (more concrete, not vaguer), words 54 → 60;
+cost per decision $0.0091 → $0.0093.
+
+**After the 7c staging review (2026-11-28): no baseline, two labels.** Two new cases are the staging cluster just
+after a rebuild, when the previous hour had no traffic: the evidence says "no baseline yet" instead of "normal 0.0/s",
+and the model must still scale the overload (judged by its error type and CPU) and restart the leak. Then the whole
+set again, now 25 cases: **69 of 69** model runs right, none harmful, rules 25 of 25, **no run without a usable
+answer** (the evaluation now fails otherwise), none needing a second try; decisions identical to the plain-words run
+in all 23 earlier cases (`eval.compare` exit 0); numbers cited per explanation 5.4 → 5.8; median decision 2.3 s,
+**$0.0097 per decision** ($0.67 for the run). Without a baseline the model says so ("there is no traffic baseline to
+compare against, so the overload is judged from the errors and CPU") and calls the leak's traffic "steady", not
+"normal". On the way, a run with `tool_choice: "required"` (to stop the model writing text before its call, see
+[ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)'s note) failed every case with HTTP 404:
+the model refuses forced tool use. That is what the evaluation is for; "auto" stays.
+
+What it does not show: these are 25 situations we designed, with one model. Staging is the end-to-end test.
 
 ## 11. Measured on staging
 
@@ -401,9 +461,57 @@ the unit tests (and the evaluation's `harmful_after_guardrails`), not here.
   unusable answer is logged and the rules decide.
 
 **After-effects** ([§3](#3-the-tool-allowlist)): the panic sell's follow-on `ConsumerLagHigh` showed up once in the
-three panic runs before the change, as an incident of its own, escalated; that led to the owner's decision. The one
-panic run since saw no lag over 1,000, so attaching a follow-on alert to the incident it follows is proven by the unit
-tests only.
+three panic runs before the change, as an incident of its own, escalated; that led to the owner's decision. Seen live
+since (7c): on the final short demo it fired 1,813 messages behind after the scale, was attached to the panic's
+incident as an after-effect and drained in 30 s, with no incident of its own.
+
+### The demo choreography (Phase 7c)
+
+> 🧩 **Our own measurement** (2026-11-27/28, staging, the bots trading, mains power). `make demo-chaos env=staging`
+> starts the scenarios as the presenter would ([demo runbook §2](../demo-runbook.md#2-during-the-demo)) and the agent
+> fixes or declines each by itself; the total is from the first click to the last scenario's outcome. **Short** (the
+> live demo): the leak at 0 s, the panic sell at 20 s, the database decline once the market has two sides again.
+> **Full** (the recorded video and a rehearsal): the leak, the bad deploy, the panic after the agent's cooldown, the
+> decline. Times from each alert firing, as above.
+
+| Run | Total | Detect | Mitigate | Leak peak (of its limit) | Market two-sided after the panic's last answer | Decisions |
+|---|---|---|---|---|---|---|
+| Short, 120 MB/min (2026-11-27) | 235 s | 14 s | 17 s | 90.9% | not yet checked | model, fixed decline |
+| Full, 80 MB/min (2026-11-27) | **542 s** | 11–13 s | 16–22 s | 84.3% | not yet checked | model, fixed decline |
+| Short, 100 MB/min, ×3 (2026-11-27, review fixes) | 239–244 s | 0–5 s | 4–8 s | 86.5% (one run measured) | two runs over 30 s, then a market with no bids: fixed (below) | model, fixed decline |
+| Short, right after a data reset (2026-11-28) | 250 s | 2–5 s | 6–11 s | 87.1% | 8 s (tail 14.4 s) | the leak by the rules (the lost tool call, below) |
+| **Short, the final run after the owner's review** (2026-11-28) | **241 s** | 1–2 s | 4–5 s | 84.1% | **12 s** (tail 15.5 s) | **2 by the model, 1 fixed decline, 0 by the rules** |
+| Short, the makers' guard at 4 quick fills (2026-11-28, below) | 235 s | 0–1 s | 3–4 s | 82.5% | 18 s (tail 0.2 s) | 2 by the model, 1 fixed decline, 0 by the rules |
+
+Every run fixed the leak with a restart and the panic sell with a scale to 5, and declined the database (escalated,
+naming Postgres); the presenter's reset brought everything back to normal in 36–57 s. The first two runs' 11–14 s
+detect was Prometheus: after the laptop slept, its rule evaluation ran about 10 s behind its own schedule, so every
+alert became visible late; restarting Prometheus fixed it (runbook §3).
+
+**Found while building the control room, fixed:**
+
+- **The live feed never worked on Kubernetes.** The agent's image had no WebSocket library, so uvicorn answered the
+  feed's upgrade with 404 and the gateway closed the screen's connection; the unit tests used a test client that
+  needs none. Now a runtime dependency, tested against a real uvicorn server
+  ([coding standards §6](../05-coding-standards.md)).
+- **After the panic the market had no bids for minutes**, so phones could not sell: the market makers spent their
+  cash buying the panic's shares. They now pull a bid that one-sided selling keeps eating, come back with 1-share
+  probes, and the demo check fails if any ticker lacks a bid or an ask 30 s after the panic's last order is answered
+  ([bot-traders README](../../services/bot-traders/README.md)).
+- **The gateway's passed-on errors opened incidents of their own** during the decline: a symptom now waits for its
+  root, prefers a root that is still active, and moves to a newer one.
+- **A lost tool call was labelled "LLM unavailable"** (the run after the data reset): the model had called its tool,
+  but the answer Amazon Bedrock sent back held only the model's first sentence. The agent now asks once more,
+  elsewhere, and labels a still-unusable answer "malformed model answer"
+  ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md) note). The final run checks that no
+  decision came from the rules.
+- **The makers' guard stepped back in ordinary trading.** CI's bots check found CALVERA's makers quoting 3.3 bids
+  of 4: after 2 quick fills the guard tripped about 100 times in a normal simulated hour. It now waits for 4, which a
+  normal hour never reaches and a panic does at once; the run above, with it, had every ticker two-sided 18 s after
+  the panic.
+- **"normal 0.0/s" on every evidence line** after the cluster was rebuilt: the previous hour had no traffic. The
+  evidence now says "no baseline yet" until it has one ([§2](#2-inputs-what-the-agent-sees)); the final run shows real
+  baselines ("Requests 74.6/s (normal 12.8/s)").
 
 **A known limit of the Git step:** if a release from Git is the same pod template as one that ran before, Kubernetes
 reuses that ReplicaSet and its pods do not "first run" now, so the pre-check finds no sync just before it and answers
@@ -424,13 +532,15 @@ optional human approval step.
 **Q: What happens if OpenRouter or the model is down?**
 A: After 25 s (one retry, the optional fallback model), fixed rules choose instead ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)):
 they read the error type, whether the running revision is new, and the load, and propose one of the same four tools,
-through the same guardrails, labelled "rule-based (LLM unavailable)". Anything the rules don't recognise is left
-alone and escalated. The system is never worse off because the LLM failed.
+through the same guardrails, labelled "rule-based (LLM unavailable)". An answer that came back without a usable tool
+call is asked once more from another provider and, if still unusable, labelled "rule-based (malformed model answer)":
+the feed never blames the model for a provider's fault. Anything the rules don't recognise is left alone and
+escalated. The system is never worse off because the LLM failed.
 
 **Q: How do you know the model makes good decisions?**
-A: We measured it twice. `make agent-eval` runs 23 designed situations through the real model, three times each,
-with evidence made by the agent's own collector, and checks each answer against what an expert would accept: 63 of 63
-right, none harmful, about $0.009 a decision. On staging the agent handled every Chaos Panel scenario itself in 13
+A: We measured it twice. `make agent-eval` runs 25 designed situations through the real model, three times each,
+with evidence made by the agent's own collector, and checks each answer against what an expert would accept: 69 of 69
+right, none harmful, about $0.01 a decision. On staging the agent handled every Chaos Panel scenario itself in 13
 runs (three fixes within the timing targets, and the database decline), with the owner approving and declining once. And the guardrails don't rely on that: the two harmful mistakes we most fear (rolling back onto
 the bad release, acting on another service) are refused in code whoever proposes them.
 

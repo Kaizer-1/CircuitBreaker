@@ -33,6 +33,7 @@ from sre_agent.application.agent import Agent, AgentConfig
 from sre_agent.application.collector import EvidenceCollector
 from sre_agent.application.decider import Decider
 from sre_agent.application.feed import FeedHub
+from sre_agent.application.vitals import VitalsPublisher
 from sre_agent.business_metrics import register_business_metrics
 from sre_agent.config import Settings
 from sre_agent.ports.gitops import GitOps, NoGitOps
@@ -172,6 +173,7 @@ async def run_service(app: FastAPI, settings: Settings, http: httpx.AsyncClient)
         if reverter is None:
             logger.warning("no GitHub App: a Git-delivered bad release needs a manual revert")
     alerts = prometheus or NoAlerts()
+    feed = FeedHub()
     agent = Agent(
         AgentConfig(namespace, settings.approval_default, poll_seconds=settings.poll_seconds),
         alerts=alerts,
@@ -181,7 +183,7 @@ async def run_service(app: FastAPI, settings: Settings, http: httpx.AsyncClient)
         gitops=gitops,
         store=store,
         sink=sink,
-        feed=FeedHub(),
+        feed=feed,
         now=now,
         metrics=business,
     )
@@ -190,6 +192,10 @@ async def run_service(app: FastAPI, settings: Settings, http: httpx.AsyncClient)
     app.state.agent = agent
     if prometheus is not None and settings.start_agent:
         tasks.append(asyncio.create_task(agent.run()))
+        # For screens only: the publisher writes to the feed, which the agent never reads.
+        vitals = VitalsPublisher(prometheus, feed, namespace, now, settings.poll_seconds)
+        app.state.vitals = vitals
+        tasks.append(asyncio.create_task(vitals.run()))
         logger.info("agent started", extra={"namespace": namespace, "model": agent.model})
     else:
         logger.info("no Prometheus: the agent loop does not run (Docker Compose)")
@@ -245,6 +251,7 @@ def create_app(
     app.state.metrics = metrics
     app.state.business_metrics = business_metrics
     app.state.agent = None
+    app.state.vitals = None
     app.state.store = None
     if readiness_checks is None:
         checks.append(started_check(app))
