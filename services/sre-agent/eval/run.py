@@ -35,7 +35,7 @@ from sre_agent.domain import fallback, guardrails
 from sre_agent.domain.actions import Proposal
 from sre_agent.domain.guardrails import Situation
 from sre_agent.domain.incident import Incident
-from sre_agent.ports.llm import LLMUnavailableError
+from sre_agent.ports.llm import LLMUnavailableError, MalformedAnswerError
 
 MODEL = "anthropic/claude-sonnet-5.5"
 IGNORE = tuple(
@@ -148,6 +148,7 @@ async def run_case(case: Case, llm: OpenRouterClient, runs: int) -> dict[str, An
                         seconds=round(choice.seconds, 1),
                         tokens=choice.tokens,
                         cost=choice.cost_dollars,
+                        attempts=choice.attempts,
                         path="model",
                     )
                 )
@@ -161,7 +162,9 @@ async def run_case(case: Case, llm: OpenRouterClient, runs: int) -> dict[str, An
                         "harmful_after_guardrails": False,
                         "seconds": round(time.monotonic() - began, 1),
                         "tokens": 0,
-                        "path": "unavailable",
+                        "path": "malformed"
+                        if isinstance(exc, MalformedAnswerError)
+                        else "unavailable",
                     }
                 )
     rules_right, rules_harmful = judge(case, rules)
@@ -243,6 +246,12 @@ async def main() -> None:
             r["harmful_after_guardrails"] for c in report for r in c["runs"]
         ),
         "rules_right": sum(c["rules"]["right"] for c in report),
+        # Every run should be the model's: an answer that needed a second try still counts as the
+        # model's, a run with no usable answer at all would be the rules' on the feed.
+        "model_runs_on_second_try": sum(r.get("attempts", 1) == 2 for r in model_runs),
+        "runs_without_a_usable_answer": sum(
+            r["path"] in ("malformed", "unavailable") for c in report for r in c["runs"]
+        ),
         # The owner's plain-words check: no evidence field name in any explanation.
         "explanations_quoting_field_names": sum(
             bool(r.get("field_names_quoted")) for c in report for r in c["runs"]
@@ -267,8 +276,14 @@ async def main() -> None:
         for r in c["runs"]:
             if r.get("field_names_quoted"):
                 print(f"PLAIN WORDS: {c['case']}: {r['field_names_quoted']}: {r['explanation']}")
-    if summary["explanations_quoting_field_names"]:
-        raise SystemExit(1)  # the check fails: an explanation names evidence fields
+    for c in report:
+        for r in c["runs"]:
+            if r["path"] in ("malformed", "unavailable"):
+                print(f"NO USABLE ANSWER: {c['case']}: {r['proposal']}")
+    if summary["explanations_quoting_field_names"] or summary["runs_without_a_usable_answer"]:
+        # The check fails: an explanation names evidence fields, or a decision was not the
+        # model's (on stage the model must decide; 2026-11-28 a request change made every call 404).
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

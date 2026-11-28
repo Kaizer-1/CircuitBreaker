@@ -19,7 +19,7 @@ from sre_agent.domain.actions import MAX_REPLICAS, SCALABLE
 from sre_agent.domain.evidence import MAX_LINES, Evidence, scrub
 from sre_agent.domain.incident import Incident
 from sre_agent.domain.revisions import RevisionFacts
-from sre_agent.domain.signals import Signals
+from sre_agent.domain.signals import NO_BASELINE, Signals, baseline
 from sre_agent.ports.observability import Alert, Logs, Metrics
 from sre_agent.ports.platform import DeploymentState, Platform
 from sre_agent.ports.store import ActionRecord
@@ -263,12 +263,13 @@ class EvidenceCollector:
         activity = {name: revisions.spans_from_series(pts, now, 60) for name, pts in ready.items()}
         rev = revisions.facts(deployment.replicasets, now, activity) if deployment else None
         errors = {code: v for code, v in by_type.items() if v > 0}
+        usual = baseline(normal)  # None until the previous hour had enough traffic
         signals = Signals(
             alert=alert.name,
             service=alert.service,
             errors_by_code=errors,
             request_rate=rate or 0.0,
-            normal_rate=normal or 0.0,
+            normal_rate=usual,
             cpu_of_limit=cpu or 0.0,
             memory_of_limit=memory or 0.0,
             memory_rising=(rising or 0) > RISING_BYTES_PER_SECOND,
@@ -285,8 +286,8 @@ class EvidenceCollector:
             "errors_per_second_by_type": {k: round(v, 2) for k, v in errors.items()},
             "main_error_type": signals.main_error,
             "request_rate": _round(rate),
-            "normal_rate": _round(normal),
-            "load_ratio": round(rate / normal, 1) if rate and normal else None,
+            "normal_rate": _round(usual) if usual is not None else NO_BASELINE,
+            "load_ratio": round(rate / usual, 1) if rate and usual else None,
             "p95_latency_seconds": _round(p95),
             "cpu_of_limit": _round(cpu),
             "memory_of_limit": _round(memory),

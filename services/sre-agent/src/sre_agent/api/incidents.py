@@ -258,6 +258,9 @@ async def incident_feed(websocket: WebSocket) -> None:
             i.to_summary() for i in resolved[:RESOLVED_IN_SNAPSHOT]
         ]
         await websocket.send_json({"type": "snapshot", "data": snapshot})
+        await websocket.send_json(
+            {"type": "with_a_person", "data": {"incident_ids": agent.with_a_person()}}
+        )
         vitals = getattr(websocket.app.state, "vitals", None)
         current = vitals.current() if vitals is not None else None
         if current is not None:  # a fresh screen need not wait for the next poll

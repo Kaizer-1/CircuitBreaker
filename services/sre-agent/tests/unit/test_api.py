@@ -85,6 +85,8 @@ def test_the_feed_starts_with_a_snapshot() -> None:
         first: dict[str, Any] = ws.receive_json()
         assert first["type"] == "snapshot"
         assert [i["incident_id"] for i in first["data"]] == ["INC-0002", "INC-0001"]
+        second: dict[str, Any] = ws.receive_json()  # who is with a person, before any change
+        assert second == {"type": "with_a_person", "data": {"incident_ids": []}}
 
 
 def test_while_starting_the_api_answers_503_and_readiness_says_so() -> None:

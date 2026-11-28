@@ -85,7 +85,8 @@ class Remediation:
     target_service: str | None
     parameters: dict[str, Any]
     explanation: str
-    model: str  # the model's slug, or "rule-based (LLM unavailable)", or "fixed rule"
+    model: str  # the model's slug, or "rule-based (LLM unavailable)", "rule-based
+    # (malformed model answer)" or "fixed rule"
     status: RemediationStatus
     requires_approval: bool
     proposed_at: datetime

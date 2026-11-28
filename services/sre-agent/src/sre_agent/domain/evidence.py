@@ -14,6 +14,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from sre_agent.domain.signals import NO_BASELINE
+
 MAX_LINE = 300
 MAX_LINES = 50
 
@@ -62,9 +64,9 @@ class Evidence:
             release = revision.get("release") or "no release name"
             parts.append(f"Revision {revision.get('number')} ({release}, {state})")
         if f.get("request_rate") is not None:
-            parts.append(
-                f"Requests {f['request_rate']:.1f}/s (normal {f.get('normal_rate') or 0:.1f}/s)"
-            )
+            normal = f.get("normal_rate")
+            usual = f"normal {normal:.1f}/s" if isinstance(normal, int | float) else NO_BASELINE
+            parts.append(f"Requests {f['request_rate']:.1f}/s ({usual})")
         if f.get("memory_of_limit"):
             trend = "rising" if f.get("memory_rising") else "flat"
             parts.append(f"Memory {100 * f['memory_of_limit']:.0f}% of limit, {trend}")

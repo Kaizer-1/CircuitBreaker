@@ -1,9 +1,10 @@
 """The live incident feed (Q-19, `WS /v1/ws/incidents`): one queue per connected screen.
 
 Messages are those of api/README.md: `snapshot` on connect, then `incident_opened`,
-`incident_update` (one timeline entry), `approval_required` and `incident_resolved`, and every few
-seconds `vitals` (application/vitals.py). A screen that stops reading is dropped rather than slowing
-the agent down. Nothing in the agent reads from the hub: it is an output only.
+`incident_update` (one timeline entry), `approval_required`, `incident_resolved` and
+`with_a_person` (the escalated incidents whose alert still fires, when that set changes), and
+every few seconds `vitals` (application/vitals.py). A screen that stops reading is dropped rather
+than slowing the agent down. Nothing in the agent reads from the hub: it is an output only.
 """
 
 import asyncio

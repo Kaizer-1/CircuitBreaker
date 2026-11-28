@@ -175,6 +175,7 @@ on), `1011` market data is starting or the event store stopped answering.
 | server → client | `approval_required` | `{ incident_id, remediation: Remediation }` — only when approval mode is on |
 | server → client | `incident_resolved` | `IncidentSummary` with `resolution` and `time_to_recover_seconds` |
 | server → client | `vitals` | Every 5 s, and right after the snapshot while the last one is under 15 s old (since sre-agent 1.2.0): `{ at, service: "order-service", requests_per_second, error_ratio, p95_seconds, replicas: { desired, ready }, market_data_memory_of_limit }`, each `null` when Prometheus has no value. The numbers the agent sees, for the control room's market strip; none when Prometheus does not answer, so a screen greys the strip out after 15 s without one. Display only: never part of an incident's evidence |
+| server → client | `with_a_person` | Right after the snapshot and whenever it changes (since sre-agent 1.3.0): `{ incident_ids: string[] }`, the incidents the agent handed to a person (`ESCALATED`) whose alert still fires. Resolved for the agent, not for the system: the dashboard's status bar counts them ("1 incident open · 1 with a person") |
 
 ```json
 {"type": "incident_update", "data": {"incident_id": "INC-0007", "entry": {"at": "2026-11-20T11:06:01.398Z", "kind": "EXECUTED", "message": "Rolled back order-service to revision 7. 2/2 pods ready."}}}
@@ -221,6 +222,9 @@ attached to that incident as an `AFTER_EFFECT` timeline entry instead of opening
 passes an upstream's errors on is a `SYMPTOM` entry on the upstream's incident, and the feed (Q-19) sends `vitals` for
 the control room (sre-agent spec 1.2.0). The memory leak's default rate became 100 MB a minute, the live demo's
 (chaos-service spec 1.1.1; [chaos scenarios §3.2](../docs/03-architecture/06-chaos-scenarios.md)).
+The feed (Q-19) also says which escalated incidents' alerts still fire (`with_a_person`), and a proposal's `model` names
+which failure made the rules decide: "rule-based (LLM unavailable)" or "rule-based (malformed model answer)"
+(sre-agent spec 1.3.0, [ADR-0021](../docs/adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md) note).
 
 ## Error code catalog
 

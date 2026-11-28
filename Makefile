@@ -183,7 +183,7 @@ openrouter-key: ## Secrets: seal the SRE agent's OpenRouter key for both environ
 github-app: ## Secrets: check and seal the SRE agent's GitHub App (ID asked for; key from private/keys/): make github-app [app_id=] [pem=]
 	@python3 scripts/sealed_secrets.py github-app $(if $(app_id),--app-id $(app_id),) $(if $(pem),--pem $(pem),)
 
-agent-eval: ## SRE agent: 23 designed situations through the real model, 3 runs each (~240k tokens, ~$0.60), plain-words check: make agent-eval [runs=3]
+agent-eval: ## SRE agent: 25 designed situations through the real model, 3 runs each (~260k tokens, ~$0.70), plain-words check: make agent-eval [runs=3]
 	@cd services/sre-agent && uv run --frozen python -m eval.run --runs $(if $(runs),$(runs),3)
 
 github-rules-check: ## Secrets: GitHub must refuse the agent's App a merge, a push to main and any v* tag change, and everyone a v* tag delete or move

@@ -49,3 +49,13 @@ def test_the_summary_reads_as_plain_sentences() -> None:
     assert summary.startswith("Errors 26.6% (DEPENDENCY_UNAVAILABLE 29.5/s). ")
     assert summary.endswith("retrying in 1 s (once).")
     assert times(2) == "twice" and times(7) == "7 times"
+
+
+def test_no_baseline_is_said_in_words_never_as_zero() -> None:
+    e = Evidence(
+        alert={"name": "OrderServiceHighErrorRate"},
+        facts={"request_rate": 90.2, "normal_rate": "no baseline yet", "load_ratio": None},
+    )
+    assert e.summary() == "Requests 90.2/s (no baseline yet)."
+    known = Evidence(alert={}, facts={"request_rate": 90.2, "normal_rate": 4.7})
+    assert known.summary() == "Requests 90.2/s (normal 4.7/s)."

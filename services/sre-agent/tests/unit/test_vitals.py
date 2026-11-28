@@ -83,6 +83,7 @@ def test_a_screen_that_connects_gets_fresh_vitals_right_after_the_snapshot() -> 
         c.portal.call(vitals.publish_once)  # type: ignore[union-attr]
         with c.websocket_connect("/v1/ws/incidents") as ws:
             assert ws.receive_json()["type"] == "snapshot"
+            assert ws.receive_json()["type"] == "with_a_person"
             assert ws.receive_json()["data"]["p95_seconds"] == 2.31
 
 

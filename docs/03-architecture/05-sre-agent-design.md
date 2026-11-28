@@ -49,7 +49,7 @@ the prompt uses our vocabulary and is the same shape every time.
 
 | Source | What is collected (for the alerting service, last 15 minutes) |
 |---|---|
-| **Prometheus metrics** | Request rate; 5xx error ratio; p95 latency; memory (resident set size) and % of its limit, with the trend; CPU; container restarts; ready vs desired replicas; consumer lag where relevant (the consumer's own gauge, or the broker's measurement of its group when the consumer has stopped). Each as a short series (one point per 30 s) plus the "normal" baseline from the previous hour. |
+| **Prometheus metrics** | Request rate; 5xx error ratio; p95 latency; memory (resident set size) and % of its limit, with the trend; CPU; container restarts; ready vs desired replicas; consumer lag where relevant (the consumer's own gauge, or the broker's measurement of its group when the consumer has stopped). Each as a short series (one point per 30 s) plus the "normal" baseline: the median request rate of the hour that ended 15 minutes ago. While that hour had too little traffic (median under 0.5 requests a second, the alerts' own traffic guard: after a rebuild, or with the bots off) there is **no baseline yet**: the evidence says so in words and has no load ratio, and no decision leans on it (owner, 2026-11-28: the staging feed showed "normal 0.0/s"). |
 | **Prometheus alert** | Alert name, labels, value, how long it has been firing. |
 | **Loki logs** | The 50 most recent `error`-level log lines for the service (truncated to 300 characters each), plus counts of the top 5 distinct error messages. |
 | **Deploy history** | The last 5 rollout revisions of the Deployment: revision number, time, image tag, `change-cause` annotation (release name), and **what each changed from the one before** ("order-service: resources"). The release name alone is not enough: the chart names a release by version and image tag, so a changed memory limit keeps the same name (found in the Git rehearsal, 2026-11-27). |
@@ -194,11 +194,11 @@ sees OpenRouter's request/response format, so changing gateway or model touches 
 |---|---|---|
 | API | OpenRouter chat-completions endpoint (`https://openrouter.ai/api/v1`), OpenAI-compatible, called over HTTPS | One API and key for many models; standard function-calling format. |
 | Model | `SRE_AGENT_MODEL` env var holding an OpenRouter model slug. Default: **`anthropic/claude-sonnet-5.5`** (the latest Claude Sonnet listed by OpenRouter's public `GET /api/v1/models`, checked 2026-11-03). Optional `SRE_AGENT_FALLBACK_MODELS` list. | Choosing or swapping a model is configuration, not code. The model **must support tool calling**. |
-| Tool choice | `tool_choice: "auto"` and a system-prompt rule: "Always respond by calling exactly one tool." `parallel_tool_calls: false` and `temperature: 0` are sent only when OpenRouter's model list says the model takes them: for `anthropic/claude-sonnet-5.5` no provider offers either (checked 2026-11-26), and sending one anyway leaves strict routing with no provider (HTTP 404) | Forcing a tool call (`"required"`) is not supported by every model and provider behind OpenRouter (recent Claude models reject it), so we don't depend on it. A reply without exactly one tool call is unusable, and the rule-based fallback decides (ADR-0021): at most one action per decision either way. |
+| Tool choice | `tool_choice: "auto"` and a system-prompt rule: "Always respond by calling exactly one tool." `parallel_tool_calls: false` and `temperature: 0` are sent only when OpenRouter's model list says the model takes them: for `anthropic/claude-sonnet-5.5` no provider offers either (checked 2026-11-26), and sending one anyway leaves strict routing with no provider (HTTP 404) | Forcing a tool call is not possible: Claude Sonnet 5.5 itself refuses it ("tool_choice: type tool and any are not supported for this model", checked 2026-11-28; with strict routing `"required"` finds no provider, HTTP 404, and the evaluation caught that before staging). A reply without exactly one tool call is unusable: asked once more, then the rule-based fallback decides (ADR-0021). At most one action per decision either way. |
 | Provider routing | Ask OpenRouter to use only providers that support every parameter in the request (tools included) | Prevents silently landing on a provider that ignores tool definitions. |
 | Argument validation | `strict: true` where the model supports it **and always** our own JSON Schema validation of the returned arguments in code | Not every model enforces strict schemas, so we never trust arguments without checking them ourselves. Invalid arguments → declined by guardrail. |
-| Timeout | A **decision deadline of 25 s** for every attempt together; one retry, only after a fast failure (refused connection, HTTP 5xx or 429); the fallback model (if configured) inside the same deadline; at most 60 model calls per hour | If OpenRouter or the model is slow or down, the **rule-based fallback** chooses ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)), through the same guardrails: the system is never *worse* because the LLM failed. Mitigation should start within 30 s of detection, so the model gets 25 s. |
-| Stop reasons | Anything other than one tool call whose arguments parse as JSON (plain text, refusal, content filter, length cut-off, several calls) → the rule-based fallback (ADR-0021). One tool call with bad arguments → the guardrails decline it | Always check why the response stopped before reading it. |
+| Timeout | A **decision deadline of 25 s** for every attempt together; one retry, after a fast failure (refused connection, HTTP 5xx or 429, a provider's error) or a malformed answer, only with 8 s or more left, and never from the provider whose answer was malformed; the fallback model (if configured) inside the same deadline; at most 60 model calls per hour | If OpenRouter or the model is slow or down, the **rule-based fallback** chooses ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)), through the same guardrails: the system is never *worse* because the LLM failed. Mitigation should start within 30 s of detection, so the model gets 25 s. |
+| Stop reasons | Anything other than one tool call whose arguments parse as JSON (plain text, length cut-off, several calls, a call reported but not sent) is a **malformed answer**: asked again once, elsewhere, then the rule-based fallback labelled "malformed model answer". No answer at all (timeout, refusal, no credit, unreachable) is labelled "LLM unavailable" (ADR-0021). One tool call with bad arguments → the guardrails decline it | Always check why the response stopped before reading it. Found on staging (2026-11-27): Amazon Bedrock answered `finish_reason: tool_calls` (its own stop reason `tool_use`, 322 completion tokens) with only the model's opening sentence: the call was lost on the way, and the feed wrongly said "LLM unavailable". |
 | Key | `OPENROUTER_API_KEY` from the Kubernetes Secret `openrouter-api-key`: a SealedSecret in Git ([ADR-0019](../adr/0019-sealed-secrets-for-gitops.md)), sealed by `make openrouter-key`, which refuses a key without a credit limit | Never in code; in Git only encrypted. |
 | Data minimisation | Evidence only (metrics, truncated logs, deploy history); nicknames and trader IDs are scrubbed from log lines | Prompts leave our system and pass through OpenRouter and the model provider, so we send only what diagnosis needs. |
 | Spend control | OpenRouter key with a credit limit; the agent stores token usage per call (`sre_agent_llm_tokens_total`) | A runaway loop cannot cost more than the key's limit. |
@@ -222,7 +222,7 @@ sees OpenRouter's request/response format, so changing gateway or model touches 
 | G6 | **Budget:** max 3 executed actions per incident, max 6 per hour overall | Escalate |
 | G7 | `rollback_deployment` needs a previous revision to exist, **and the running release must be new** (its pod template first ran less than 15 minutes ago). After the agent's own rollback the running release is known-good, so a second rollback, which would bring the bad release back, is refused whoever proposes it ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)) | Decline + escalate |
 | G8 | Agent **paused** by admin | Record the proposal only; never execute |
-| G9 | LLM error, timeout, refusal or no tool call | The rule-based fallback chooses, labelled "rule-based (LLM unavailable)"; its proposal meets G1–G10 like any other ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md); before it: `do_nothing` + escalate) |
+| G9 | LLM error, timeout, refusal or no usable tool call | The rule-based fallback chooses, labelled "rule-based (LLM unavailable)" (no answer) or "rule-based (malformed model answer)" (an answer without one valid tool call, after one more try); its proposal meets G1–G10 like any other ([ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md); before it: `do_nothing` + escalate) |
 | G10 | `explanation` must be 1–600 characters | Replace with a generic explanation and flag it |
 | G11 | Rollback's Git step: only `deploy/envs/<env>/<service>.yaml` of the *same* service and environment; only a single-file commit; at most one open revert PR per service; branch prefix `sre-agent/`; never merges | Skip step (b), keep the rollback, escalate (`git_reconciliation: FAILED`) |
 
@@ -286,7 +286,9 @@ The feed (`WS /v1/ws/incidents`, Q-19) streams every step as a short human-reada
                         clear for 60 s.
 ```
 
-A rule-based decision says so at the start of its diagnosis ("Rule-based (LLM unavailable: …)"); an after-effect
+A rule-based decision says so at the start of its diagnosis: "Rule-based (LLM unavailable: OpenRouter did not
+answer in 25 s)" when no answer came, "Rule-based (malformed model answer: …)" when one came without a usable tool
+call (owner, 2026-11-28: "LLM unavailable" only when the model really didn't answer). An after-effect
 of a fix is an `AFTER_EFFECT` line on the incident it follows ("ConsumerLagHigh (3,000 now) after the scale: an
 expected after-effect, draining; no action").
 
@@ -355,6 +357,8 @@ OpenRouter refuses it, and the rules must decide.
 | `crashloop-config-change` | Only the memory limit changed (same release name, same image); the new pod is OOM-killed again and again while the old pods serve. | rollback_deployment order-service | 3/3 | ✅ |
 | `bad-deploy-again` | The same bad release deployed again: Kubernetes reused its ReplicaSet, 5 hours old, which only ever ran for minutes. | rollback_deployment order-service | 3/3 | ✅ |
 | `bad-deploy-under-load` | A bad release (INTERNAL_ERROR) during heavy but handled traffic. | rollback_deployment order-service | 3/3 | ✅ |
+| `panic-no-baseline` | OVERLOADED at 110 requests a second on a fresh cluster: no traffic baseline yet. | scale_deployment order-service (3–5) | 3/3 | ✅ |
+| `leak-no-baseline` | Memory 74% of its limit and climbing on a fresh cluster: no traffic baseline yet. | restart_deployment market-data-service | 3/3 | ✅ |
 | `llm-unavailable` | The bad deploy with an invalid OpenRouter key. | rollback_deployment order-service | rules | ✅ |
 
 **Result (2026-11-27, the final run):** 23 cases. The model chose right in **63 of 63** runs and never chose a
@@ -380,7 +384,19 @@ line, same 23 cases: decisions identical in every case (63 of 63 right both time
 quoting a field name 1 → 0 of 63; numbers cited per explanation 4.9 → 5.4 (more concrete, not vaguer), words 54 → 60;
 cost per decision $0.0091 → $0.0093.
 
-What it does not show: these are 23 situations we designed, with one model. Staging is the end-to-end test.
+**After the 7c staging review (2026-11-28): no baseline, two labels.** Two new cases are the staging cluster just
+after a rebuild, when the previous hour had no traffic: the evidence says "no baseline yet" instead of "normal 0.0/s",
+and the model must still scale the overload (judged by its error type and CPU) and restart the leak. Then the whole
+set again, now 25 cases: **69 of 69** model runs right, none harmful, rules 25 of 25, **no run without a usable
+answer** (the evaluation now fails otherwise), none needing a second try; decisions identical to the plain-words run
+in all 23 earlier cases (`eval.compare` exit 0); numbers cited per explanation 5.4 → 5.8; median decision 2.3 s,
+**$0.0097 per decision** ($0.67 for the run). Without a baseline the model says so ("there is no traffic baseline to
+compare against, so the overload is judged from the errors and CPU") and calls the leak's traffic "steady", not
+"normal". On the way, a run with `tool_choice: "required"` (to stop the model writing text before its call, see
+[ADR-0021](../adr/0021-rule-based-fallback-when-the-llm-is-unavailable.md)'s note) failed every case with HTTP 404:
+the model refuses forced tool use. That is what the evaluation is for; "auto" stays.
+
+What it does not show: these are 25 situations we designed, with one model. Staging is the end-to-end test.
 
 ## 11. Measured on staging
 

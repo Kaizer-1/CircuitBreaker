@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: sre-agent API
-  version: 1.2.0
+  version: 1.3.0
   summary: Incidents, remediation approvals and agent settings.
   description: |
     Owned by **Kaizer Dewaswala** (SRE agent role, enabling; in collaboration with the Release & Reliability Team).
@@ -14,7 +14,7 @@ info:
     This HTTP API lets people read incidents, approve or decline proposed fixes and change settings. The live
     incident feed is the WebSocket `/v1/ws/incidents` (Q-19), documented in api/README.md; since 1.2.0 it also
     sends `vitals` (order-service's rate, errors, p95 and replicas, market-data's memory) for the control room,
-    display only, never evidence.
+    display only, never evidence; since 1.3.0 also `with_a_person` (escalated incidents whose alert still fires).
     There is deliberately **no** endpoint to change the model or the tool allowlist.
 servers:
   - url: http://localhost:8006
@@ -380,8 +380,9 @@ components:
         model:
           type: string
           description: >-
-            Who chose: the OpenRouter model slug, "rule-based (LLM unavailable)" (ADR-0021), or
-            "fixed rule (alert is information only)" for a remediable=false alert.
+            Who chose: the OpenRouter model slug; "rule-based (LLM unavailable)" when no answer came, or
+            "rule-based (malformed model answer)" when one came without a usable tool call (ADR-0021, since
+            1.3.0); or "fixed rule (alert is information only)" for a remediable=false alert.
         status:
           type: string
           enum: [PROPOSED, APPROVED, DECLINED, EXECUTED, FAILED]

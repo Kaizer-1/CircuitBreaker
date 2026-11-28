@@ -19,7 +19,11 @@ the gateway only passed on. Then the problem is in that other service, not the g
 (a fresh release, or a bad one deployed again). After a rollback to a release that ran for hours, \
 or a restart, the revision number is new but new is false (known-good). Never roll back a \
 known-good revision.
-  - load_ratio: request rate now divided by its normal rate over the previous hour.
+  - load_ratio: request rate now divided by its normal rate (the median of the previous hour). \
+normal_rate says "no baseline yet" when the previous hour had too little traffic to know what is \
+normal (after a rebuild): then load_ratio is null. Judge the load from the error type and CPU \
+instead (no OVERLOADED errors and CPU well below its limit count as normal traffic), and say there \
+is no baseline rather than calling the traffic normal or abnormal.
   - rollout and pods: each pod says which revision it belongs to. Ready pods of OLDER revisions \
 can still serve while the current revision's pods crash or never get ready: then the current \
 revision is failing. A release name can stay the same while its template changed \

@@ -17,7 +17,7 @@ from sre_agent.domain.actions import Proposal, Tool
 from sre_agent.domain.fallback import SOURCE
 from sre_agent.domain.incident import Incident, NotPendingError
 from sre_agent.ports.gitops import NoGitOps
-from sre_agent.ports.llm import LLMUnavailableError
+from sre_agent.ports.llm import LLMUnavailableError, MalformedAnswerError
 from sre_agent.ports.observability import Alert
 from tests.fakes import (
     Clock,
@@ -197,6 +197,24 @@ async def test_the_model_sees_the_three_facts(world: World) -> None:
     assert rig.platform.calls == ["scale order-service 5"]
 
 
+@pytest.mark.parametrize("median", [None, 0.0, 0.3])
+async def test_without_a_baseline_the_evidence_says_so_and_has_no_load_ratio(
+    world: World, median: float | None
+) -> None:
+    """A fresh Prometheus (after a rebuild): the last hour's median is missing, 0 or a trickle."""
+    overload_after_rollback(world)
+    world.metrics["order-service"]["normal_rate"] = median
+    scale = Proposal(Tool.SCALE.value, "order-service", 5, "Overloaded.", "llm:test")
+    llm = FakeLLM(scale)
+    rig = Rig(world, llm)
+    (incident,) = await rig.run()
+    facts = llm.seen[0].facts
+    assert facts["normal_rate"] == "no baseline yet" and facts["load_ratio"] is None
+    assert "(no baseline yet)" in incident.evidence_summary and "normal 0.0" not in (
+        incident.evidence_summary
+    )
+
+
 async def test_the_leak_is_restarted(world: World) -> None:
     world.deploy("market-data-service", (5, 900, "md:1", "release 0.5.0"), desired=1)
     world.metrics["market-data-service"] = {
@@ -241,9 +259,14 @@ async def test_the_degraded_database_is_declined_with_a_fixed_reason_and_not_reo
     )
     llm = FakeLLM()
     rig = Rig(world, llm)
+    queue = rig.agent.feed.subscribe()
     (incident,) = await rig.run()
     assert llm.seen == [] and rig.platform.calls == []  # the model is never asked
     assert incident.resolution and incident.resolution.value == "ESCALATED"
+    # Resolved for the agent, not for the system: the status bar counts it while it fires.
+    assert rig.agent.with_a_person() == [incident.incident_id]
+    told = [m["data"] for m in drain(queue) if m["type"] == "with_a_person"]
+    assert told[-1] == {"incident_ids": [incident.incident_id]}
     r = incident.remediations[0]
     assert r.action == "do_nothing" and "may never touch" in r.explanation
     assert rig.sink.types() == [
@@ -257,10 +280,21 @@ async def test_the_degraded_database_is_declined_with_a_fixed_reason_and_not_reo
     assert len(rig.store.incidents) == 1
     still["on"] = False
     await rig.agent.tick()  # cleared: the next time it fires is a new incident
+    assert rig.agent.with_a_person() == []
+    assert [m["data"] for m in drain(queue) if m["type"] == "with_a_person"] == [
+        {"incident_ids": []}
+    ]
     still["on"] = True
     await rig.agent.tick()
     await rig.agent.wait_idle()
     assert len(rig.store.incidents) == 2
+
+
+def drain(queue: asyncio.Queue[dict[str, Any]]) -> list[dict[str, Any]]:
+    out = []
+    while not queue.empty():
+        out.append(queue.get_nowait())
+    return out
 
 
 async def approval(rig: Rig) -> dict[str, Any]:
@@ -323,6 +357,24 @@ async def test_when_the_model_is_unavailable_the_rules_decide_and_say_why(world:
     diagnosis = next(e for e in incident.timeline if e.kind.value == "DIAGNOSIS")
     assert "LLM unavailable: OpenRouter did not answer in 25 s" in diagnosis.message
     assert incident.remediations[0].model == SOURCE
+
+
+async def test_a_malformed_answer_is_labelled_as_such_not_as_llm_unavailable(world: World) -> None:
+    """The owner's rule (2026-11-28): "LLM unavailable" only when the model really didn't answer."""
+    bad_deploy(world)
+    lost = MalformedAnswerError(
+        "Amazon Bedrock said the model called a tool but sent no call (asked twice)",
+        "Amazon Bedrock",
+    )
+    rig = Rig(world, FakeLLM(lost))
+    (incident,) = await rig.run()
+    assert rig.platform.calls == ["rollback order-service 8"]
+    diagnosis = next(e for e in incident.timeline if e.kind.value == "DIAGNOSIS")
+    assert diagnosis.message.startswith(
+        "Rule-based (malformed model answer: Amazon Bedrock said the model called a tool"
+    )
+    assert "unavailable" not in diagnosis.message
+    assert incident.remediations[0].model == "rule-based (malformed model answer)"
 
 
 async def test_an_injected_instruction_cannot_move_the_agent_to_another_service(

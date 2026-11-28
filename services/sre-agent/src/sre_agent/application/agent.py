@@ -155,7 +155,9 @@ class Agent:
         self._metrics = metrics
         self._open: dict[str, Incident] = {}  # by service
         self._tasks: dict[str, asyncio.Task[None]] = {}
-        self._escalated: set[tuple[str, str]] = set()  # (alert, service) a person already has
+        # (alert, service) a person already has, while the alert still fires -> its incident ID
+        self._escalated: dict[tuple[str, str], str] = {}
+        self._with_a_person_sent: list[str] | None = None
         self._decisions: dict[str, asyncio.Future[bool]] = {}
         self._actions: list[ActionRecord] = []
         self._acting: set[str] = set()  # services whose action is being verified
@@ -224,6 +226,17 @@ class Agent:
     def open_incidents(self) -> list[Incident]:
         return list(self._open.values())
 
+    def with_a_person(self) -> list[str]:
+        """Incidents handed to a person whose alert still fires: resolved for the agent, not
+        for the system (the status bar counts them, owner 2026-11-28)."""
+        return sorted(set(self._escalated.values()))
+
+    def _publish_with_a_person(self) -> None:
+        now = self.with_a_person()
+        if now != self._with_a_person_sent:
+            self._with_a_person_sent = now
+            self.feed.publish("with_a_person", {"incident_ids": now})
+
     def incident(self, incident_id: str) -> Incident | None:
         return next((i for i in self._open.values() if i.incident_id == incident_id), None)
 
@@ -258,7 +271,9 @@ class Agent:
         self._firing = alerts
         now = self._now()
         keys = {(a.name, a.service) for a in alerts}
-        self._escalated &= keys  # a cleared alert may open an incident again
+        # A cleared alert may open an incident again.
+        self._escalated = {k: v for k, v in self._escalated.items() if k in keys}
+        self._publish_with_a_person()
         self._handed_over &= keys
         await self._watch_after_effects(alerts, now)
         await self._watch_symptoms(alerts, now)
@@ -467,7 +482,8 @@ class Agent:
             self._tasks.pop(incident.incident_id, None)
             self._acting.discard(incident.service)
             if incident.resolution is Resolution.ESCALATED and self._is_firing(lead):
-                self._escalated.add((lead.name, lead.service))
+                self._escalated[(lead.name, lead.service)] = incident.incident_id
+                self._publish_with_a_person()
 
     async def _rounds(self, incident: Incident, lead: Alert) -> None:
         for _ in range(self._cfg.max_rounds):
@@ -499,7 +515,7 @@ class Agent:
     async def _diagnosed(self, incident: Incident, decision: Decision) -> None:
         p = decision.proposal
         prefix = (
-            f"Rule-based (LLM unavailable: {decision.fallback_reason}). "
+            f"Rule-based ({decision.fallback_label}: {decision.fallback_reason}). "
             if decision.by_rules
             else ""
         )

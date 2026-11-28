@@ -1,7 +1,8 @@
 """The rule-based decision when the model is unavailable (ADR-0021, an owner's exception amending
 ADR-0009's "do_nothing and escalate"): OpenRouter unreachable, too slow, refusing, answering without
-a valid tool call, or over its call budget. Labelled "rule-based (LLM unavailable)" on the feed. Its
-proposals go through the same guardrails as the model's.
+a valid tool call, or over its call budget. Labelled "rule-based (LLM unavailable)", or
+"rule-based (malformed model answer)" when the model answered without one valid tool call (the
+decider sets which). Its proposals go through the same guardrails as the model's.
 
 The rules read the error TYPE, the running revision (new or known-good) and the load, never "a
 deploy happened" alone: right after the agent rolls back a bad release (itself a new rollout), an
@@ -60,10 +61,15 @@ def decide(s: Signals) -> Proposal:
     if s.alert == "MarketDataMemoryGrowth" or (s.memory_rising and s.memory_of_limit > 0.7):
         if s.new_revision:
             return _rollback(s, f"Memory climbs since a new release ({deployed}).")
+        traffic = (
+            " and normal traffic"
+            if s.normal_rate is not None and not s.load_far_above_normal
+            else (" (no traffic baseline yet)" if s.normal_rate is None else "")
+        )
         return _restart(
             s,
             f"{s.service}'s memory is at {100 * s.memory_of_limit:.0f}% of its limit and still"
-            " climbing, with no new release and normal traffic: a leak in the running process.",
+            f" climbing, with no new release{traffic}: a leak in the running process.",
         )
 
     if s.alert in ERROR_ALERTS or s.alert == "OrderServiceHighLatency":
@@ -82,8 +88,10 @@ def decide(s: Signals) -> Proposal:
         if s.main_error == "OVERLOADED" or (
             s.alert == "OrderServiceHighLatency" and s.load_far_above_normal
         ):
-            ratio = s.request_rate / s.normal_rate if s.normal_rate else 0
-            more = f"{ratio:.0f}x its normal traffic" if ratio else "far more traffic than usual"
+            if s.normal_rate is not None:
+                more = f"{s.request_rate / s.normal_rate:.0f}x its normal traffic"
+            else:  # nothing to compare with: say what is measured, not "more than usual"
+                more = f"{s.request_rate:.0f} requests a second (no traffic baseline yet)"
             return _scale_up(
                 s,
                 f"{s.service} gets {more} and turns requests away as overloaded (or answers"
